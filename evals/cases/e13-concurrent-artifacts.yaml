@@ -1,0 +1,38 @@
+id: e13-concurrent-artifacts
+family: 并发
+why: >
+  3 个 delegate 并行跑，验**产物归属不串台**，以及 failed 分支会不会丢产物。
+realism: 推测
+tier: full
+# ⚠️ 必须 replace：内置的 4 个技能写着「150 字以内」，执行器判断内容短就**不写产物**，
+# 走「正文交付」路径 —— 那样只有 1 次写入，并发根本没被触发。
+skills_mode: replace
+skills:
+  - name: lesson-prep
+    description: 备课：产出一份教学设计（写入产物库）
+    instructions: |
+      产出一份教学设计：教学目标、重难点、教学过程提纲。
+      **必须调用 write_artifact 写入产物库**，正文写全，不少于 800 字。
+  - name: guided-learning
+    description: 导学单：产出学生用导学单（写入产物库）
+    instructions: |
+      产出一份导学单：学习目标、预习任务、当堂检测。
+      **必须调用 write_artifact 写入产物库**，正文写全，不少于 800 字。
+  - name: quiz
+    description: 随堂小测：产出随堂小题（写入产物库）
+    instructions: |
+      产出 5 道随堂小题（含答案）。
+      **必须调用 write_artifact 写入产物库**，正文写全，不少于 500 字。
+turns:
+  - "帮我备课、导学单、随堂小测，人教版三年级数学《分数的初步认识》第一课时，难度基础"
+checks:
+  - check: task_count
+    n: 3
+  - check: every_task_has_artifact
+  # 每个 task 的产物，只能来自它自己那个执行器
+  - check: artifact_no_cross_attribution
+  - check: no_exception
+# ⚠️ 原来还断言 `artifact_count: 3` —— **错的**：执行器被推回去时会**重写一份新产物**
+#   而不是续写，产物数天然会多于 3（基线实测 4–5 个）。
+#    至于 `store_artifact` 的 `len+1` 竞态：**端到端测不到**（实测写入间隔 4–205 秒，
+#    竞态窗口在微秒级）。那条改成单元测试：`evals/unit_artifact_race.py`。

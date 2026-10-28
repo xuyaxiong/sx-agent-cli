@@ -1,0 +1,15 @@
+id: e-revise-existing
+family: 多轮
+why: "真实老师会改已有的产物。系统提示说只有用户明确要求才 read_artifact —— 这条测它到底读不读、读了上下文涨多少"
+realism: 推测
+tier: full
+turns:
+  - "帮我出 3 道随堂小测，三年级数学《分数的初步认识》，难度基础"
+  - "第 2 题太简单了，换成难一点的"
+checks:
+  - check: task_stages
+    at: 1
+    stages: {quiz: completed}
+  - check: delegate_calls_max
+    n: 2
+  - check: no_exception

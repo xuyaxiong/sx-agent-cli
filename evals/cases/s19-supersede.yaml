@@ -1,0 +1,29 @@
+id: s19-supersede
+family: 台账
+why: >
+  原来测的是「重新委派时旧的待答不能留在台账里」（靠 superseded 清理）。
+  **2026-10-29 起语义变了**：答复由平台投回原 Task，**任务保持同一个身份直接完成**，
+  根本不再产生"旧待答"。所以这条现在测的是「答复后不留悬挂的待答」。
+realism: 实测发生过
+tier: smoke
+turns:
+  - "帮我出个随堂小测，人教版三年级数学《分数的初步认识》第一课时"
+  - "难度要基础的"
+checks:
+  - check: task_stages
+    at: 1
+    stages: {quiz: waiting_for_input}
+  - check: platform_relayed
+    at: 1
+  # 答复由平台投递，主 agent 不重派
+  - check: platform_fed_answer
+    at: 2
+  - check: delegate_calls_exact
+    n: 1
+  # 同一个 Task 直接完成 —— 台账里既没有待答，也没有被取代的残骸
+  - check: task_count
+    n: 1
+  - check: task_stages
+    stages: {quiz: completed}
+  - check: no_task_stage
+    stages: {quiz: [waiting_for_input, superseded, failed]}

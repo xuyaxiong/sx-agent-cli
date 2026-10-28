@@ -1,0 +1,31 @@
+id: s08-topic-switch-keeps-pending
+family: 边界
+why: >
+  旧版这里死循环（把换话题当成答复，重跑执行器又挂起）。
+  现在平台会把用户原话投给待答任务 —— 这条测的是「**不丢、不阻塞、不硬做**」。
+realism: 实测发生过
+tier: full
+turns:
+  - "帮我出个随堂小测，人教版三年级数学《分数的初步认识》第一课时"
+  - "算了，先帮我备一节课"
+checks:
+  - check: task_stages
+    at: 1
+    stages: {quiz: waiting_for_input}
+  # 平台必须把问题透传给用户（F7 的保证）
+  - check: platform_relayed
+    at: 1
+  # 新需求照常处理（备课要课题和课时，都给了 → 直接完成）
+  - check: task_stages
+    at: 2
+    stages: {lesson-prep: completed}
+  # 旧的待答**没被静默丢掉** —— 要么还挂着（且被透传），要么已被答复解决
+  - check: no_task_stage
+    at: 2
+    stages: {quiz: [superseded, failed]}
+  - check: no_exception
+# ⚠️ 原来断言 `at: 2, quiz: waiting_for_input` —— **太严**，实测挂了：
+#    执行器收到「算了，先帮我备一节课」后**没有重新问，而是自己挑了「基础档」硬做**，
+#    还把"备课"揉进了小测任务里。平台机制没错（问题透传了、答复投递了），
+#    是**执行器不遵守自己技能里的「不知道就先问」**。
+#    已在 executor.py 的 `_PLATFORM_RULE` 里补了针对性规则（见 docs/discussion-log.md F10）。

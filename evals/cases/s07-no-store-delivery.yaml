@@ -1,0 +1,17 @@
+id: s07-no-store-delivery
+family: 交付形态
+why: "用户指出的真实业务场景：配置块是给调用方解析的，不落库、只能以正文输出 —— 曾把「完成 = 产物库非空」这条判定打翻"
+realism: 实测发生过
+tier: smoke
+turns:
+  - "帮我生成一份三年级数学《分数的初步认识》的课件配置，6 页"
+checks:
+  - check: task_stages
+    stages: {courseware-config: completed}
+  # 不落库
+  - check: artifact_count
+    n: 0
+  # 配置块要原样转达给用户
+  - check: reply_contains
+    subs: ["slides"]
+  - check: no_finalize_rescue

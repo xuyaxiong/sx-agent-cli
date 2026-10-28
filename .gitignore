@@ -1,0 +1,20 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# 本地密钥与运行产物
+.env
+.env.local
+logs/
+*.log
+artifacts/
+
+# 跑批结果
+runs/

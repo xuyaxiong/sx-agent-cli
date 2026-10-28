@@ -1,0 +1,146 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 980" width="1180" height="980" font-family="Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#5F6368"/>
+    </marker>
+    <marker id="aR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#C62828"/>
+    </marker>
+    <marker id="aG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#43A047"/>
+    </marker>
+    <marker id="aO" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#FB8C00"/>
+    </marker>
+    <marker id="aP" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8E24AA"/>
+    </marker>
+  </defs>
+
+  <rect width="1180" height="980" fill="#FFFFFF"/>
+  <text x="590" y="42" text-anchor="middle" font-size="26" font-weight="700" fill="#202124">一次请求的完整流程</text>
+  <text x="590" y="70" text-anchor="middle" font-size="14" fill="#5F6368">主 Agent 自己决定怎么做；平台在关键节点兜底</text>
+
+  <!-- 用户提问 -->
+  <rect x="430" y="96" width="320" height="50" rx="25" fill="#E8F0FE" stroke="#4285F4" stroke-width="1.8"/>
+  <text x="590" y="127" text-anchor="middle" font-size="17" font-weight="600" fill="#174EA6">用户提问</text>
+  <line x1="590" y1="146" x2="590" y2="180" stroke="#5F6368" stroke-width="1.8" marker-end="url(#a)"/>
+
+  <!-- 主 Agent 判断 -->
+  <rect x="330" y="184" width="520" height="62" rx="12" fill="#FFF8F0" stroke="#FB8C00" stroke-width="2"/>
+  <text x="590" y="211" text-anchor="middle" font-size="16.5" font-weight="700" fill="#E65100">主 Agent 判断：这件事该怎么做？</text>
+  <text x="590" y="233" text-anchor="middle" font-size="12" fill="#8D6E63">看得到：对话历史 + 平台注入的任务台账</text>
+
+  <path d="M 400 246 L 400 282 L 190 282 L 190 316" fill="none" stroke="#5F6368" stroke-width="1.8" marker-end="url(#a)"/>
+  <path d="M 590 246 L 590 316" fill="none" stroke="#5F6368" stroke-width="1.8" marker-end="url(#a)"/>
+  <path d="M 790 246 L 790 282 L 985 282 L 985 316" fill="none" stroke="#5F6368" stroke-width="1.8" marker-end="url(#a)"/>
+
+  <rect x="60" y="320" width="260" height="100" rx="10" fill="#FFFFFF" stroke="#90CAF9" stroke-width="1.6"/>
+  <text x="190" y="350" text-anchor="middle" font-size="15.5" font-weight="600" fill="#1565C0">① 直接回答</text>
+  <text x="190" y="375" text-anchor="middle" font-size="12" fill="#5F6368">闲聊 / 追问 / 澄清</text>
+  <text x="190" y="395" text-anchor="middle" font-size="12" fill="#5F6368">不需要专业能力的事</text>
+  <text x="190" y="412" text-anchor="middle" font-size="11.5" font-weight="600" fill="#43A047">不建 Task，立刻回复</text>
+
+  <rect x="460" y="320" width="260" height="100" rx="10" fill="#FFFFFF" stroke="#90CAF9" stroke-width="1.6"/>
+  <text x="590" y="350" text-anchor="middle" font-size="15.5" font-weight="600" fill="#1565C0">② 自己产出短内容</text>
+  <text x="590" y="375" text-anchor="middle" font-size="12" fill="#5F6368">说明 / 对比表 …</text>
+  <text x="590" y="395" text-anchor="middle" font-size="12" fill="#5F6368">写进产物库</text>
+  <text x="590" y="412" text-anchor="middle" font-size="11.5" font-weight="600" fill="#43A047">不建 Task</text>
+
+  <rect x="855" y="320" width="260" height="100" rx="10" fill="#FFFFFF" stroke="#FB8C00" stroke-width="2.2"/>
+  <text x="985" y="350" text-anchor="middle" font-size="15.5" font-weight="600" fill="#E65100">③ 委派执行</text>
+  <text x="985" y="375" text-anchor="middle" font-size="12" fill="#5F6368">需要专业能力时</text>
+  <text x="985" y="395" text-anchor="middle" font-size="12" fill="#5F6368">交给隔离的执行器</text>
+  <text x="985" y="412" text-anchor="middle" font-size="11.5" font-weight="600" fill="#C62828">建 Task</text>
+
+  <line x1="985" y1="420" x2="985" y2="456" stroke="#5F6368" stroke-width="1.8" marker-end="url(#a)"/>
+
+  <!-- ══════════ delegate 内部 ══════════ -->
+  <rect x="330" y="460" width="790" height="480" rx="14" fill="#F1F8E9" stroke="#7CB342" stroke-width="2" stroke-dasharray="7 4"/>
+  <text x="356" y="490" font-size="16.5" font-weight="700" fill="#33691E">delegate 内部 —— 平台保证的几步（Agent 想跳过也跳不过）</text>
+
+  <!-- (1) 取代旧的 -->
+  <rect x="740" y="504" width="340" height="48" rx="8" fill="#FFFFFF" stroke="#AED581" stroke-width="1.4"/>
+  <text x="910" y="525" text-anchor="middle" font-size="13" font-weight="600" fill="#33691E">(1) 取代同技能旧的未了结 Task</text>
+  <text x="910" y="543" text-anchor="middle" font-size="11" fill="#5F6368">标记为 superseded，台账里不再挂着它</text>
+  <line x1="910" y1="552" x2="910" y2="572" stroke="#5F6368" stroke-width="1.6" marker-end="url(#a)"/>
+
+  <!-- (2) 执行器 -->
+  <rect x="740" y="576" width="340" height="48" rx="8" fill="#E8F5E9" stroke="#43A047" stroke-width="1.6"/>
+  <text x="910" y="597" text-anchor="middle" font-size="13" font-weight="600" fill="#1B5E20">(2) 执行器干活（独立上下文）</text>
+  <text x="910" y="615" text-anchor="middle" font-size="11" fill="#2E7D32">读 skill 指令 · 跑工具 · 产出成品</text>
+  <line x1="910" y1="624" x2="910" y2="646" stroke="#5F6368" stroke-width="1.6" marker-end="url(#a)"/>
+
+  <!-- (3) 判定 -->
+  <rect x="740" y="650" width="340" height="56" rx="8" fill="#FFFDE7" stroke="#FBC02D" stroke-width="1.8"/>
+  <text x="910" y="672" text-anchor="middle" font-size="13.5" font-weight="600" fill="#F57F17">(3) 判定：任务完成了吗？（三态）</text>
+  <text x="910" y="692" text-anchor="middle" font-size="11" fill="#5F6368">依据：skill 指令 + 已给的信息 + 产出 + 产物数量</text>
+
+  <!-- 出口 A：completed → 交付 -->
+  <line x1="740" y1="678" x2="618" y2="678" stroke="#43A047" stroke-width="1.8" marker-end="url(#aG)"/>
+  <text x="679" y="671" text-anchor="middle" font-size="10" font-weight="600" fill="#43A047">completed</text>
+  <rect x="358" y="650" width="250" height="56" rx="8" fill="#E8F5E9" stroke="#43A047" stroke-width="1.8"/>
+  <text x="483" y="672" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1B5E20">✅ 交付</text>
+  <text x="483" y="692" text-anchor="middle" font-size="11" fill="#2E7D32">主 Agent 只拿到编号 + 摘要</text>
+
+  <!-- 出口 B：waiting_for_input → (4) 试答 → (5) 待答 -->
+  <line x1="910" y1="706" x2="910" y2="740" stroke="#FB8C00" stroke-width="1.8" marker-end="url(#aO)"/>
+  <text x="922" y="727" font-size="10" font-weight="600" fill="#FB8C00">waiting_for_input</text>
+
+  <rect x="740" y="744" width="340" height="52" rx="8" fill="#FFF8F0" stroke="#FB8C00" stroke-width="1.8"/>
+  <text x="910" y="766" text-anchor="middle" font-size="13" font-weight="600" fill="#E65100">(4) 平台强制：先让主 Agent 试答</text>
+  <text x="910" y="785" text-anchor="middle" font-size="10" fill="#8D6E63">用它的完整上下文 + 进度 + 缺失项　·　答得上就带补充重试</text>
+
+  <line x1="910" y1="796" x2="910" y2="822" stroke="#C62828" stroke-width="1.8" marker-end="url(#aR)"/>
+  <text x="922" y="813" font-size="10" font-weight="600" fill="#C62828">答不上</text>
+
+  <rect x="740" y="826" width="340" height="52" rx="8" fill="#FFEBEE" stroke="#E53935" stroke-width="1.8"/>
+  <text x="910" y="848" text-anchor="middle" font-size="13" font-weight="600" fill="#B71C1C">(5) 登记待答 → 主 Agent 问用户</text>
+  <text x="910" y="867" text-anchor="middle" font-size="10" fill="#5F6368">平台兜底：没问出去就补上，保证不丢</text>
+
+  <!-- 出口 C：incomplete → (6) 推回去 -->
+  <path d="M 756 706 L 756 734 L 668 734 L 668 788 L 610 788"
+        fill="none" stroke="#C62828" stroke-width="1.8" marker-end="url(#aR)"/>
+  <text x="704" y="766" text-anchor="middle" font-size="10" font-weight="600" fill="#C62828">incomplete</text>
+
+  <rect x="358" y="744" width="250" height="150" rx="8" fill="#FFEBEE" stroke="#C62828" stroke-width="1.8"/>
+  <text x="483" y="770" text-anchor="middle" font-size="13" font-weight="700" fill="#B71C1C">(6) incomplete —— 不许它停</text>
+  <line x1="380" y1="780" x2="586" y2="780" stroke="#EF9A9A" stroke-width="1"/>
+  <text x="483" y="802" text-anchor="middle" font-size="11" fill="#5F6368">判定给出 progress / missing</text>
+  <text x="483" y="822" text-anchor="middle" font-size="11" fill="#5F6368">带回给它，让它「接着做」</text>
+  <text x="483" y="842" text-anchor="middle" font-size="11" fill="#5F6368">而不是从头再来</text>
+  <text x="483" y="870" text-anchor="middle" font-size="11" font-weight="600" fill="#B71C1C">最多 3 轮</text>
+  <text x="483" y="888" text-anchor="middle" font-size="10.5" fill="#5F6368">推满仍不行 → 交给主 Agent</text>
+
+  <!-- 回环：(6) → (2) -->
+  <path d="M 483 894 L 483 924 L 342 924 L 342 600 L 736 600"
+        fill="none" stroke="#8E24AA" stroke-width="1.8" marker-end="url(#aP)"/>
+  <text x="354" y="590" font-size="10.5" font-weight="600" fill="#8E24AA">回到 (2) 重新执行</text>
+
+  <!-- 左侧：设计决策 -->
+  <rect x="40" y="460" width="266" height="480" rx="12" fill="#FAFAFA" stroke="#BDBDBD" stroke-width="1.4"/>
+  <text x="173" y="490" text-anchor="middle" font-size="16" font-weight="700" fill="#424242">四条设计原则</text>
+  <line x1="66" y1="506" x2="280" y2="506" stroke="#E0E0E0" stroke-width="1"/>
+
+  <text x="62" y="538" font-size="12.5" font-weight="600" fill="#1565C0">① 理解要柔性，状态要硬</text>
+  <text x="62" y="558" font-size="10.5" fill="#5F6368">不解析参数，原话转给执行器</text>
+  <text x="62" y="578" font-size="10.5" fill="#5F6368">但状态由代码写，不由模型写</text>
+
+  <text x="62" y="612" font-size="12.5" font-weight="600" fill="#1565C0">② 不发明新协议</text>
+  <text x="62" y="632" font-size="10.5" fill="#5F6368">能用现有事实判断的，不加新字段</text>
+  <text x="62" y="652" font-size="10.5" fill="#5F6368">skill 只有 description + instructions</text>
+
+  <text x="62" y="686" font-size="12.5" font-weight="600" fill="#1565C0">③ 平台管机制，skill 管业务</text>
+  <text x="62" y="706" font-size="10.5" fill="#5F6368">"哪些参数必答"写在 skill 里</text>
+  <text x="62" y="726" font-size="10.5" fill="#5F6368">平台不猜，也不让模型猜</text>
+
+  <text x="62" y="760" font-size="12.5" font-weight="600" fill="#1565C0">④ 信息交接要说细节</text>
+  <text x="62" y="780" font-size="10.5" fill="#5F6368">判定看不到的信息，它就只能猜</text>
+  <text x="62" y="800" font-size="10.5" fill="#5F6368">判定要拿到：指令 + 上下文 + 产出 + 产物</text>
+
+  <line x1="66" y1="834" x2="280" y2="834" stroke="#E0E0E0" stroke-width="1"/>
+  <text x="62" y="858" font-size="12.5" font-weight="600" fill="#424242">三条由代码保证</text>
+  <text x="62" y="880" font-size="10.5" fill="#5F6368">· 产物必须真实存在于产物库</text>
+  <text x="62" y="900" font-size="10.5" fill="#5F6368">· 状态由代码写，三态穷举</text>
+  <text x="62" y="920" font-size="10.5" fill="#5F6368">· 待答不丢（平台兜底补问）</text>
+</svg>

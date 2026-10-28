@@ -1,0 +1,28 @@
+id: s13-isolation-long-artifact
+family: 隔离
+why: "架构的核心收益。**必须用长内容测** —— 现在拿 150 字的玩具测，隔离效果根本看不出来"
+realism: 文档记录的需求
+tier: full
+skills:
+  - name: full-lesson-plan
+    description: 完整教案：产出一份可直接照着上课的详细教案（长文，写入产物库）
+    instructions: |
+      产出一份**完整详细**的教案，写入产物库（write_artifact）。
+      要求：
+      - **5000 字以上**，不要精简、不要概括、不要写「略」、不要用省略号跳过；
+      - 必须包含这些部分：教学目标、重难点分析、学情分析、教学过程、板书设计、作业设计、教学反思；
+      - 教学过程要**分环节**，每个环节写清：教师活动、学生活动、设计意图；
+      - 教师活动要写到**逐句台词**的程度（老师上课说什么，原话写出来）。
+      **你需要知道「课题」和「课时」**——不知道就先问，不要自己编。
+turns:
+  - "帮我写一份三年级数学《分数的初步认识》第一课时的完整教案"
+checks:
+  - check: task_stages
+    stages: {full-lesson-plan: completed}
+  - check: artifact_chars_over
+    n: 5000
+  # 隔离的现场读数：产物 5000+ 字，主上下文该在 3k 以内
+  - check: main_ctx_under
+    n: 3000
+soft:
+  - check: reply_is_summary

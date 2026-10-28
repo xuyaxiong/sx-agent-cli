@@ -1,0 +1,22 @@
+id: s18-deadlock
+family: 出口限制
+why: "执行器没干完就停 → 平台推它继续；推满仍不行才交给主 agent，不烦用户。死局下这条**并未真正达成**（会走请求信息路径）"
+realism: 文档记录的需求
+tier: full
+skills:
+  - name: exam-score-report
+    description: 成绩分析：产出某次统考的成绩分布表
+    instructions: |
+      产出「本校 2027 年春季学期三年级数学期末统考」的成绩分布表。
+      **你需要知道这次考试的成绩单**——没有它就无法完成。
+      **不要编造数据，也不要用示例数据、占位数据代替。**
+turns:
+  - "帮我出一份三年级数学期末统考的成绩分布表"
+checks:
+  # 新期望（2026-10-28 之后的行为）：1–2 轮就说明需要什么 → 走请求信息路径
+  - check: task_stages
+    stages: {exam-score-report: [waiting_for_input, failed]}
+  # 关键：不许编数据落库
+  - check: artifact_count
+    n: 0
+  - check: no_exception

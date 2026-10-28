@@ -1,0 +1,127 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 900" width="1180" height="900" font-family="Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif">
+  <defs>
+    <marker id="arw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#5F6368"/>
+    </marker>
+    <marker id="arwG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#43A047"/>
+    </marker>
+  </defs>
+
+  <rect width="1180" height="900" fill="#FFFFFF"/>
+  <text x="590" y="42" text-anchor="middle" font-size="26" font-weight="700" fill="#202124">多 Skill Agent 架构总览</text>
+  <text x="590" y="70" text-anchor="middle" font-size="14" fill="#5F6368">Skill（专业能力） · Task（具体业务工作） · Sub Agent（可选执行者）—— 三者正交</text>
+
+  <!-- ① Skill -->
+  <rect x="120" y="96" width="800" height="66" rx="12" fill="#E8F0FE" stroke="#4285F4" stroke-width="1.8"/>
+  <text x="146" y="124" font-size="17" font-weight="700" fill="#174EA6">① Skill —— 专业能力（静态）</text>
+  <text x="146" y="148" font-size="13" fill="#174EA6">每项只有 <tspan font-weight="600">description + instructions</tspan>　·　无参数声明 · 无交付物声明 · 无结果协议 · 无完成条件</text>
+  <line x1="520" y1="162" x2="520" y2="196" stroke="#5F6368" stroke-width="1.8" marker-end="url(#arw)"/>
+  <text x="534" y="184" font-size="12" fill="#5F6368">instructions 交给执行器，也是判定"完成了没"的依据</text>
+
+  <!-- ② 主 agent -->
+  <rect x="120" y="200" width="800" height="196" rx="14" fill="#FFF8F0" stroke="#FB8C00" stroke-width="2"/>
+  <text x="146" y="230" font-size="19" font-weight="700" fill="#E65100">② 主 Agent —— 一个完整的 Agent（不只是"包工头"）</text>
+  <text x="146" y="252" font-size="13" fill="#8D6E63">有自己的工具和循环，自己判断每一步该怎么做</text>
+
+  <rect x="146" y="268" width="240" height="112" rx="10" fill="#FFFFFF" stroke="#FFB74D" stroke-width="1.4"/>
+  <text x="266" y="296" text-anchor="middle" font-size="15" font-weight="600" fill="#E65100">直接回答</text>
+  <text x="266" y="322" text-anchor="middle" font-size="12.5" fill="#5F6368">闲聊 / 追问 / 澄清</text>
+  <text x="266" y="344" text-anchor="middle" font-size="12.5" fill="#5F6368">不需要专业能力的事</text>
+  <text x="266" y="368" text-anchor="middle" font-size="12" font-weight="600" fill="#43A047">不建 Task</text>
+
+  <rect x="400" y="268" width="240" height="112" rx="10" fill="#FFFFFF" stroke="#FFB74D" stroke-width="1.4"/>
+  <text x="520" y="296" text-anchor="middle" font-size="15" font-weight="600" fill="#E65100">自己产出</text>
+  <text x="520" y="322" text-anchor="middle" font-size="12.5" fill="#5F6368">短内容 / 说明 / 对比表</text>
+  <text x="520" y="344" text-anchor="middle" font-size="12.5" fill="#5F6368">写进产物库</text>
+  <text x="520" y="368" text-anchor="middle" font-size="12" font-weight="600" fill="#43A047">不建 Task</text>
+
+  <rect x="654" y="268" width="240" height="112" rx="10" fill="#FFFFFF" stroke="#FB8C00" stroke-width="2.2"/>
+  <text x="774" y="296" text-anchor="middle" font-size="15" font-weight="600" fill="#E65100">委派执行</text>
+  <text x="774" y="322" text-anchor="middle" font-size="12.5" fill="#5F6368">需要专业能力时</text>
+  <text x="774" y="344" text-anchor="middle" font-size="12.5" fill="#5F6368">交给隔离的执行器</text>
+  <text x="774" y="368" text-anchor="middle" font-size="12" font-weight="600" fill="#C62828">建 Task</text>
+
+  <line x1="774" y1="396" x2="774" y2="428" stroke="#5F6368" stroke-width="1.8" marker-end="url(#arw)"/>
+
+  <!-- ③ delegate 内部 -->
+  <rect x="120" y="432" width="800" height="212" rx="14" fill="#F1F8E9" stroke="#7CB342" stroke-width="2" stroke-dasharray="7 4"/>
+  <text x="146" y="460" font-size="17" font-weight="700" fill="#33691E">③ delegate 内部 —— 平台保证的几步（Agent 想跳过也跳不过）</text>
+
+  <rect x="146" y="474" width="176" height="70" rx="8" fill="#FFFFFF" stroke="#AED581" stroke-width="1.4"/>
+  <text x="234" y="500" text-anchor="middle" font-size="12" font-weight="600" fill="#33691E">(1) 取代旧的</text>
+  <text x="234" y="521" text-anchor="middle" font-size="11" fill="#5F6368">同技能未了结的旧 Task</text>
+  <text x="234" y="538" text-anchor="middle" font-size="11" fill="#5F6368">标记为 superseded</text>
+
+  <rect x="336" y="474" width="176" height="70" rx="8" fill="#FFFFFF" stroke="#AED581" stroke-width="1.4"/>
+  <text x="424" y="500" text-anchor="middle" font-size="12" font-weight="600" fill="#33691E">(2) 调执行器</text>
+  <text x="424" y="521" text-anchor="middle" font-size="11" fill="#5F6368">隔离上下文</text>
+  <text x="424" y="538" text-anchor="middle" font-size="11" fill="#5F6368">内部最多 react 3 轮</text>
+
+  <rect x="526" y="474" width="176" height="70" rx="8" fill="#FFFFFF" stroke="#FFB74D" stroke-width="1.8"/>
+  <text x="614" y="500" text-anchor="middle" font-size="12" font-weight="600" fill="#E65100">(3) 先让主 Agent 试答</text>
+  <text x="614" y="521" text-anchor="middle" font-size="11" fill="#5F6368">用它的完整上下文</text>
+  <text x="614" y="538" text-anchor="middle" font-size="11" fill="#5F6368">答得上就不打扰用户</text>
+
+  <rect x="716" y="474" width="176" height="70" rx="8" fill="#FFFFFF" stroke="#E57373" stroke-width="1.4"/>
+  <text x="804" y="500" text-anchor="middle" font-size="12" font-weight="600" fill="#C62828">(4) 登记待答</text>
+  <text x="804" y="521" text-anchor="middle" font-size="11" fill="#5F6368">交给主 Agent</text>
+  <text x="804" y="538" text-anchor="middle" font-size="11" fill="#5F6368">去问用户</text>
+
+  <text x="146" y="572" font-size="12.5" font-weight="600" fill="#33691E">Task 状态（5 态）：</text>
+  <text x="146" y="594" font-size="12.5" fill="#5F6368">running　·　completed（完成）　·　waiting_for_input（等用户）　·　failed（交给主 Agent）　·　superseded（不用管了）</text>
+  <text x="146" y="618" font-size="12" fill="#7CB342">进度与缺失项（progress / missing）一路传到主 Agent —— 它才知道该重派、还是该问用户</text>
+
+  <line x1="520" y1="644" x2="520" y2="678" stroke="#5F6368" stroke-width="1.8" marker-end="url(#arw)"/>
+
+  <!-- ④ Sub Agent -->
+  <rect x="280" y="682" width="560" height="84" rx="12" fill="#E8F5E9" stroke="#43A047" stroke-width="2"/>
+  <text x="560" y="710" text-anchor="middle" font-size="17" font-weight="700" fill="#1B5E20">④ Sub Agent —— 可选执行者</text>
+  <text x="560" y="733" text-anchor="middle" font-size="12.5" fill="#2E7D32">按需创建 · 通用 · 不绑定任何 Skill · 独立上下文 · 用完即弃</text>
+  <text x="560" y="753" text-anchor="middle" font-size="11.5" fill="#5F6368">平台约定只有一句：要交付成文件的内容 → 写进产物库</text>
+
+  <line x1="560" y1="766" x2="560" y2="796" stroke="#43A047" stroke-width="1.8" marker-end="url(#arwG)"/>
+
+  <!-- ⑤ 产物库 -->
+  <rect x="330" y="800" width="460" height="66" rx="12" fill="#F3E5F5" stroke="#8E24AA" stroke-width="2"/>
+  <text x="560" y="828" text-anchor="middle" font-size="17" font-weight="700" fill="#4A148C">⑤ 产物库</text>
+  <text x="560" y="852" text-anchor="middle" font-size="12.5" fill="#6A1B9A">教案 / 导学单 / 课件 …　主 Agent 只拿到编号与摘要</text>
+
+  <!-- 右侧：核心收益 -->
+  <rect x="944" y="96" width="212" height="770" rx="12" fill="#F1F8E9" stroke="#7CB342" stroke-width="1.6"/>
+  <text x="1050" y="128" text-anchor="middle" font-size="16" font-weight="700" fill="#33691E">核心收益</text>
+  <line x1="966" y1="142" x2="1134" y2="142" stroke="#AED581" stroke-width="1"/>
+
+  <text x="966" y="180" font-size="13" font-weight="600" fill="#33691E">✓ 不重复问参数</text>
+  <text x="966" y="203" font-size="11.5" fill="#558B2F">多技能缺同一个参数</text>
+  <text x="966" y="226" font-size="11.5" fill="#558B2F">自动合并成一条问</text>
+
+  <text x="966" y="264" font-size="13" font-weight="600" fill="#33691E">✓ 不从头重开</text>
+  <text x="966" y="287" font-size="11.5" fill="#558B2F">Task 承载状态</text>
+  <text x="966" y="310" font-size="11.5" fill="#558B2F">执行器用完即弃</text>
+
+  <text x="966" y="348" font-size="13" font-weight="600" fill="#33691E">✓ 提问走向确定</text>
+  <text x="966" y="371" font-size="11.5" fill="#558B2F">提问者是主 Agent 自己</text>
+  <text x="966" y="394" font-size="11.5" fill="#558B2F">没有"答给谁"的歧义</text>
+
+  <text x="966" y="432" font-size="13" font-weight="600" fill="#33691E">✓ 上下文不爆炸</text>
+  <text x="966" y="455" font-size="11.5" fill="#558B2F">产物正文只在产物库</text>
+  <text x="966" y="478" font-size="11.5" fill="#558B2F">主 Agent 只拿编号</text>
+
+  <text x="966" y="516" font-size="13" font-weight="600" fill="#33691E">✓ 加技能不动平台</text>
+  <text x="966" y="539" font-size="11.5" fill="#558B2F">执行器通用、不绑 Skill</text>
+
+  <text x="966" y="577" font-size="13" font-weight="600" fill="#33691E">✓ 不约束 skill 作者</text>
+  <text x="966" y="600" font-size="11.5" fill="#558B2F">skill 里没有必填字段</text>
+
+  <text x="966" y="638" font-size="13" font-weight="600" fill="#33691E">✓ 完成判定准</text>
+  <text x="966" y="661" font-size="11.5" fill="#558B2F">问"任务完成了没"</text>
+  <text x="966" y="684" font-size="11.5" fill="#558B2F">不是"产物生成了没"</text>
+
+  <line x1="966" y1="716" x2="1134" y2="716" stroke="#AED581" stroke-width="1"/>
+  <text x="966" y="748" font-size="12.5" font-weight="600" fill="#33691E">实测数据</text>
+  <text x="966" y="776" font-size="11.5" fill="#558B2F">· 48k 字课件，主上下文</text>
+  <text x="966" y="799" font-size="11.5" fill="#558B2F">  只占 2.6k 字</text>
+  <text x="966" y="823" font-size="11.5" fill="#558B2F">· 加一个技能，平台</text>
+  <text x="966" y="846" font-size="11.5" fill="#558B2F">  零改动</text>
+</svg>

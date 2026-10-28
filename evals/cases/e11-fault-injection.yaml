@@ -1,0 +1,17 @@
+id: e11-fault-injection
+family: 异常
+why: "DashScope 偶发 grammar 超时，**一次抖动曾炸掉整个 turn**。兜底加了但从没在注入下测过"
+realism: 实测发生过
+tier: full
+fault:
+  structured: 2      # 让第 1 次结构化调用的**两次尝试都失败** → 走保守默认值
+turns:
+  - "帮我出个随堂小测，三年级数学《分数的初步认识》，难度基础"
+checks:
+  - check: fault_fired
+  - check: no_exception
+  - check: task_count
+    n: 1
+  # 抖动之后还得把活干完（判定退化到 incomplete → 推回去继续 → 第 2 轮判成功）
+  - check: task_stages
+    stages: {quiz: completed}

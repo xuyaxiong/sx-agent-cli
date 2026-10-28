@@ -1,0 +1,170 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1140 1190" width="1140" height="1190"
+     font-family="Microsoft YaHei, PingFang SC, Hiragino Sans GB, sans-serif">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#37474f"/>
+    </marker>
+    <marker id="al" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#37474f"/>
+    </marker>
+    <marker id="arp" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#c2185b"/>
+    </marker>
+    <marker id="alp" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#c2185b"/>
+    </marker>
+    <marker id="arg" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2e7d32"/>
+    </marker>
+    <marker id="alb" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1565c0"/>
+    </marker>
+    <marker id="alm" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8e24aa"/>
+    </marker>
+    <marker id="alo" viewBox="0 0 10 10" refX="9.5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#ef6c00"/>
+    </marker>
+  </defs>
+
+  <rect width="1140" height="1190" fill="#fdfdfb"/>
+  <text x="36" y="38" font-size="20" font-weight="bold" fill="#1a1a1a">消息传递机制 —— 谁把什么交给谁</text>
+  <text x="36" y="60" font-size="12.5" fill="#757575">一次 graph.invoke = 一轮。不是网络调用，是同一进程里的函数调用与状态更新。</text>
+
+  <!-- ═══════ 隔离带 ═══════ -->
+  <rect x="852" y="82" width="252" height="1014" fill="#fdf2f5"/>
+  <line x1="852" y1="82" x2="852" y2="1096" stroke="#c2185b" stroke-width="1.8" stroke-dasharray="9 6"/>
+  <text x="978" y="74" font-size="11" text-anchor="middle" fill="#ad1457">隔离上下文 —— 执行器的消息轨迹不出这里</text>
+
+  <!-- ═══════ 图（容器）═══════ -->
+  <rect x="216" y="82" width="600" height="98" rx="12" fill="#f6f6f3" stroke="#b0bec5" stroke-width="1.5"/>
+  <text x="232" y="102" font-size="12" fill="#546e7a">图（StateGraph）—— 一次 graph.invoke = 一轮</text>
+
+  <rect x="232" y="110" width="180" height="60" rx="8" fill="#fff3e0" stroke="#f57c00" stroke-width="1.6"/>
+  <text x="322" y="134" font-size="13" text-anchor="middle" fill="#e65100">prepare / finalize</text>
+  <text x="322" y="154" font-size="10" text-anchor="middle" fill="#ef6c00">平台节点</text>
+
+  <rect x="440" y="110" width="160" height="60" rx="8" fill="#e8f5e9" stroke="#43a047" stroke-width="1.6"/>
+  <text x="520" y="134" font-size="15" text-anchor="middle" fill="#1b5e20">主 agent</text>
+  <text x="520" y="154" font-size="10" text-anchor="middle" fill="#2e7d32">agent 节点</text>
+
+  <rect x="628" y="110" width="172" height="60" rx="8" fill="#e3f2fd" stroke="#1976d2" stroke-width="1.6"/>
+  <text x="714" y="134" font-size="15" text-anchor="middle" fill="#0d47a1">delegate</text>
+  <text x="714" y="154" font-size="10" text-anchor="middle" fill="#1565c0">主 agent 的工具</text>
+
+  <!-- ═══════ 用户 / 执行器 ═══════ -->
+  <rect x="40" y="110" width="140" height="60" rx="9" fill="#e8f0fe" stroke="#4285f4" stroke-width="1.6"/>
+  <text x="110" y="146" font-size="15" text-anchor="middle" fill="#0d47a1">用户</text>
+
+  <rect x="900" y="110" width="140" height="60" rx="9" fill="#fce4ec" stroke="#d81b60" stroke-width="1.6"/>
+  <text x="970" y="146" font-size="15" text-anchor="middle" fill="#880e4f">执行器</text>
+
+  <!-- ═══════ 生命线 ═══════ -->
+  <g stroke="#b0bec5" stroke-width="1.2" stroke-dasharray="4 5">
+    <line x1="110" y1="170" x2="110" y2="1096"/>
+    <line x1="322" y1="170" x2="322" y2="1096"/>
+    <line x1="520" y1="170" x2="520" y2="1096"/>
+    <line x1="714" y1="170" x2="714" y2="1096"/>
+    <line x1="970" y1="170" x2="970" y2="1096"/>
+  </g>
+
+  <!-- ═══════ ①–④ ═══════ -->
+  <line x1="112" y1="204" x2="318" y2="204" stroke="#37474f" stroke-width="1.7" marker-end="url(#ar)"/>
+  <text x="215" y="196" font-size="12" text-anchor="middle" fill="#37474f">① HumanMessage</text>
+
+  <line x1="324" y1="252" x2="516" y2="252" stroke="#37474f" stroke-width="1.7" marker-end="url(#ar)"/>
+  <text x="420" y="244" font-size="12" text-anchor="middle" fill="#37474f">② SystemMessage（任务台账）</text>
+
+  <line x1="522" y1="300" x2="710" y2="300" stroke="#37474f" stroke-width="1.7" marker-end="url(#ar)"/>
+  <text x="616" y="292" font-size="12" text-anchor="middle" fill="#37474f">③ tool_call: delegate(skill, task)</text>
+
+  <line x1="716" y1="348" x2="966" y2="348" stroke="#c2185b" stroke-width="2" marker-end="url(#arp)"/>
+  <text x="841" y="340" font-size="12" text-anchor="middle" fill="#ad1457">④ 下行：instructions + given</text>
+
+  <!-- ═══════ ⑤ 交回产出 ═══════ -->
+  <line x1="968" y1="398" x2="718" y2="398" stroke="#c2185b" stroke-width="2" marker-end="url(#alp)"/>
+  <text x="843" y="390" font-size="12" text-anchor="middle" fill="#ad1457">⑤ 执行器交回产出（正文 / 产物 ID）</text>
+
+  <!-- ═══════ ⑤b 判定 ═══════ -->
+  <polyline points="714,420 772,420 772,462 720,462" fill="none" stroke="#ef6c00"
+            stroke-width="1.8" marker-end="url(#alo)"/>
+  <text x="704" y="434" font-size="11.5" text-anchor="end" fill="#e65100">⑤b 调 LLM 判三态</text>
+  <text x="704" y="451" font-size="10" text-anchor="end" fill="#ef6c00">completed / waiting_for_input</text>
+  <text x="704" y="466" font-size="10" text-anchor="end" fill="#ef6c00">/ incomplete</text>
+
+  <!-- ═══════ 分派点 1：三态出口 ═══════ -->
+  <circle cx="714" cy="490" r="4.5" fill="#37474f"/>
+  <line x1="714" y1="462" x2="714" y2="806" stroke="#37474f" stroke-width="2.4"/>
+
+  <line x1="712" y1="524" x2="524" y2="524" stroke="#37474f" stroke-width="1.7" marker-end="url(#al)"/>
+  <text x="618" y="516" font-size="11.5" text-anchor="middle" fill="#37474f">⑥a 判 completed → ToolMessage「已交付」</text>
+
+  <line x1="712" y1="566" x2="524" y2="566" stroke="#37474f" stroke-width="1.7" marker-end="url(#al)"/>
+  <text x="618" y="558" font-size="11.5" text-anchor="middle" fill="#37474f">⑥b 判 incomplete → ToolMessage「跑了 N 轮」</text>
+
+  <line x1="712" y1="620" x2="524" y2="620" stroke="#37474f" stroke-width="1.7" marker-end="url(#al)"/>
+  <text x="618" y="612" font-size="11.5" text-anchor="middle" fill="#37474f">⑦ 判 waiting_for_input → 平台强制试答</text>
+
+  <!-- ═══════ ⑧ 试答结果 ═══════ -->
+  <line x1="522" y1="674" x2="710" y2="674" stroke="#37474f" stroke-width="1.7" marker-end="url(#ar)"/>
+  <text x="616" y="666" font-size="12" text-anchor="middle" fill="#37474f">⑧ 答得上 / 答不上</text>
+
+  <!-- ═══════ 分派点 2 ═══════ -->
+  <circle cx="714" cy="698" r="4.5" fill="#37474f"/>
+  <line x1="714" y1="674" x2="714" y2="806" stroke="#37474f" stroke-width="2.4"/>
+
+  <!-- ⑨a 答得上：重跑（自环）+ 回到分派点1 -->
+  <polyline points="714,720 772,720 772,762 720,762" fill="none" stroke="#2e7d32"
+            stroke-width="1.8" marker-end="url(#arg)"/>
+  <text x="704" y="726" font-size="11.5" text-anchor="end" fill="#2e7d32">⑨a 答得上 → 带上答案重跑</text>
+  <text x="704" y="743" font-size="10" text-anchor="end" fill="#2e7d32">（= 再走一遍 ④⑤⑤b，回到分派点 1）</text>
+  <text x="704" y="758" font-size="10" text-anchor="end" fill="#2e7d32">⚠️ 重跑后**不再试答**：</text>
+  <text x="704" y="772" font-size="10" text-anchor="end" fill="#2e7d32">completed → ⑥a，否则 → ⑨b</text>
+
+  <polyline points="772,741 815,741 815,490 720,490" fill="none" stroke="#2e7d32"
+            stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#arg)"/>
+
+  <!-- ⑨b 答不上 -->
+  <line x1="712" y1="806" x2="524" y2="806" stroke="#37474f" stroke-width="1.7" marker-end="url(#al)"/>
+  <text x="618" y="798" font-size="11.5" text-anchor="middle" fill="#37474f">⑨b 答不上 → ToolMessage「它在请求信息」</text>
+
+  <!-- ═══════ ⑩–⑭ 待答的一生 ═══════ -->
+  <line x1="712" y1="858" x2="326" y2="858" stroke="#8e24aa" stroke-width="1.7"
+        stroke-dasharray="7 5" marker-end="url(#alm)"/>
+  <text x="519" y="850" font-size="12" text-anchor="middle" fill="#6a1b9a">⑩ 登记待答（写进 state["tasks"]）</text>
+
+  <line x1="320" y1="908" x2="114" y2="908" stroke="#37474f" stroke-width="1.7" marker-end="url(#al)"/>
+  <text x="217" y="900" font-size="12" text-anchor="middle" fill="#37474f">⑪ 回复（主 agent 的 AI 消息）</text>
+
+  <line x1="320" y1="952" x2="114" y2="952" stroke="#1565c0" stroke-width="2" marker-end="url(#alb)"/>
+  <text x="217" y="944" font-size="12" text-anchor="middle" fill="#1565c0">⑫ 透传待答（原样贴 report）</text>
+
+  <line x1="112" y1="1004" x2="318" y2="1004" stroke="#37474f" stroke-width="1.7" marker-end="url(#ar)"/>
+  <text x="215" y="996" font-size="12" text-anchor="middle" fill="#37474f">⑬ 用户答复（下一轮）</text>
+
+  <line x1="324" y1="1056" x2="966" y2="1056" stroke="#c2185b" stroke-width="2" marker-end="url(#arp)"/>
+  <text x="645" y="1048" font-size="12" text-anchor="middle" fill="#ad1457">⑭ 把用户原话投给待答任务（不判断是不是回答）</text>
+
+  <!-- ═══════ 底部注释 ═══════ -->
+  <text x="110" y="1128" font-size="11.5" text-anchor="middle" fill="#616161">用户看到的</text>
+  <text x="110" y="1146" font-size="11.5" text-anchor="middle" fill="#616161">只有 ⑪ 和 ⑫</text>
+
+  <text x="322" y="1128" font-size="11.5" text-anchor="middle" fill="#616161">② 台账注入 · ⑫ 透传 · ⑭ 投递</text>
+  <text x="322" y="1146" font-size="11.5" text-anchor="middle" fill="#616161">都不过主 agent（平台硬保证）</text>
+
+  <text x="520" y="1128" font-size="11.5" text-anchor="middle" fill="#616161">平台发起的 LLM 判断只有两处：</text>
+  <text x="520" y="1146" font-size="11.5" text-anchor="middle" fill="#616161">⑤b 判三态 · ⑦⑧ 试答</text>
+
+  <text x="970" y="1128" font-size="11.5" text-anchor="middle" fill="#880e4f">产物写进产物库（全局 dict）</text>
+  <text x="970" y="1146" font-size="11.5" text-anchor="middle" fill="#880e4f">只有产物 ID 随 ⑤ 出来</text>
+
+  <!-- ═══════ 图例 ═══════ -->
+  <rect x="620" y="1112" width="212" height="72" rx="8" fill="#ffffff" stroke="#cfd8dc" stroke-width="1.2"/>
+  <line x1="634" y1="1130" x2="666" y2="1130" stroke="#c2185b" stroke-width="2" marker-end="url(#arp)"/>
+  <text x="674" y="1134" font-size="11" fill="#ad1457">跨隔离边界</text>
+  <line x1="634" y1="1152" x2="666" y2="1152" stroke="#37474f" stroke-width="1.7" marker-end="url(#ar)"/>
+  <text x="674" y="1156" font-size="11" fill="#37474f">进程内调用</text>
+  <line x1="634" y1="1174" x2="666" y2="1174" stroke="#8e24aa" stroke-width="1.7"
+        stroke-dasharray="7 5" marker-end="url(#alm)"/>
+  <text x="674" y="1178" font-size="11" fill="#6a1b9a">state 写入</text>
+</svg>

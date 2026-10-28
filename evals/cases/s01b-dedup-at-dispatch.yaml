@@ -1,0 +1,28 @@
+id: s01b-dedup-at-dispatch
+family: 痛点
+why: >
+  P1 的**确定性版本**：信息给全，主 agent 没有理由先问 —— 于是必然走委派路径，
+  就能稳定验「去重发生在派发前」。
+  上一条 s01 是概率性的（主 agent 有时先问），这条把前置条件钉死。
+realism: 文档记录的需求
+tier: smoke
+turns:
+  - "帮我备课、导学单，再出个随堂小测，人教版三年级数学《分数的初步认识》第一课时，难度基础"
+checks:
+  # 三样都要做成（"至少一个 completed"，允许补救性重派）
+  - check: task_stages
+    stages: {lesson-prep: completed, guided-learning: completed, quiz: completed}
+  # 信息给全了，一个都不该再回头问用户
+  - check: no_task_stage
+    stages:
+      lesson-prep: [waiting_for_input, failed]
+      guided-learning: [waiting_for_input, failed]
+      quiz: [waiting_for_input, failed]
+  # 同一件事不许做成两份成品
+  - check: no_duplicate_completed
+# ⚠️ 删掉了两条断言，都太脆：
+#   `all_tasks_given_contain: [三年级, 数学]` —— 中文子串误伤。实测主 agent 写的是
+#     「人教版**三上**《分数的初步认识》」，完全正确，但不含"三年级"三个字。
+#   `task_count: 3` / `delegate_calls_max: 3` —— **补救性重派是合法的**：
+#     实测 r1 执行器没按指令落库 → 判定 incomplete → 主 agent 换个说法重派 → 成了。
+#     4 次委派完成 3 件事，那是**恢复路径生效**，不该判失败。

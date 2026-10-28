@@ -1,0 +1,65 @@
+id: t2-same-turn
+family: 真实技能
+why: >
+  真实复杂技能包（教案 / 导学单 / 交互网页 —— `sx-agent/test_data/skills` 的适配版）
+  一条消息要三样，且**明确要求后两样参考教案内容**：验多技能能不能都交付，
+  以及跨技能依赖在隔离上下文里能不能被桥接（本轮最大未知）。
+realism: 实测发生过（2026-10-29 用户指定的测试消息）
+tier: full
+# 适配版技能（六类机械改动，见 evals/skills/README.md）；replace 掉自带的 4 个小技能
+skills_dir: evals/skills
+skills_mode: replace
+turns:
+  - "我现在想生成人教版小学语文荷花这一课的教案、导学单和交互式网页，注意导学单和交互式网页内容得参考教案内容"
+  # 技能各自会问 2 个问题（课型/学情、用途/形式、受众）—— 一条消息把可能被问的都答了。
+  # 平台投递是**原话透传**（`graph._feed_waiting` 不做判断），各执行器自己挑需要的。
+  - "三年级，第一课时。教案按探究发现型上，学生基础一般、常见卡点是比喻句的理解；导学单用在课前预习，填空形式；网页是给三年级学生看的。"
+  - "其余没提到的按常规处理，直接生成，不用再问。"
+checks:
+  # 三样都要交付：三个技能各自 completed
+  - check: task_stages
+    stages:
+      lesson-prep: completed
+      guided-learning: completed
+      interactive-webpage: completed
+  - check: every_task_has_artifact
+  - check: artifact_no_cross_attribution
+  # 依赖走结构化传递：后两个技能的 task 必须带产物引用（不是靠主 agent 转述正文）
+  - check: task_refs_contain
+    skills: [guided-learning, interactive-webpage]
+  # ⚠️ 不断言 artifact_count: 3 —— 执行器被推回去时会**重写一份新产物**（e13 实测 4–5 个）
+  - check: artifact_titles_contain
+    subs: ["教案", "导学单"]
+  - check: artifact_looks_like_html
+  - check: artifact_no_placeholder
+    # 默认词表 + 适配版模板里的原样残留（模板没被替换成真内容 = 没写完）
+    words:
+      - 待补充
+      - 待填写
+      - 待完善
+      - 此处省略
+      - TODO
+      - TBD
+      - 占位
+      - （本课课题）
+      - （本课年级）
+      - （活动名称）
+      - （同上结构）
+  - check: artifact_chars_over
+    n: 6000
+  # 主 agent 不许把产物正文读进上下文（转交只需传 ID）——**这条是精确判据**
+  - check: main_agent_no_artifact_read
+  # 体积上限只是**粗兜底**：它按需读技能原文是允许的（渐进式披露第二层），
+  # 所以这个数不能卡太紧 —— 真正要守的是上面那条"不读产物正文"
+  - check: main_ctx_under
+    n: 12000
+  - check: reply_chars_under
+    n: 1500
+  - check: no_exception
+soft:
+  # 语义证据：后序产物内容上是不是真的基于教案（机制证据见上面的 task_refs_contain）
+  - check: artifact_derives_from_source
+    source: 教案
+  # 轮 2 已经答过这些，再问就是重复
+  - check: no_repeat_question
+    fields: ["年级", "课时", "课型"]

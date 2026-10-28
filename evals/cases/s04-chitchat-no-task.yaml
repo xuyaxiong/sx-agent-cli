@@ -1,0 +1,13 @@
+id: s04-chitchat-no-task
+family: 边界
+why: "旧版这里是 bug：主 agent 是纯路由器，连话都不会说，返回「（无产出）」"
+realism: 实测发生过
+tier: smoke
+turns:
+  - "你好"
+checks:
+  - check: task_count
+    n: 0
+  - check: delegate_calls_exact
+    n: 0
+  - check: reply_nonempty
