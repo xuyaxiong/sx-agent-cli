@@ -34,7 +34,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 NAME = "sxagent"
 ENTRY = ROOT / "evals" / "chat.py"
-DIST = ROOT / "dist" / NAME
+DIST = ROOT / "dist" / NAME   # 默认落点；`--out` 可以换（上一个包还在跑时必须换）
 
 #: 随包带的**只读资源** —— `evals/skills/*.md` 是首次运行要铺给用户的示例技能。
 #: 落点必须和 `proto.config.RESOURCE_ROOT` 的约定对上（冻结后 = `sys._MEIPASS`）。
@@ -63,7 +63,13 @@ EXCLUDE: list[str] = [
 ]
 
 
-def build() -> None:
+def build(out_dir: Path | None = None) -> None:
+    """`out_dir` 不传就打进 `dist/`。
+
+    ⚠️ **上一个包还在跑的时候必须传它**（`--out dist/_new`）：PyInstaller 要**删掉**目标目录
+    再重建，而正在运行的 exe 占着那个目录 → `PermissionError: [WinError 5] 拒绝访问`。
+    """
+    dist = out_dir or (ROOT / "dist")
     args: list[str] = [
         sys.executable, "-m", "PyInstaller",
         str(ENTRY),
@@ -72,6 +78,8 @@ def build() -> None:
         "--console",             # 双击弹一个控制台窗口跑 chat —— 不用用户敲命令行
         "--noconfirm",
         "--clean",
+        "--distpath", str(dist),
+        "--workpath", str(ROOT / "build" / dist.name),  # 临时目录也跟着分开，免得互相踩
         "--paths", str(ROOT),    # 让 `evals` / `proto` 两个包可被解析
     ]
     for src, dst in ADD_DATA:
@@ -87,16 +95,27 @@ def build() -> None:
     subprocess.run(args, cwd=ROOT, check=True)
 
     # 随包放一份 `.env.example` 当模板 —— **绝不拷真的 `.env`**（那是密钥）。
+    # ⚠️ 落点用 `dist / NAME`（实际产物），**不是**模块级的 `DIST` ——
+    # 传了 `--out` 时两者不是一回事（踩过：提示打的是默认路径，实际打到了 `--out` 那儿）。
+    built = dist / NAME
     example = ROOT / ".env.example"
     if example.is_file():
-        shutil.copy2(example, DIST / ".env.example")
-        print(f"\n已放入模板：{DIST / '.env.example'}")
+        shutil.copy2(example, built / ".env.example")
+        print(f"\n已放入模板：{built / '.env.example'}")
     print(
-        f"\n完成：{DIST}\n"
+        f"\n完成：{built}\n"
         f"  ⚠️ 发出去之前把 `.env` 填好放进这个目录（模板已给）\n"
         f"  ⚠️ 告诉用户**整个文件夹拷走**，别只拷 exe"
     )
 
 
 if __name__ == "__main__":
-    build()
+    import argparse
+
+    ap = argparse.ArgumentParser(description="打包成能发给别人的 exe")
+    ap.add_argument(
+        "--out", type=Path, default=None,
+        help="产物落到哪个 dist 目录（默认 dist/）。⚠️ **上一个包还在跑时必须指定**，"
+             "否则 PyInstaller 删不掉目标目录会报 PermissionError",
+    )
+    build(ap.parse_args().out)
