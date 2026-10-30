@@ -37,7 +37,7 @@ from proto.artifacts import (  # 产物领域
     store_artifact,
     write_artifact,
 )
-from proto.skill_pack import read_reference, reference_index_lines  # 参考文件（磁盘）
+from proto.skill_pack import read_skill_file, skill_file_index_lines  # 技能包文件（磁盘）
 from proto.skills import Skill  # 技能领域
 
 #: 平台约定 —— 尽量少。技能作者写什么都不会破坏它，因为它不要求作者做任何事。
@@ -385,21 +385,21 @@ def run_task(skill: Skill, briefing: str = "") -> ExecOutcome:
     """
     agent = create_agent(
         get_model(),
-        tools=[write_artifact, read_artifact, read_reference],
+        tools=[write_artifact, read_artifact, read_skill_file],
         system_prompt=_PLATFORM_RULE,
         name="executor",
     )
 
     briefing_text = briefing.strip() or "（暂无 —— 你需要的任何信息都要先问，不要猜）"
-    # 技能自带参考文件时，把**清单**（名字 + 字数）一起给执行器 —— 正文按需 `read_reference` 读。
-    # 清单**现场扫盘**（参考文件不缓存在 `Skill` 上，见 `skill_pack` 的模块 docstring）；
-    # **没有参考文件就一个字不加**（单文件技能本来就没有）。
+    # 技能自带文件时，把**清单**（路径 + 字数）一起给执行器 —— 正文按需 `read_skill_file` 读。
+    # 清单**现场扫盘**（不缓存在 `Skill` 上，见 `skill_pack` 的模块 docstring）；
+    # **没有自带文件就一个字不加**（单文件技能本来就没有）。
     refs = ""
-    have = reference_index_lines(skill.name)
+    have = skill_file_index_lines(skill.name)
     if have:
         refs = (
-            "\n\n【参考文件】要用哪一份就用 `read_reference` 读全文，**不要凭文件名猜内容**：\n"
-            + "\n".join(have)
+            "\n\n【技能自带文件】要用哪一份就用 `read_skill_file` 读全文"
+            "（路径照抄，**不要凭文件名猜内容**）：\n" + "\n".join(have)
         )
     task_text = f"【能力指令】\n{skill.instructions}{refs}\n\n【已知信息】\n{briefing_text}"
 

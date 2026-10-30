@@ -4,32 +4,40 @@
 
     lesson-prep/
     ├── SKILL.md               ← 入口，**只有这一个名字**；frontmatter 给 name/description，正文即 instructions
-    └── references/            ← **可选**，没有就没有（不是错误）
-        ├── 教学目标编写指南.md
-        └── 教案结构模板.md
+    ├── references/            ← **可选**，没有就没有（不是错误）
+    │   ├── 教学目标编写指南.md
+    │   └── 教案结构模板.md
+    └── assets/                ← 目录名随作者，**整个包都能读**
+        └── 教案汇总模板.md
 
-## 🔴 参考文件**不进 `Skill` 对象**
+## 🔴 技能包里的文件**不进 `Skill` 对象**
 
 它本来就在磁盘上读得到 —— 装进对象里是**多余的一份**。
 `Skill` 因此仍然只有 `name` + `description` + `instructions`（用户 2026-10-30 定的，
 也是 §0.6 C2「平台尽量少约束 skill 作者」和评审 D1「不引入任何新字段」的延续）。
 
 **读不读、什么时候读、读哪一份，是 LLM 自己的决策** —— 这里只提供两件事：
-`list_references()`（有哪些）和 `read_reference()`（读一份）。两者**都现场扫盘**，
+`list_skill_files()`（有哪些）和 `read_skill_file()`（读一份）。两者**都现场扫盘**，
 内存里不留副本。
+
+## 🔴 **不限定子目录名**
+
+作者的资料放 `references/` 还是 `assets/` 还是别的，**是作者的事** ——
+平台规定"参考资料必须叫 references"就是用目录名约束作者（跟 C2 相冲）。
+实测 `pbl-teaching-designer` 就把阶段模板放在 `assets/`（用户 2026-10-30 定：整个包都能读）。
 
 ## 只认 `SKILL.md`
 
 入口文件名**只有一种**。不做"跟目录同名"的兼容 ——
 两种写法并存会让"这个目录到底是不是一个技能包"变得要靠猜。
 
-## 参考文件的收与不收
+## 收与不收
 
 **收**：扩展名在白名单里的文本文件（`TEXT_EXTS`），含子目录（名字带相对路径）。
-**不收**：二进制、超大文件 —— **在"列"这一步就过滤掉**，所以 LLM 的清单里
-根本不会出现读不了的东西。
+**不收**：二进制、超大文件、隐藏目录 —— **在"列"这一步就过滤掉**，
+所以 LLM 的清单里根本不会出现读不了的东西。
 
-> 🔑 **一条不变量**：`read_reference` **只认 `list_references` 给得出来的东西**。
+> 🔑 **一条不变量**：`read_skill_file` **只认 `list_skill_files` 给得出来的东西**。
 > 路径穿越（`../`）、二进制、超大文件，全被这一条挡住 —— 不需要再写一套路径检查。
 """
 
@@ -88,70 +96,74 @@ def split_frontmatter(text: str) -> tuple[dict, str]:
     return {}, text
 
 
-# ──────────────────────────── 参考文件：列 + 读 ────────────────────────────
+# ──────────────────────────── 技能包里的文件：列 + 读 ────────────────────────────
 
 
-def list_references(skill_name: str) -> list[tuple[str, int]]:
-    """这个技能包里有哪些参考文件 → `[(相对路径, 字数), ...]`。**现场扫盘，不缓存。**
+def list_skill_files(skill_name: str) -> list[tuple[str, int]]:
+    """技能包里的文本文件 → `[(相对包根的路径, 字数), ...]`。**现场扫盘，不缓存。**
 
-    没有技能包、没有 `references/`、目录里全是二进制 —— 一律返回**空列表**：
-    **没有就是没有，不是错误**。
+    🔴 **不限定子目录名**（2026-10-30 用户定）：作者爱放 `references/` 还是 `assets/`
+    还是别的，是**作者的事** —— 平台去规定"参考资料必须叫 references"，
+    等于用目录名约束作者（跟 §0.6 C2「平台尽量少约束 skill 作者」相冲）。
+    实测就有技能把阶段模板放在 `assets/`。
+
+    **排除**：入口 `SKILL.md` 自己（它的正文已经是 `instructions` 了）、
+    隐藏目录（`.git` 之类）、非文本扩展名、超大文件。
+
+    没有技能包信息 / 目录里没东西 —— 一律返回**空列表**：**没有就是没有，不是错误**。
     """
     pack = PACK_DIRS.get(skill_name)
     if pack is None:
         return []
-    ref_dir = pack / REFERENCES_DIR
-    if not ref_dir.is_dir():
-        return []
     out: list[tuple[str, int]] = []
-    for p in sorted(ref_dir.rglob("*")):
-        if not p.is_file() or p.suffix.lower() not in TEXT_EXTS:
+    for p in sorted(pack.rglob("*")):
+        if not p.is_file():
             continue
-        if p.stat().st_size > MAX_REF_BYTES:
+        rel = p.relative_to(pack)
+        if rel.as_posix() == ENTRY_NAME or any(part.startswith(".") for part in rel.parts):
             continue
-        # 名字用**相对 `references/` 的路径**（子目录会带 `/`），读的时候原样传回来
-        out.append((p.relative_to(ref_dir).as_posix(), len(p.read_text(encoding="utf-8", errors="replace"))))
+        if p.suffix.lower() not in TEXT_EXTS or p.stat().st_size > MAX_REF_BYTES:
+            continue
+        # 🔴 名字用**相对技能包根**的路径（`references/stage-1-topic.md`），
+        # **和 SKILL.md 里写的一模一样** —— 作者本来就是那么引用的
+        # （实测：`[名](references/xxx.md)`、`见 references/xxx.md`）。
+        # 用"相对 references/"会让模型照抄 SKILL.md 时读不到（2026-10-30 撞上）。
+        out.append((rel.as_posix(), len(p.read_text(encoding="utf-8", errors="replace"))))
     return out
 
 
-def reference_index_lines(skill_name: str) -> list[str]:
-    """参考文件清单（渐进式披露第二层半）：文件名 + 字数，**不含正文**。"""
-    return [f"- {name}（{n} 字）" for name, n in list_references(skill_name)]
+def skill_file_index_lines(skill_name: str) -> list[str]:
+    """技能包文件清单（渐进式披露第二层半）：路径 + 字数，**不含正文**。"""
+    return [f"- {name}（{n} 字）" for name, n in list_skill_files(skill_name)]
 
 
-def read_reference_file(skill_name: str, ref_name: str) -> str | None:
-    """读一份参考文件的全文；**不在清单里就返回 `None`**（见模块 docstring 的不变量）。"""
-    if ref_name not in {name for name, _ in list_references(skill_name)}:
+def load_skill_file(skill_name: str, path: str) -> str | None:
+    """读技能包里某个文件的全文；**不在清单里就返回 `None`**（见模块 docstring 的不变量）。
+
+    `path` 是**相对技能包根**的路径（`references/xxx.md`），和清单给的一致。
+    """
+    if path not in {name for name, _ in list_skill_files(skill_name)}:
         return None
-    pack = PACK_DIRS[skill_name]
-    return (pack / REFERENCES_DIR / ref_name).read_text(encoding="utf-8", errors="replace")
+    return (PACK_DIRS[skill_name] / path).read_text(encoding="utf-8", errors="replace")
 
 
 @tool
-def read_reference(skill_name: str, ref_name: str) -> str:
-    """读技能包里某个**参考文件**的全文（渐进式披露第三层）。
+def read_skill_file(skill_name: str, path: str) -> str:
+    """读技能包里某个**文件的全文**（渐进式披露第三层）。
 
-    参考文件是技能自带的规范 / 模板 / 标准（如《教案结构模板》《评分标准》）。
-    先看清单（`read_skill` 的返回里有，或 `list_references`），
+    技能自带的规范 / 模板 / 标准（如《教案结构模板》《评分标准》《学科课标》）——
+    路径就是 `SKILL.md` 里写的那个（形如 `references/xxx.md`）。
+    清单在 `read_skill` 的返回里（派给执行器的任务书里也有一份）。
+
     **确定这一份确实用得上再读** —— 别把几份都拉进上下文。
     """
-    have = reference_index_lines(skill_name)
+    have = skill_file_index_lines(skill_name)
     if not have:
-        return f"能力「{skill_name}」没有参考文件。"
-    got = read_reference_file(skill_name, ref_name)
+        return f"能力「{skill_name}」没有自带文件。"
+    got = load_skill_file(skill_name, path)
     if got is None:
-        return f"「{skill_name}」里没有参考文件「{ref_name}」。现有：\n" + "\n".join(have)
-    return f"【{skill_name} / {ref_name}】\n{got}"
-
-
-@tool
-def list_references_tool(skill_name: str) -> str:
-    """列出某个技能包里有哪些**参考文件**（名字 + 字数）。**不含正文。**
-
-    不确定这个能力带没带参考资料、或者想不起清单时用它。
-    """
-    have = reference_index_lines(skill_name)
-    return f"能力「{skill_name}」的参考文件：\n" + "\n".join(have) if have else f"能力「{skill_name}」没有参考文件。"
+        return f"「{skill_name}」里没有文件「{path}」。现有：\n" + "\n".join(have)
+    return f"【{skill_name} / {path}】\n{got}"
 
 
 # ──────────────────────────── 加载 ────────────────────────────

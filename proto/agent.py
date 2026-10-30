@@ -37,7 +37,7 @@ from proto.artifacts import (  # 产物领域
     read_artifact,
     write_artifact,
 )
-from proto.skill_pack import list_references_tool, read_reference  # 参考文件（磁盘）
+from proto.skill_pack import read_skill_file  # 技能包文件（磁盘）
 from proto.skills import SKILLS, read_skill  # 技能领域
 
 #: 主 agent 的 system prompt —— 平台约定，**不约束 skill 作者**
@@ -466,8 +466,7 @@ def build_agent(state_schema: type) -> Any:
     """主 agent：一个完整的 agent（工具 + 循环）。"""
     return create_agent(
         get_model(),
-        tools=[delegate, write_artifact, read_artifact, list_artifacts, read_skill,
-           read_reference, list_references_tool],
+        tools=[delegate, write_artifact, read_artifact, list_artifacts, read_skill, read_skill_file],
         system_prompt=_MAIN_PROMPT + "\n\n可用能力：\n" + "\n".join(
             f"- {s.name}：{s.description}" for s in SKILLS.values()
         ),

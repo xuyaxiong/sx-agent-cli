@@ -78,16 +78,26 @@ def main() -> None:
 
     print("\n③ 首次运行初始化")
     harness.ensure_app_dirs()
-    # 技能是**包**（子目录 + SKILL.md），不是散装 .md —— 见 `proto/skill_pack.py`
-    seeded = sorted(p.name for p in (fake / "skills").iterdir() if (p / "SKILL.md").is_file())
-    check(
-        "只铺真技能包（有 SKILL.md 的目录；README.md 不算）",
-        seeded == ["guided-learning", "interactive-webpage", "lesson-prep"],
-        str(seeded),
+    # 技能是**包**（子目录 + SKILL.md），不是散装 .md —— 见 `proto/skill_pack.py`。
+    # ⚠️ 断言**规则**（源目录里有几个包就铺几个），**不写死数字** ——
+    # 写死的话每加一个技能这条就假红（2026-10-30 踩过）。
+    src_packs = sorted(
+        p.name for p in (REPO / "evals" / "skills").iterdir() if (p / "SKILL.md").is_file()
     )
+    seeded = sorted(p.name for p in (fake / "skills").iterdir() if (p / "SKILL.md").is_file())
+    check("铺的 == 源目录里的技能包（散文件如 README.md 不铺）", seeded == src_packs, str(seeded))
     check(
         "包里的 SKILL.md 真在",
-        all((fake / "skills" / n / "SKILL.md").is_file() for n in seeded),
+        bool(seeded) and all((fake / "skills" / n / "SKILL.md").is_file() for n in seeded),
+    )
+    # 带子目录的包（`references/standards/`）要**整棵树**拷过去
+    check(
+        "子目录也一起拷了",
+        all(
+            not any((REPO / "evals" / "skills" / n).rglob("*/"))
+            or any((fake / "skills" / n).rglob("*/*"))
+            for n in seeded
+        ),
     )
     check("幂等（再跑一次什么都不做）", harness.ensure_app_dirs() == [])
 

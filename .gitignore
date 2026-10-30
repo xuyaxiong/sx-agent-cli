@@ -21,3 +21,8 @@ runs/
 
 # PyInstaller 每次构建都按 build_exe.py 的参数重生成，不用入库
 *.spec
+
+# 用户给的真实技能样例（2026-10-30 要求不入库）——
+# 拿来验"技能包"这条链路的：一个带 references/ 子目录，一个带 assets/
+evals/skills/pbl-teaching-designer/
+evals/skills/zhiwo-ai-multi-role-agent-builder/

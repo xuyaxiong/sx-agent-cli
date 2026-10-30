@@ -59,6 +59,10 @@ BAR = "─" * 74
 #: 用户版开场白的横线 —— **比开发态窄**。74 列铺满终端像分隔日志，不像界面的边。
 BAR_USER = "─" * 42
 
+#: 打这些就退出（大小写不敏感）—— 和 Ctrl-C / Ctrl-D 一样。
+#: ⚠️ **空行不是退出**：原来空行就退出，一个多余的回车能把整场会话结束掉（见主循环的注释）。
+_EXIT_WORDS = frozenset({"exit", "quit", "退出", "再见"})
+
 #: 打包后开场白里的标题 —— **产品名**（用户 2026-10-30：*"我这不是 ai 助教 我是 SX Agent"*）。
 #: 面向用户，不是面向开发：所以不叫"原型"，也不按技能内容起名。
 APP_TITLE = "SX Agent"
@@ -469,7 +473,7 @@ def main() -> None:
         default=str(DEFAULT_SKILLS_DIR),
         help=f"技能包目录（默认 {DEFAULT_SKILLS_DIR}）：**每个子目录是一个技能包**，"
         "入口是 SKILL.md（frontmatter 给 name/description，正文即 instructions），"
-        "可选的 references/ 放参考文件（渐进式披露第三层，按需 read_reference）",
+        "包里的文本文件（references/ assets/ …随作者）按需读（渐进式披露第三层，read_skill_file）",
     )
     ap.add_argument("--thread", default="interactive-1")
     args = ap.parse_args()
@@ -529,7 +533,7 @@ def main() -> None:
         print("  直接说你要什么就行，比如：")
         print("    「帮我备一节三年级语文《荷花》的课」\n")
         print("  需要补充信息我会问你，你答就行。")
-        print("  结束：按 Ctrl-C，或直接回车。")
+        print("  结束：按 Ctrl-C，或打 exit。")
         print(BAR_USER)
         if seed_notes:
             print(f"  {seed_notes[0]}\n")
@@ -545,7 +549,7 @@ def main() -> None:
         print(f"日志   {trace.LOG_FILE}")
         print(f"记录   {out_dir}")
         print(BAR)
-        print("直接说你要什么。空行结束，Ctrl-C 中断。")
+        print("直接说你要什么。退出：Ctrl-C 或 exit。")
         print("技能需要什么信息会自己问，你答就行。\n")
 
     turns: list[dict] = []
@@ -566,12 +570,21 @@ def main() -> None:
                 _to_file(prompt + text)
                 # 管道输入没有终端回显，补上（不然这行是空的）；真终端上**不要**补，
                 # 否则同一句话出现两次 —— 那正是用户 2026-10-30 指出的毛病。
-                if text and not sys.stdout.isatty():
+                # ⚠️ 空行也要打（`print("")` = 只换行）：不然下一个提示符会接在同一行上。
+                if not sys.stdout.isatty():
                     print(text)
             except (EOFError, KeyboardInterrupt):
                 print()
                 break
+            # 🔴 **空行不再退出**（2026-10-30 改）：原来 `if not text: break`，
+            # 于是**一个多余的回车就把整场会话结束掉**，而且**一声不吭** ——
+            # 用户实测踩到：*"运行过程中突然进程退出了"*（第 5 轮答完，提示符刚出现就没了）。
+            # 触发很常见：粘贴的内容带尾随换行，那个换行留在缓冲里，
+            # 下一个提示符一出现就被当成"空行"吃掉。
+            # **退出改成显式动作**：Ctrl-C / Ctrl-D，或打 `exit` / `quit`。
             if not text:
+                continue
+            if text.lower() in _EXIT_WORDS:
                 break
             t1 = time.time()
             # 🔴 `graph.invoke` 是**阻塞**的（一轮 2–3 分钟），所以另起一个线程
@@ -642,9 +655,11 @@ def main() -> None:
     if FROZEN:
         # 收尾才说记录在哪 —— 用户刚做完事，这时候说"把它发我"才自然；
         # 开场就说路径只会变成噪音。**回收是功能，不是附注。**
-        print(f"\n  这次对话已记录，请把这个文件夹发给我：\n    {out_dir}\n")
+        # 🔴 **退出必须说一声**（2026-10-30）：原来一声不吭就结束，
+        # 用户看到的就是"进程突然没了" —— 分不清是正常结束还是崩了。
+        print(f"\n  再见 —— 这次对话已记录，请把这个文件夹发给我：\n    {out_dir}\n")
     else:
-        print(f"\n记录：{out_dir / 'artifacts' / f'{tag}__r1' / '_run.md'}")
+        print(f"\n再见。记录：{out_dir / 'artifacts' / f'{tag}__r1' / '_run.md'}")
 
 
 if __name__ == "__main__":

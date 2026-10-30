@@ -6,7 +6,7 @@
 
 🔴 **技能包里的参考文件不是这里的字段**：它本来就在磁盘上读得到，
 装进对象里是多余的一份；读不读、读哪份是 LLM 自己的决策。
-列和读在 `proto/skill_pack.py`（`list_references` / `read_reference`）。
+列和读在 `proto/skill_pack.py`（`list_skill_files` / `read_skill_file`）。
 
 **平台对 skill 作者零强制约束**——不加任何字段：
   - ❌ 不要求声明**参数**（`params`）—— 参数名是平台的词汇表，用户的自然语言不该被塞进去；
@@ -114,7 +114,7 @@ def catalog() -> str:
 
 @tool
 def read_skill(skill_name: str) -> str:
-    """按需读一个能力的**完整指令**（渐进式披露第二层），附带它有哪些参考文件。
+    """按需读一个能力的**完整指令**（渐进式披露第二层），附带它自带哪些文件。
 
     常驻在你眼前的只有能力名和一句话描述。写任务要求前若不确定这个能力
     **交付什么、按什么标准交付**，用它读原文核对 —— **不要凭描述猜**。
@@ -129,12 +129,12 @@ def read_skill(skill_name: str) -> str:
     out = f"【能力 {skill.name}】{skill.description}\n\n{skill.instructions}"
     # 参考文件清单**现场扫盘**（不缓存在 Skill 上，见 `skill_pack` 的模块 docstring）。
     # 有才带这一段 —— 没有就一个字不加（**没有就是没有**，不写"（无参考文件）"这种废话）。
-    from proto.skill_pack import reference_index_lines
+    from proto.skill_pack import skill_file_index_lines
 
-    refs = reference_index_lines(skill.name)
-    if refs:
+    files = skill_file_index_lines(skill.name)
+    if files:
         out += (
-            "\n\n【参考文件】要用哪一份就用 `read_reference` 读全文，**不要凭文件名猜内容**：\n"
-            + "\n".join(refs)
+            "\n\n【技能自带文件】要用哪一份就用 `read_skill_file` 读全文"
+            "（路径照抄，**不要凭文件名猜内容**）：\n" + "\n".join(files)
         )
     return out

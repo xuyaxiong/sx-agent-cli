@@ -159,8 +159,8 @@ README.md（本文）              入口 + **导航**（找东西 / 写东西�
 ├── config.py      模型配置（环境变量 / .env）+ **应用根**（冻结后 = exe 目录）
 ├── llm.py         结构化输出 + 兜底
 │
-├── skills.py      【技能领域】Skill / Reference 是什么 + read_skill / read_reference
-├── skill_pack.py  【技能加载】技能包（文件夹形态）→ Skill —— I/O + 格式，换存储只动这里
+├── skills.py      【技能领域】Skill 是什么 + read_skill
+├── skill_pack.py  【技能包】文件夹形态 → Skill + 自带文件的列/读 —— I/O + 格式，换存储只动这里
 ├── artifacts.py   【产物领域】产物库 + 类型派发 + 落盘 + write/read/list_artifact
 │
 ├── executor.py    执行器（三态判定 + 出口限制）← **判定提示词的真值在这里**
