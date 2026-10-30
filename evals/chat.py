@@ -1,13 +1,18 @@
-"""交互式跑一个 case —— **用户自己当用户**（人在环）。
+"""交互式跑原型 —— **你当用户**，技能从一个文件夹全量注入。
 
-    uv run python -m evals.chat --case t2-same-turn
+    uv run python -m evals.chat                      # 默认 evals/skills/
+    uv run python -m evals.chat --skills 别的目录
 
-与 `evals.run` 的区别：`turns` 不再是预置字符串，**问题由你当场回答**。
-预置答复是照着技能里"会问什么"编的，几乎必然答得上 —— 那恰好绕开了
-"答非所问 / 一次答不全 / 用户反问"这类真实情况。这个入口就是用来压它们的。
+与 `evals.run`（跑批）的分工：
+- **跑批**：case 预置 `turns` + 断言，机器判、出通过率 —— 验"稳不稳"
+- **这里**：你自由对话，问题当场答 —— 验"真实节奏下能不能跑"，也用来手工试新技能
 
-跑完落一份与跑批**同格式**的记录：`runs/<tag>/artifacts/<case>__r1/_run.md`
-（逐轮全记录 + 产物原文 + 原始 trace），另有 `results.json` 供回看。
+技能**启动时全量注入**（文件夹下每个 `*.md` 一个技能，须有 frontmatter `name`/`description`），
+但主 agent 只看到 `name + description`（渐进式披露第一层），全文按需 `read_skill` 取。
+
+跑完落一份与跑批**同格式**的记录：`runs/<tag>/`，含
+`_console.log`（这屏的全文，去色）、`artifacts/<tag>__r1/_run.md`（逐轮全记录 +
+软判断留档 + 原始 trace 附录）、产物原文与 `results.json`。
 """
 
 # ruff: noqa: T201  # 交互式入口，输出即界面
@@ -45,15 +50,6 @@ from proto.skills import ARTIFACTS  # noqa: E402
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 BAR = "─" * 74
-
-
-def _load_case(which: str) -> tuple[Path, dict]:
-    p = Path(which)
-    if not p.exists():
-        p = HERE / "cases" / f"{which}.yaml"
-    if not p.exists():
-        raise SystemExit(f"找不到 case：{which}")
-    return p, yaml.safe_load(p.read_text(encoding="utf-8"))
 
 
 # ──────────────────────────── 输出层：一套视觉语言 ────────────────────────────
@@ -145,7 +141,7 @@ def _dw(s: str) -> int:
 #: 用户 2026-10-30 定：*"正文输出 用户输入 和其它日志搅在一起了"* ——
 #: 读对话只追顶格行，查机制看缩进行。
 _LABEL_W = 12   # gutter 里标签的宽度（按显示列算；最长的 EXECUTOR/PLATFORM 是 11 列）
-_TS = "[HH:MM:SS] "
+_TS = "[0000-00-00 00:00:00.000] "   # gutter 宽度占位（真实时间戳走 trace.stamp()）
 
 #: 播报里已经打过的"执行器的话"（归一化前 60 字）—— 去重用。
 #: 不去重的话，同一段话会以 🗣 EXECUTOR（实时）和 🧠 AGENT（小结）出现两次。
@@ -184,7 +180,7 @@ def _emit(role: str, text: str, stamp: str | None = None) -> None:
     正文层顶格；机制层多一个 `   | ` 前导并压成暗灰 —— 两层一眼分得开。
     """
     icon, color = _STYLE[role]
-    stamp = stamp or time.strftime("%H:%M:%S")
+    stamp = stamp or trace.stamp()
     pad = " " * max(0, _LABEL_W - _dw(icon))
     if role in _MAIN_ROLES:
         head = f"[{stamp}] {icon}{pad}┃ "
@@ -203,7 +199,7 @@ def _emit(role: str, text: str, stamp: str | None = None) -> None:
 
 def _live(role: str, line: str) -> None:
     """把一条 trace 日志行推出去 —— 时间戳**用日志里的**（那才是事件真实发生的时刻）。"""
-    m = re.match(r"\[(\d{2}:\d{2}:\d{2})\]\s*(.*)", line, re.S)
+    m = re.match(r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\]\s*(.*)", line, re.S)
     if not m:
         return
     # 执行器的话给宽一点（提问往往在正文末尾，截太狠就看不到了）
@@ -221,7 +217,7 @@ def _feed(st: dict, line: str) -> None:
 
         谁（主 agent / 执行器 / 平台 / 判定）× 做了什么 × 参数或内容 × 结果
     """
-    m = re.match(r"\[(\d{2}:\d{2}:\d{2})\]\s?(.*)", line, re.S)
+    m = re.match(r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\]\s?(.*)", line, re.S)
     if m:
         st["ts"] = m.group(1)
         body = m.group(2)
@@ -384,19 +380,28 @@ def _turn_summary(result: dict, elapsed: float) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="交互式跑一个 case（用户自己当用户）")
-    ap.add_argument("--case", required=True, help="case id（如 t2-same-turn）或 yaml 路径")
+    ap = argparse.ArgumentParser(description="交互式跑原型（你当用户；技能从文件夹加载）")
+    ap.add_argument(
+        "--skills",
+        default="evals/skills",
+        help="技能文件夹（默认 evals/skills）：目录下**所有** *.md 都注入，"
+        "每个须有 frontmatter name/description；正文即 instructions（渐进式披露，按需 read_skill）",
+    )
     ap.add_argument("--thread", default="interactive-1")
     args = ap.parse_args()
 
-    case_path, case = _load_case(args.case)
-    inst = install(case)
+    # 技能来自**文件夹**（不再绑 case）—— 用户 2026-10-30：*"有一个文件夹里面有各种 skill
+    # cli 启动时候自动注入文件夹里面的全部 skill"*。case 那套是跑批用的（预置 turns + 断言），
+    # 这个入口是给人自由对话用的。
+    inst = install({"skills_dir": args.skills, "skills_mode": "replace"})
     graph = build()
     config = {"configurable": {"thread_id": args.thread}}
 
     import proto.agent
+    from proto.config import describe
 
-    tag = f"interactive-{case['id']}-{time.strftime('%H%M%S')}"
+    label = Path(args.skills).name or "skills"
+    tag = f"interactive-{label}-{time.strftime('%m%d-%H%M%S')}"
     out_dir = ROOT / "evals" / "runs" / tag
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -404,13 +409,18 @@ def main() -> None:
     global _SINK
     _SINK = (out_dir / "_console.log").open("w", encoding="utf-8")
 
+    skills = list(proto.agent.SKILLS.values())
     print(BAR)
-    print(f"交互式跑 case：{case['id']}")
-    print(f"技能：{', '.join(sorted(proto.agent.SKILLS.keys()))}")
-    print(f"日志：{trace.LOG_FILE}")
+    print(f"原型交互式 ｜ 模型 {describe()}")
+    print(f"技能 {len(skills)} 个（来自 {args.skills}/，启动时全量注入）")
+    for s in skills:
+        print(f"   · {s.name:<20} {s.description[:60]}")
     print(BAR)
-    print("现在**你是用户**：想说什么就说什么（空行结束）。")
-    print("提示：系统提问时，故意答非所问 / 只答一半，看它怎么办。\n")
+    print(f"日志   {trace.LOG_FILE}")
+    print(f"记录   {out_dir}（_console.log 是这屏的全文，_run.md 是逐轮全记录）")
+    print(BAR)
+    print("直接说你要什么。**空行结束**，Ctrl-C 中断（已经跑过的轮次仍会落盘）。")
+    print("技能需要什么信息会自己问，你答就行。\n")
 
     turns: list[dict] = []
     seen_len = 0
@@ -425,7 +435,7 @@ def main() -> None:
                 # （终端回显一次、播报一次），用户 2026-10-30 指出："没必要显示两条啊"。
                 icon, color = _STYLE["user"]
                 pad = " " * max(0, _LABEL_W - _dw(icon))
-                prompt = f"[{time.strftime('%H:%M:%S')}] {icon}{pad}┃ "
+                prompt = f"[{trace.stamp()}] {icon}{pad}┃ "
                 text = input(paint(prompt, color)).strip()
                 _to_file(prompt + text)
                 # 管道输入没有终端回显，补上（不然这行是空的）；真终端上**不要**补，
@@ -464,7 +474,7 @@ def main() -> None:
         print(f"\n⚠️ 炸了：{error[:500]}")
 
     result = {
-        "case": case["id"],
+        "case": tag,
         "rep": 1,
         "turns": turns,
         "turns_done": len(turns),
@@ -485,10 +495,10 @@ def main() -> None:
         "error": error,
         "wall_s": round(time.time() - t0, 1),
         "trace_log": str(trace.LOG_FILE),
-        "case_file": str(case_path),
+        "skills_dir": str(args.skills),
     }
-    dump_artifacts(out_dir, case["id"], 1, result)
-    dump_run_record(out_dir, case["id"], 1, result)
+    dump_artifacts(out_dir, tag, 1, result)
+    dump_run_record(out_dir, tag, 1, result)
     # 把这次跑的**原始 trace** 作为附录并进 `_run.md`（跑批那条路径是 run.py 干的，交互式得自己做）
     from evals.run import _append_trace
 
@@ -499,7 +509,7 @@ def main() -> None:
         json.dumps([result], ensure_ascii=False, indent=2), encoding="utf-8"
     )
     trace.close()
-    record = out_dir / "artifacts" / f"{case['id']}__r1" / "_run.md"
+    record = out_dir / "artifacts" / f"{tag}__r1" / "_run.md"
     print(f"\n记录：{record}")
 
 

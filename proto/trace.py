@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -25,8 +26,17 @@ _fh = LOG_FILE.open("w", encoding="utf-8")
 BAR = "═" * 78
 
 
-def _stamp() -> str:
-    return time.strftime("%H:%M:%S")
+def stamp() -> str:
+    """日志时间戳：**年月日 + 毫秒**（用户 2026-10-30：*"日志实践精确到毫秒 添加上年月日信息"*）。
+
+    以前只有 `HH:MM:SS` —— 一轮里同一秒内发生好几件事（工具调用 → 返回 → 判定），
+    秒级看不出先后；跨天的日志也分不清是哪天。
+    """
+    return datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+
+
+#: 内部沿用的短名（历史调用点都写 `_stamp()`）
+_stamp = stamp
 
 
 def write(line: str = "") -> None:
