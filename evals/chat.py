@@ -315,33 +315,12 @@ def _tail_trace(stop: threading.Event, pos: list[int]) -> None:
 
 
 def _turn_summary(result: dict, elapsed: float) -> None:
-    """回合小结：**主 agent 说了什么** + 台账。
+    """回合小结：**只剩台账**。
 
-    （工具调用 / 判定 / 投递那些，实时播报里已经打过了，这里不重复。）
+    人和主 agent 的话、工具调用、判定、投递……全都已在**实时播报**（`_tail_trace`）里
+    按真实时序打过了 —— 这里再打一遍就会重复，而且顺序是错的
+    （小结在整轮跑完之后才执行）。用户 2026-10-30 指出："包括时序这些"。
     """
-    msgs = result.get("messages") or []
-    #: 本轮有没有透传？`node_finalize` 是最后一步，它贴的那条 AIMessage **是执行器的话**
-    #: （平台原样贴），不是主 agent 说的 —— 不区分的话就会把执行器的话标成 🧠。
-    relayed = any("finalize: 透传" in ln for ln in (result.get("log") or []))
-    aims = [
-        (i, m)
-        for i, m in enumerate(msgs[seen_msg[0] :])
-        if type(m).__name__ == "AIMessage" and str(m.content).strip()
-    ]
-    for pos, (_, m) in enumerate(aims):
-        body = str(m.content).strip()
-        if _norm(body) in _SHOWN_EXEC:
-            continue  # 播报里已经打过（执行器的话）
-        if relayed and pos == len(aims) - 1:
-            _emit("ask", f"平台原样透传（执行器的话，不是主 agent 说的）：\n{body}")
-            continue
-        _emit("agent", body)
-        for c in getattr(m, "tool_calls", None) or []:
-            args = c.get("args") or {}
-            arg_text = "\n".join(f"  {k} = {v!r}" for k, v in args.items())
-            _emit("tool", f"{c.get('name')}\n{arg_text}" if arg_text else str(c.get("name")))
-    seen_msg[0] = len(msgs)
-
     tasks = result.get("tasks") or []
     if not tasks:
         return
