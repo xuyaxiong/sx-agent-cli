@@ -35,12 +35,16 @@ from langchain_core.messages import AIMessage, HumanMessage
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from evals._child import (  # noqa: E402
+from evals.harness import (  # noqa: E402
+    DEFAULT_SKILLS_DIR,
+    FROZEN,
+    RUNS_DIR,
     _RECEIPT_KINDS,
     _split_receipt,
     ctx_warn,
     dump_artifacts,
     dump_run_record,
+    ensure_app_dirs,
     install,
     snapshot,
 )
@@ -48,9 +52,45 @@ from proto import trace  # noqa: E402
 from proto.graph import build  # noqa: E402
 from proto.skills import ARTIFACTS  # noqa: E402
 
-HERE = Path(__file__).resolve().parent
-ROOT = HERE.parent
+# ⚠️ 路径一律走 `harness`（`ROOT` / `RUNS_DIR` / `DEFAULT_SKILLS_DIR`）——
+# 这里不再自己算，否则打包后会算出解包目录，和 exe 旁边那个目录对不上。
 BAR = "─" * 74
+#: 用户版开场白的横线 —— **比开发态窄**。74 列铺满终端像分隔日志，不像界面的边。
+BAR_USER = "─" * 42
+
+#: 打包后开场白里的标题 —— **产品名**（用户 2026-10-30：*"我这不是 ai 助教 我是 SX Agent"*）。
+#: 面向用户，不是面向开发：所以不叫"原型"，也不按技能内容起名。
+APP_TITLE = "SX Agent"
+
+
+def _cut(s: str, width: int) -> str:
+    """按**显示宽度**截断（CJK 占 2 列），超了补 `…`。"""
+    if _dw(s) <= width:
+        return s
+    out, w = "", 0
+    for ch in s:
+        cw = _dw(ch)
+        if w + cw > width - 1:
+            break
+        out += ch
+        w += cw
+    return out + "…"
+
+
+def _skill_label(skill) -> tuple[str, str]:
+    """技能 →（**一句话能干什么**，细节）。
+
+    按 `description` 的**第一个 `：`** 切 —— 技能作者本来就是这么写的
+    （"AI 备课：根据学科、年级、课题生成教案"）。**不写死任何技能名**：
+    用户自己加的技能也走这条，没有 `：` 就退回用 `name`。
+
+    细节截到 68 列：开场白是给人扫一眼的，不是技能说明书。
+    """
+    desc = (skill.description or "").strip()
+    head, sep, tail = desc.partition("：")
+    if sep and head.strip() and tail.strip():
+        return head.strip(), _cut(tail.strip(), 68)
+    return skill.name, _cut(desc, 68)
 
 
 # ──────────────────────────── 输出层：一套视觉语言 ────────────────────────────
@@ -370,7 +410,7 @@ def _turn_summary(snap: dict, elapsed: float) -> None:
     几千字；这个数一旦跟着产物一起涨，就是隔离漏了（产物正文被读进了主上下文）。
     ⚠️ **只记录、不判红**（用户同日定）：读产物是主 agent 的**合法能力**，
     不是违规 —— 这里给的是读数，让读的人自己看出代价。
-    ⚠️ 口径与跑批一致（`_child.snapshot`）：`main_ctx_chars` **不含 system prompt**，
+    ⚠️ 口径与跑批一致（`harness.snapshot`）：`main_ctx_chars` **不含 system prompt**，
     所以两个数都给出来，真实上下文是两者相加。
     """
     ctx = snap.get("main_ctx_chars") or 0
@@ -404,12 +444,22 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="交互式跑原型（你当用户；技能从文件夹加载）")
     ap.add_argument(
         "--skills",
-        default="evals/skills",
-        help="技能文件夹（默认 evals/skills）：目录下**所有** *.md 都注入，"
+        default=str(DEFAULT_SKILLS_DIR),
+        help=f"技能文件夹（默认 {DEFAULT_SKILLS_DIR}）：目录下**所有** *.md 都注入，"
         "每个须有 frontmatter name/description；正文即 instructions（渐进式披露，按需 read_skill）",
     )
     ap.add_argument("--thread", default="interactive-1")
     args = ap.parse_args()
+
+    # 首次运行（只在打包后）：建 skills/ 和 runs/，空的话放一遍示例技能。
+    # ⚠️ 返回的是"做了什么"（建目录 / 放技能），但**只有"放了技能"值得告诉用户** ——
+    # "建目录"是内部事务，说了只是噪音。措辞也换成人话（不提目录名）。
+    created = ensure_app_dirs()
+    seed_notes = (
+        ["已放入 3 个示例技能 —— 你也可以自己往 skills 文件夹里加。"]
+        if any("示例技能" in c for c in created)
+        else []
+    )
 
     # 技能来自**文件夹**（不再绑 case）—— 用户 2026-10-30：*"有一个文件夹里面有各种 skill
     # cli 启动时候自动注入文件夹里面的全部 skill"*。case 那套是跑批用的（预置 turns + 断言），
@@ -423,7 +473,9 @@ def main() -> None:
 
     label = Path(args.skills).name or "skills"
     tag = f"interactive-{label}-{time.strftime('%m%d-%H%M%S')}"
-    out_dir = ROOT / "evals" / "runs" / tag
+    # 记录落 `harness.RUNS_DIR`：开发时是仓库里的 `evals/runs/`，
+    # 打包后是 **exe 旁边的 `runs/`** —— 用户找得到，也方便整包发回来。
+    out_dir = RUNS_DIR / tag
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # CLI 输出流原样落一份（终端里滚过去的东西，文件里也留得住）
@@ -431,17 +483,41 @@ def main() -> None:
     _SINK = (out_dir / "_console.log").open("w", encoding="utf-8")
 
     skills = list(proto.agent.SKILLS.values())
-    print(BAR)
-    print(f"原型交互式 ｜ 模型 {describe()}")
-    print(f"技能 {len(skills)} 个（来自 {args.skills}/，启动时全量注入）")
-    for s in skills:
-        print(f"   · {s.name:<20} {s.description[:60]}")
-    print(BAR)
-    print(f"日志   {trace.LOG_FILE}")
-    print(f"记录   {out_dir}（_console.log 是这屏的全文，_run.md 是逐轮全记录）")
-    print(BAR)
-    print("直接说你要什么。**空行结束**，Ctrl-C 中断（已经跑过的轮次仍会落盘）。")
-    print("技能需要什么信息会自己问，你答就行。\n")
+    if FROZEN:
+        # 给**用户**看的开场白：只说"这是什么、能干什么、怎么开始"。
+        # 🔴 路径 / 日志 / 文件构成 / 模型端点这类信息**不要往这里放**（用户 2026-10-30：
+        # *"类似这种信息不要加了啊 太冗余了"*）—— 开发要看，下面开发态那支里给。
+        print(BAR_USER)
+        # 只留模型名，不留端点 URL（"@ https://..." 是开发看的）
+        print(f"  {APP_TITLE} · {describe().split(' @ ')[0]}\n")
+        print("  我能帮你做这些：\n")
+        for s in skills:
+            head, detail = _skill_label(s)
+            print(f"    · {head}")
+            if detail:
+                print(f"      {detail}")
+        print()
+        print("  直接说你要什么就行，比如：")
+        print("    「帮我备一节三年级语文《荷花》的课」\n")
+        print("  需要补充信息我会问你，你答就行。")
+        print("  结束：按 Ctrl-C，或直接回车。")
+        print(BAR_USER)
+        if seed_notes:
+            print(f"  {seed_notes[0]}\n")
+    else:
+        print(BAR)
+        # 开发态：路径和日志**有用**，照旧打全。
+        print(f"原型交互式 ｜ 模型 {describe()}")
+        print(f"技能 {len(skills)} 个（来自 {args.skills}）")
+        for s in skills:
+            head, detail = _skill_label(s)
+            print(f"   · {head}" + (f"　{detail}" if detail else ""))
+        print(BAR)
+        print(f"日志   {trace.LOG_FILE}")
+        print(f"记录   {out_dir}")
+        print(BAR)
+        print("直接说你要什么。空行结束，Ctrl-C 中断。")
+        print("技能需要什么信息会自己问，你答就行。\n")
 
     turns: list[dict] = []
     seen_len = 0
@@ -530,8 +606,12 @@ def main() -> None:
         json.dumps([result], ensure_ascii=False, indent=2), encoding="utf-8"
     )
     trace.close()
-    record = out_dir / "artifacts" / f"{tag}__r1" / "_run.md"
-    print(f"\n记录：{record}")
+    if FROZEN:
+        # 收尾才说记录在哪 —— 用户刚做完事，这时候说"把它发我"才自然；
+        # 开场就说路径只会变成噪音。**回收是功能，不是附注。**
+        print(f"\n  这次对话已记录，请把这个文件夹发给我：\n    {out_dir}\n")
+    else:
+        print(f"\n记录：{out_dir / 'artifacts' / f'{tag}__r1' / '_run.md'}")
 
 
 if __name__ == "__main__":

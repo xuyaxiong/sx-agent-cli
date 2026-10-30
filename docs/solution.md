@@ -619,14 +619,14 @@ def _recover_artifacts(resp, preexisting: set[str]) -> list[str]:
 | 位置 | 打什么 |
 |---|---|
 | `evals/chat.py` | **每轮小结一行** `📊 CONTEXT`：`主上下文 N 字（消息 A + system B）｜产物库正文 M 字｜耗时` |
-| `evals/_child.py` → `_run.md` | 每轮 `<sub>主上下文 … ｜产物库 … ｜delegate …</sub>` |
+| `evals/harness.py` → `_run.md` | 每轮 `<sub>主上下文 … ｜产物库 … ｜delegate …</sub>` |
 | `proto/__main__.py` | 每轮 `★ 主 agent 上下文 = N 字 ｜ 产物库正文 = M 字` + 隔离比 |
 | 跑批 `report.md` | 指标表里的 `主上下文·消息` 中位数 / 最大 |
 
 **超线怎么办：喊一声，不判失败。**
 
 ```python
-CTX_WARN_CHARS = 12000        # evals/_child.py
+CTX_WARN_CHARS = 12000        # evals/harness.py
 def ctx_warn(total) -> str:   # 超线返回一句提示，否则空串
 ```
 

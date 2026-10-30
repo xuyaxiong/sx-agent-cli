@@ -21,11 +21,45 @@
 from __future__ import annotations
 
 import os
+import sys
 from functools import lru_cache
+from pathlib import Path
 
 from dotenv import load_dotenv
 
-load_dotenv()
+
+def app_root() -> Path:
+    """**应用根** —— 打包成 exe 后是 **exe 所在目录**，开发时是仓库根（`langgraph-lab/`）。
+
+    🔴 **不能靠 cwd**：实测过 —— `cd` 到别的目录再 import，`load_dotenv()` 就读不到
+    `.env`（它从 **cwd** 往上找，不是从代码位置找）。双击 exe 时 cwd 也不保证是 exe 目录。
+
+    `sys.frozen` 是 PyInstaller 打的包会设的标记；`sys.executable` 那时就是 exe 自己。
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parents[1]  # proto/ 的上一层 = langgraph-lab/
+
+
+#: 冻结后随包带的只读资源在 `sys._MEIPASS`（PyInstaller 的解包目录），开发时就是应用根。
+RESOURCE_ROOT = Path(getattr(sys, "_MEIPASS", "")) if getattr(sys, "_MEIPASS", "") else app_root()
+
+#: **显式指定路径**，不让它去猜 cwd —— 打包后"从哪双击"都不该影响读不读得到配置。
+load_dotenv(app_root() / ".env")
+
+# 🔴 **三个流都要设 UTF-8**（打包后实测踩过两次）：
+#
+# - **stderr**：入口只重设了 stdout，报错信息落回系统编码（中文 Windows 上是 GBK）——
+#   于是"报错"和"正常输出"在同一份重定向里是**两种编码**。最早的中文输出就是本模块
+#   抛的"缺少模型配置"，它走 stderr，而入口那行 `reconfigure` 还没执行到就已经打出来了。
+# - **stdin**：不设的话，**管道/重定向喂进来的中文按 GBK 解**，解不了的字变成
+#   `\udcae` 这种代理字符，接着写日志时 `UnicodeEncodeError` —— **一条坏字符整场崩掉**。
+#   （真实控制台走 Windows API 不受影响，所以这个坑只在"喂输入"时暴露。）
+for _stream in (sys.stdin, sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: BLE001 —— 老终端/特殊流不支持就算了，不该因此起不来
+        pass
 
 
 @lru_cache(maxsize=8)
@@ -38,8 +72,10 @@ def get_model(temperature: float = 0.0):
     base = os.getenv("MODEL_BASE_URL", "").strip()
 
     if not name or not key:
+        # ⚠️ 路径要**现算**：打包后 `.env` 在 exe 旁边，写死 "langgraph-lab/.env"
+        # 会把人指到一个根本不存在的目录。
         raise SystemExit(
-            "\n缺少模型配置。请在 langgraph-lab/.env 里填：\n"
+            f"\n缺少模型配置。请在 {app_root() / '.env'} 里填：\n"
             "  MODEL_NAME      模型名\n"
             "  MODEL_API_KEY   API Key\n"
             "  MODEL_BASE_URL  兼容端点（可选）\n"

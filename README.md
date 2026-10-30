@@ -22,8 +22,11 @@
 langgraph-lab/
 ├── docs/          文档 —— 从哪份看起见 docs/README.md
 ├── proto/         最小原型（可运行）—— 8 个模块，约 1270 行
+├── evals/         跑批回归 + 交互式入口（见其 README）
 ├── experiments/   推演期的实验与诊断脚本（其中 5 个已跑不起来，见其 README）
+├── build_exe.py   打包成能发给别人的 exe（见下「打包」）
 ├── logs/          每次运行的完整日志（含 LLM 原文）—— 一次性的，已 gitignore
+├── dist/ build/   打包产物 —— 已 gitignore
 ├── pyproject.toml / uv.lock / .python-version
 └── .env / .env.example
 ```
@@ -66,6 +69,32 @@ uv run python -m experiments.debug_exit
 
 > ⚠️ **Windows 上要设 `PYTHONUTF8=1`**，否则中文输出乱码。
 > 脚本自己会 `reconfigure(stdout)`，但直接 `python -c` 打印中文时仍会撞 GBK。
+
+---
+
+## 打包发给别人（没装 Python 的人也能跑）
+
+```bash
+uv run python build_exe.py          # → dist/sxagent/
+```
+
+打出来是**单目录**（不是单文件），用户拿到手长这样：
+
+```
+sxagent/
+├─ sxagent.exe        ← 双击就跑（弹一个控制台窗口，不用敲命令）
+├─ .env              ← **你填好再发**（key / 模型名 / 端点）；随包只放 .env.example
+├─ skills/           ← 首次运行自动建，并放 3 个示例技能；用户往里丢 .md 就加技能
+├─ runs/             ← 首次运行自动建；**每次对话一份记录，让他们整包发回来**
+└─ _internal/        ← 依赖文件，用户不用碰
+```
+
+> 🔴 **发出去之前必须验收**：在一台**没装 Python** 的机器上跑通一次完整对话
+> （技能列出来 → 派任务 → 出产物 → `runs/` 有记录）。
+> PyInstaller **漏收依赖是常态**，langchain / langgraph 这种动态导入重灾区尤其是 ——
+> 本次就靠这一步抓出两个真 bug（见 `docs/discussion-log.md` F19）。
+>
+> ⚠️ 告诉用户**整个文件夹拷走，别只拷 exe**。
 
 ---
 

@@ -1,6 +1,7 @@
 """把原型跑的每一步写进文件，方便事后翻看「我问了 LLM 什么、它答了什么」。
 
-日志落在 `langgraph-lab/logs/proto-<时间戳>.log`，同时打到控制台（简洁版）。
+日志落在**应用根**下的 `logs/proto-<时间戳>.log`（开发时是 `langgraph-lab/logs/`，
+打包后是 exe 旁边的 `logs/`），同时打到控制台（简洁版）。
 每次进程启动开一个新文件，不覆盖历史。
 """
 
@@ -12,7 +13,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
+from proto.config import app_root
+
+#: 日志落**应用根**下的 `logs/`（见 `proto.config.app_root`）——
+#: 开发时是 `langgraph-lab/logs/`，打包后是 **exe 旁边的 `logs/`**。
+#: ⚠️ 不能按 `__file__` 算：冻结后那是 `_internal/`，用户不该碰、重建还会被清掉。
+LOG_DIR = app_root() / "logs"
 LOG_DIR.mkdir(exist_ok=True)
 
 #: 文件名后缀 —— 时间戳只到**秒**，跑批时多个子进程同秒启动会**撞同一个文件**。
