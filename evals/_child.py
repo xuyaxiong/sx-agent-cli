@@ -267,6 +267,27 @@ def install(case: dict) -> dict:
 # ──────────────────────────── 快照 ────────────────────────────
 
 
+#: 主 agent 上下文**告警线** —— **只告警，不判红**（2026-10-30 用户定：
+#: *"删掉这个测试，把这个信息记录到日志 warning 里面不就完了"*）。
+#:
+#: 为什么不做成断言：**读产物是主 agent 的合法能力**（它也要能干活、能按需读），
+#: 拿上下文大小判红 = 罚一个合法能力，而且聊得久、多读一次技能原文都会误伤。
+#: 告警线给的是**读数 + 一句提示**，代价由看的人自己判断。
+#:
+#: 参照读数（历史跑批）：单技能隔离场景 517–1109 字；多技能长产物场景 7890–14832 字。
+CTX_WARN_CHARS = 12000
+
+
+def ctx_warn(total: int) -> str:
+    """超告警线时给一句提示，正常时返回空串。**只提示，不判红。**"""
+    if total <= CTX_WARN_CHARS:
+        return ""
+    return (
+        f"⚠️ 主上下文超告警线 {CTX_WARN_CHARS} 字"
+        "（看看是不是把产物正文读进来了 —— 依赖转交只需传 ID，不必读全文）"
+    )
+
+
 def _ctx_chars(messages: list) -> int:
     """主 agent 上下文体积 —— 与 `proto/__main__._ctx_chars` **同一口径**（可比）。"""
     total = 0
@@ -669,6 +690,9 @@ def dump_run_record(out_dir: Path, case_id: str, rep: int, result: dict) -> None
             f"｜产物库 {t['artifacts_chars']} 字｜delegate {len(t['delegate_calls'])} 次</sub>",
             "",
         ]
+        warn = ctx_warn(t["main_ctx_chars"] + t.get("sys_prompt_chars", 0))
+        if warn:
+            lines += [f"> {warn}", ""]
         # ── 本轮全部消息，按发生顺序（用户输入 / 平台注入 / AI 输出 / 工具调用与返回）──
         lines += ["### 本轮消息（按发生顺序）", ""]
         lines += _render_messages(t)

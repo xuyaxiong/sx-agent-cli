@@ -38,6 +38,7 @@ if hasattr(sys.stdout, "reconfigure"):
 from evals._child import (  # noqa: E402
     _RECEIPT_KINDS,
     _split_receipt,
+    ctx_warn,
     dump_artifacts,
     dump_run_record,
     install,
@@ -83,6 +84,7 @@ _STYLE: dict[str, tuple[str, str]] = {
     "plat":   ("📮 PLATFORM", "\033[90m"),   # 灰
     "done":   ("🏁 DONE",     "\033[92m"),   # 亮绿
     "task":   ("📋 TASKS",    "\033[90m"),
+    "ctx":    ("📊 CONTEXT",  "\033[90m"),
 }
 
 _COLOR = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
@@ -356,14 +358,33 @@ def _tail_trace(stop: threading.Event, pos: list[int]) -> None:
             pass
 
 
-def _turn_summary(result: dict, elapsed: float) -> None:
-    """回合小结：**只剩台账**。
+def _turn_summary(snap: dict, elapsed: float) -> None:
+    """回合小结：**台账 + 主上下文读数**。
 
     人和主 agent 的话、工具调用、判定、投递……全都已在**实时播报**（`_tail_trace`）里
     按真实时序打过了 —— 这里再打一遍就会重复，而且顺序是错的
     （小结在整轮跑完之后才执行）。用户 2026-10-30 指出："包括时序这些"。
+
+    🔴 **主上下文大小每轮都打**（用户 2026-10-30 要求："在我们 cli 里面也显示一下
+    这个重要信息"）—— 它是**隔离效果的唯一现场读数**：产物几千上万字、主上下文该只有
+    几千字；这个数一旦跟着产物一起涨，就是隔离漏了（产物正文被读进了主上下文）。
+    ⚠️ **只记录、不判红**（用户同日定）：读产物是主 agent 的**合法能力**，
+    不是违规 —— 这里给的是读数，让读的人自己看出代价。
+    ⚠️ 口径与跑批一致（`_child.snapshot`）：`main_ctx_chars` **不含 system prompt**，
+    所以两个数都给出来，真实上下文是两者相加。
     """
-    tasks = result.get("tasks") or []
+    ctx = snap.get("main_ctx_chars") or 0
+    sys_chars = snap.get("sys_prompt_chars") or 0
+    body = snap.get("artifacts_chars") or 0
+    warn = ctx_warn(ctx + sys_chars)
+    _emit(
+        "ctx",
+        f"主上下文 {ctx + sys_chars} 字（消息 {ctx} + system {sys_chars}）"
+        f"　｜　产物库正文 {body} 字　｜　本轮耗时 {elapsed:.0f}s"
+        + (f"\n{warn}" if warn else ""),
+    )
+
+    tasks = snap.get("tasks") or []
     if not tasks:
         return
     rows = []
@@ -376,7 +397,7 @@ def _turn_summary(result: dict, elapsed: float) -> None:
             f"{mark} {t['id']}  {t['skill']:<20} 产物={t['artifacts'] or '（无）'}"
             + (f"  引用={t['refs']}" if t.get("refs") else "")
         )
-    _emit("task", f"（本轮耗时 {elapsed:.0f}s）\n" + "\n".join(rows))
+    _emit("task", "\n".join(rows))
 
 
 def main() -> None:
@@ -465,7 +486,7 @@ def main() -> None:
             snap["input_source"] = "human"  # 这句是用户当场打的，不是脚本预置
             turns.append(snap)
             seen_len = len(state.get("messages") or [])
-            _turn_summary(state, time.time() - t1)
+            _turn_summary(snap, time.time() - t1)
             print()
     except Exception as e:  # noqa: BLE001
         import traceback

@@ -111,6 +111,14 @@ soft:                        # 软断言（LLM 评分）—— 只有必须语�
 
 **④ 评分调用失败判「不通过」，不判「通过」。** 判不了 ≠ 合格。
 
+**⑤ `results.json` 里带着**产物正文全文**（`artifact_final[].content`）。**
+
+`artifact_no_placeholder` / `artifact_looks_like_html` / `artifact_chars_over` 这几条
+**纯代码**断言要扫正文才判得了，所以只能把正文一起回传（一次跑几十 KB，和产物原文重复）。
+
+要清的话得改成**在子进程里先算结论**（只回传 pass/fail + 详情），
+断言就不用拿正文了。**没定要不要做**（2026-10-29 用户问过，未决）。
+
 ## 与 `scenarios.md` 的关系
 
 | | `docs/scenarios.md` | `evals/` |

@@ -21,8 +21,8 @@ checks:
     stages: {full-lesson-plan: completed}
   - check: artifact_chars_over
     n: 5000
-  # 隔离的现场读数：产物 5000+ 字，主上下文该在 3k 以内
-  - check: main_ctx_under
-    n: 3000
+  # ⚠️ 隔离的现场读数（产物 5000+ 字，主上下文该只有 1k 上下）——**只记录、不判红**
+  # （2026-10-30 用户定）。读产物是主 agent 的合法能力，不该拿它判失败。
+  # 读数看 `_run.md` 的每轮 `<sub>` 行 + 超 `CTX_WARN_CHARS` 时的 warning。
 soft:
   - check: reply_is_summary

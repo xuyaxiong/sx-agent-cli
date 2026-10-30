@@ -47,12 +47,9 @@ checks:
       - （同上结构）
   - check: artifact_chars_over
     n: 6000
-  # 主 agent 不许把产物正文读进上下文（转交只需传 ID）——**这条是精确判据**
-  - check: main_agent_no_artifact_read
-  # 体积上限只是**粗兜底**：它按需读技能原文是允许的（渐进式披露第二层），
-  # 所以这个数不能卡太紧 —— 真正要守的是上面那条"不读产物正文"
-  - check: main_ctx_under
-    n: 12000
+  # ⚠️ 主 agent 的上下文大小 / 有没有读产物正文 —— **只记录、不判**（2026-10-30 用户定）：
+  # 读产物是它的合法能力（它也要能干活），不是违规。读数看 CLI 的 `📊 CONTEXT` 行、
+  # `_run.md` 的逐轮记录、`report.md` 的指标表。
   - check: reply_chars_under
     n: 1500
   - check: no_exception

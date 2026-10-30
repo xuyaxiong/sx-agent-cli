@@ -1,0 +1,66 @@
+id: t1-chain
+family: 真实技能
+why: >
+  跨轮三技能链（主场景）：教案 → 导学单 → 交互网页，且后两样**明确要求参考教案**。
+  与 t2-same-turn 的差别是**依赖跨轮**：教案在第 1 轮就完成落库，第 2/3 轮的主 agent
+  必须自己想起"库里有 art_001"并把它传给执行器 —— 同轮并发时它手上还热着，
+  跨轮才是"依赖桥接"真正的考验。
+realism: 文档记录的需求（plan-test-skills §三 主场景；用户原话"某一课 → 先生成教案，再生成导学单和交互式教案"）
+tier: full
+skills_dir: evals/skills
+skills_mode: replace
+# ⚠️ 三轮都**把信息给全 + 明说不用提问**：三个技能各自会问 2 个问题，
+#    若让它问，这条 case 就同时压着"重入投递"（那是 t3-split-answers / F15 的事），
+#    一个 case 只压一个变量。提问链路走通与否，不靠这条 case 判。
+turns:
+  - "帮我给三年级语文《荷花》备一节课，出教案。人教版三年级下册，第一课时，探究型上法，学生基础一般、常见卡点是比喻句的理解。直接生成，不用再问我。"
+  - "基于刚才那份教案，出一份配套的学生导学单，环节要对得上。课前预习用，填空补白形式为主。直接生成，不用问我。"
+  - "再把这份教案做成一个学生能点着学的交互网页，给三年级学生看的。直接生成，不用问我。"
+checks:
+  # 🔬 **有效性断言**：第 1 轮只许派 1 个 —— 三条链子必须真的**跨轮**长出来。
+  # 若它第 1 轮就把三样一起派了，这条 case 退化成 t2-same-turn 的重复，
+  # 下面"跨轮依赖"那几条绿了也不算数。
+  - check: delegate_calls_exact
+    at: 1
+    n: 1
+  - check: task_stages
+    stages:
+      lesson-prep: completed
+      guided-learning: completed
+      interactive-webpage: completed
+  - check: every_task_has_artifact
+  - check: artifact_no_cross_attribution
+  # —— 依赖桥接：后两个技能的 task 必须带产物引用，而不是靠转述正文（F11 的正解）
+  # 执行器**读没读**那份引用，看 `_run.md` 的 trace 附录即可（不设断言，2026-10-30 用户定）
+  - check: task_refs_contain
+    skills: [guided-learning, interactive-webpage]
+  # ⚠️ 不断言 artifact_count: 3 —— 执行器被推回去时会重写一份新产物（e13 实测 4–5 个）
+  - check: artifact_titles_contain
+    subs: ["教案", "导学单"]
+  - check: artifact_looks_like_html
+  - check: artifact_no_placeholder
+    words:
+      - 待补充
+      - 待填写
+      - 待完善
+      - 此处省略
+      - TODO
+      - TBD
+      - 占位
+      - （本课课题）
+      - （本课年级）
+      - （活动名称）
+      - （同上结构）
+  - check: artifact_chars_over
+    n: 6000
+  # ⚠️ 主 agent 的上下文大小 / 有没有读产物正文 —— **只记录、不判**（2026-10-30 用户定）。
+  # 读产物是它的合法能力；每轮的读数打在 CLI 的 `📊 CONTEXT` 行和 `_run.md` 里。
+  - check: reply_chars_under
+    n: 1500
+  - check: no_exception
+soft:
+  # 语义证据：后序产物内容上是不是真的基于教案（机制证据见上面的 task_refs_read）
+  - check: artifact_derives_from_source
+    source: 教案
+  - check: no_repeat_question
+    fields: ["年级", "课时", "课型"]
