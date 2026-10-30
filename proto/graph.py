@@ -252,6 +252,10 @@ def node_finalize(state: State) -> dict:
     - **保证**（代码）：有待答就原样贴出去，无条件
     - **礼貌**（提示词）：`prepare` 会告诉主 agent "平台负责转达，你不用重复问"
       —— 它照做了就没有重复；没照做也只是重复一句，**不影响不丢**
+
+    ⚠️ **产物路径不在这里贴** —— 那条信息顺着 `delegate` 的返回走
+    （见 `agent._files_note`）：路径是 `write_artifact` 的返回里就有的，
+    平台把它**顺着原路带上去**就够了，不需要另起一套注入。
     """
     waiting = [t for t in (state.get("tasks") or []) if t.get("stage") == "waiting_for_input"]
     if not waiting:

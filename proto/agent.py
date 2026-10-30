@@ -93,8 +93,13 @@ _MAIN_PROMPT = (
     "\n"
     "## 🔴 回复用户时的硬要求\n"
     "\n"
-    "**产物正文不要搬进你的回复。** 委派完成后，只告诉用户：\n"
-    "交付了哪几样、各自的产物 ID、以及执行器给的一句话摘要。\n"
+    "**产物正文不要搬进你的回复。** 委派完成后，只告诉用户这四样：\n"
+    "交付了哪几样、各自的产物 ID、**文件在哪**、以及执行器给的一句话摘要。\n"
+    "\n"
+    "- 🔴 **文件路径一定要给** —— `delegate` 的返回里带着它（形如"
+    "「文件：art_001 → <路径>」）。\n"
+    "  用户是拿着这个路径去**打开文件**的：**只说 ID，他找不到东西**。\n"
+    "  （实测：路径已经给到你了，但你有时会漏掉它、只报 ID 和摘要 —— 别漏。）\n"
     "\n"
     "- **不要**用 `read_artifact` 把产物正文读出来贴进回复——产物是给用户看的卡片/文件，\n"
     "  正文贴进来会**撑爆你的上下文**，隔离就白做了。\n"
@@ -104,7 +109,8 @@ _MAIN_PROMPT = (
     "  传 ID 就够，执行器自己会读。\n"
     "\n"
     "`write_artifact` 只用于**你自己产出**的短内容（比如一段说明、一份对比表）；\n"
-    "你自己产出时同样要给**名称、一句话梗概、正文**三样。"
+    "你自己产出时同样要给**名称、一句话梗概、文件类型、正文**四样，\n"
+    "交付后照上面那条把**文件路径**告诉用户。"
 )
 
 
@@ -278,6 +284,30 @@ def render_briefing(task: dict) -> str:
     return "\n\n".join(lines)
 
 
+def _files_note(aids: list[str]) -> str:
+    """产物**落在哪个文件** —— 用户问"文件在哪"时，主 agent 得答得上来。
+
+    🔴 **为什么由平台顺路带**：路径是 `write_artifact` 的返回里就有的，但那个返回
+    回到的是**执行器**（隔离上下文），主 agent 看不到。主 agent 从 `delegate` 拿到的
+    只有一句 `已交付 art_001。摘要：…` —— 于是它在回复里**只能报 ID、报不出路径**：
+    **不是它不想说，是它不知道**（用户 2026-10-30：*"你为啥就是不给我显示产物路径呢"*）。
+
+    用户给的解法就是这个：*"这个 tool 返回的时候顺便把产物路径返回不就行了吗"* ——
+    **信息本来就在，顺着原路带上去就行**，不需要另起一套平台注入。
+
+    ⚠️ 没设 `ARTIFACT_DIR` 时（跑批）产物最后才统一落盘，这时没有 `path` —— 那就**不带**
+    （不编一个假的）。
+    """
+    from proto.skills import ARTIFACTS
+
+    rows = [
+        f"{aid} → {ARTIFACTS[aid]['path']}"
+        for aid in (aids or [])
+        if aid in ARTIFACTS and ARTIFACTS[aid].get("path")
+    ]
+    return "\n文件：" + "\n".join(rows) if rows else ""
+
+
 def absorb_outcome(rec: dict, outcome: Any) -> None:
     """把执行器的结果**写进 Task** —— 四个字段一个都不能少（F15 的同类：存了才可能喂）。
 
@@ -362,7 +392,8 @@ def delegate(
         rec.update(stage="completed", artifacts=outcome.artifacts)
         if outcome.artifacts:
             return _out(rec,
-                        f"已交付 {', '.join(outcome.artifacts)}。摘要：{outcome.report[:150]}")
+                        f"已交付 {', '.join(outcome.artifacts)}"
+                        f"{_files_note(outcome.artifacts)}。摘要：{outcome.report[:150]}")
         return _out(
             rec,
             "已交付（成果在执行器的回复里，**请原样转达给用户，不要改写**——"
@@ -385,13 +416,18 @@ def delegate(
                 return _out(
                     rec,
                     f"已交付 {', '.join(o2.artifacts) or '（成果在回复里）'}"
+                    f"{_files_note(o2.artifacts)}"
                     f"（你补了信息：{answer[:60]}）。摘要：{o2.report[:150]}",
                 )
             outcome = o2  # 补了还是不行 → 用新的结果去问用户（三态可能变成 incomplete）
 
         if outcome.status == "completed":
             rec.update(stage="completed", artifacts=outcome.artifacts, report=outcome.report)
-            return _out(rec, f"已交付 {', '.join(outcome.artifacts) or '（成果在回复里）'}。")
+            return _out(
+                rec,
+                f"已交付 {', '.join(outcome.artifacts) or '（成果在回复里）'}"
+                f"{_files_note(outcome.artifacts)}。",
+            )
 
         if outcome.status == "waiting_for_input":
             rec.update(stage="waiting_for_input", report=outcome.report,
