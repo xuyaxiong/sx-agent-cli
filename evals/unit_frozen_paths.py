@@ -78,11 +78,16 @@ def main() -> None:
 
     print("\n③ 首次运行初始化")
     harness.ensure_app_dirs()
-    seeded = sorted(p.name for p in (fake / "skills").glob("*.md"))
+    # 技能是**包**（子目录 + SKILL.md），不是散装 .md —— 见 `proto/skill_pack.py`
+    seeded = sorted(p.name for p in (fake / "skills").iterdir() if (p / "SKILL.md").is_file())
     check(
-        "只铺真技能（README 是适配说明，不是技能）",
-        seeded == ["guided-learning.md", "interactive-webpage.md", "lesson-prep.md"],
+        "只铺真技能包（有 SKILL.md 的目录；README.md 不算）",
+        seeded == ["guided-learning", "interactive-webpage", "lesson-prep"],
         str(seeded),
+    )
+    check(
+        "包里的 SKILL.md 真在",
+        all((fake / "skills" / n / "SKILL.md").is_file() for n in seeded),
     )
     check("幂等（再跑一次什么都不做）", harness.ensure_app_dirs() == [])
 

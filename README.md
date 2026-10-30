@@ -21,7 +21,7 @@
 ```
 langgraph-lab/
 ├── docs/          文档 —— 从哪份看起见 docs/README.md
-├── proto/         最小原型（可运行）—— 8 个模块，约 1270 行
+├── proto/         最小原型（可运行）—— 技能 / 技能加载 / 产物 三个模块分得清（见 docs/README.md）
 ├── evals/         跑批回归 + 交互式入口（见其 README）
 ├── experiments/   推演期的实验与诊断脚本（其中 5 个已跑不起来，见其 README）
 ├── build_exe.py   打包成能发给别人的 exe（见下「打包」）

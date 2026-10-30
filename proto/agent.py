@@ -30,15 +30,15 @@ from proto import trace
 from proto.config import get_model
 from proto.executor import run_task
 from proto.llm import safe_structured
-from proto.skills import (
+from proto.artifacts import (  # 产物领域
     ARTIFACTS,
-    SKILLS,
     artifact_index_lines,
     list_artifacts,
     read_artifact,
-    read_skill,
     write_artifact,
 )
+from proto.skill_pack import list_references_tool, read_reference  # 参考文件（磁盘）
+from proto.skills import SKILLS, read_skill  # 技能领域
 
 #: 主 agent 的 system prompt —— 平台约定，**不约束 skill 作者**
 _MAIN_PROMPT = (
@@ -226,7 +226,7 @@ def render_briefing(task: dict) -> str:
     ⚠️ "你上次说到哪"那块是**上一轮**的情况，措辞要写死这一点：判定也会看到这段，
     别让它把上一轮的"还缺"当成这一轮还没做完。
     """
-    from proto.skills import ARTIFACTS
+    from proto.artifacts import ARTIFACTS
 
     lines = [f"【任务】\n{task.get('task', '')}"]
 
@@ -298,7 +298,7 @@ def _files_note(aids: list[str]) -> str:
     ⚠️ 没设 `ARTIFACT_DIR` 时（跑批）产物最后才统一落盘，这时没有 `path` —— 那就**不带**
     （不编一个假的）。
     """
-    from proto.skills import ARTIFACTS
+    from proto.artifacts import ARTIFACTS
 
     rows = [
         f"{aid} → {ARTIFACTS[aid]['path']}"
@@ -466,7 +466,8 @@ def build_agent(state_schema: type) -> Any:
     """主 agent：一个完整的 agent（工具 + 循环）。"""
     return create_agent(
         get_model(),
-        tools=[delegate, write_artifact, read_artifact, list_artifacts, read_skill],
+        tools=[delegate, write_artifact, read_artifact, list_artifacts, read_skill,
+           read_reference, list_references_tool],
         system_prompt=_MAIN_PROMPT + "\n\n可用能力：\n" + "\n".join(
             f"- {s.name}：{s.description}" for s in SKILLS.values()
         ),

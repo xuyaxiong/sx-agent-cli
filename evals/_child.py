@@ -46,7 +46,7 @@ from evals.harness import dump_artifacts, dump_run_record, install, snapshot
 
 def run_case(case: dict, rep: int, out_dir: Path | None = None) -> dict:
     from proto import trace
-    from proto.skills import ARTIFACTS
+    from proto.artifacts import ARTIFACTS
 
     inst = install(case)
 

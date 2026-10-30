@@ -155,19 +155,27 @@ README.md（本文）              入口 + **导航**（找东西 / 写东西�
 ## 七、配套代码
 
 ```
-../proto/          最小原型（可运行，8 个模块）
-├── config.py      模型配置（环境变量 / .env）
+../proto/          最小原型（可运行，**两个领域 + 加载**，见下）
+├── config.py      模型配置（环境变量 / .env）+ **应用根**（冻结后 = exe 目录）
 ├── llm.py         结构化输出 + 兜底
-├── skills.py      Skill 定义 + 产物库
+│
+├── skills.py      【技能领域】Skill / Reference 是什么 + read_skill / read_reference
+├── skill_pack.py  【技能加载】技能包（文件夹形态）→ Skill —— I/O + 格式，换存储只动这里
+├── artifacts.py   【产物领域】产物库 + 类型派发 + 落盘 + write/read/list_artifact
+│
 ├── executor.py    执行器（三态判定 + 出口限制）← **判定提示词的真值在这里**
 ├── agent.py       主 agent（工具 + 系统提示 + 交接书渲染）
 ├── graph.py       图（prepare / agent / finalize）
 ├── trace.py       全量日志
 └── __main__.py    交互式 CLI
 
+> 🔴 **技能 ≠ 产物**（2026-10-30 分开）：Skill 是**静态能力包**，产物是**运行期交付物** ——
+> 变化的原因完全不同，原来挤在一个文件里（叫"Skill 定义 + 产物库"），边界不清。
+
 ../evals/          跑批回归 —— case / 断言 / 评分 / 运行记录（见其 README）
 │                  ★ 每次跑完，一个 run 一份 `_run.md`：逐轮全记录 + 软判断留档 + 原始 trace
-├── chat.py        交互式跑一个 case（**你当用户**，F5 直接起）
+├── harness.py     装配 + 记录层（交互式与跑批共用）+ 路径约定
+├── chat.py        交互式入口（**你当用户**，F5 直接起）
 └── cases/         场景的可执行版本（与 `docs/scenarios.md` 两边都改）
 
 ../experiments/    推演期的实验与诊断脚本（几个已跑不起来，见其 README）

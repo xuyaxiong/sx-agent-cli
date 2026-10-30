@@ -23,7 +23,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 from proto.agent import render_briefing
-from proto.skills import ARTIFACTS, store_artifact
+from proto.artifacts import ARTIFACTS, store_artifact
 
 #: **显式排除名单** —— 这些字段不进交接书，每一条都要有理由。
 #: ⚠️ 加字段的人只有两条路：渲染它，或者在这里写清楚为什么不渲染。

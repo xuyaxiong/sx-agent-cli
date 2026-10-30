@@ -21,16 +21,17 @@
 
 from __future__ import annotations
 
+import shutil
 import sys
 import threading
 import time
 from pathlib import Path
 
-import yaml
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage
 
 from proto import config as proto_config
+from proto.skill_pack import ENTRY_NAME
 from proto.config import app_root
 
 
@@ -137,17 +138,14 @@ def ensure_app_dirs() -> list[str]:
         if not d.exists():
             d.mkdir(parents=True, exist_ok=True)
             done.append(f"建目录 {d.name}/")
-    if not any(DEFAULT_SKILLS_DIR.glob("*.md")) and SEED_SKILLS_DIR.is_dir():
+    if not any(DEFAULT_SKILLS_DIR.glob(f"*/{ENTRY_NAME}")) and SEED_SKILLS_DIR.is_dir():
         n = 0
-        for src in sorted(SEED_SKILLS_DIR.glob("*.md")):
-            # 只铺**真能当技能**的文件：frontmatter 里有 `name` 才算
+        for src in sorted(p for p in SEED_SKILLS_DIR.iterdir() if p.is_dir()):
+            # 只铺**真能当技能**的目录：有 `SKILL.md` 才算
             # （源目录里的 `README.md` 是适配说明，不是技能 —— 铺过去只会让人困惑）
-            meta, _ = _split_frontmatter(src.read_text(encoding="utf-8"))
-            if not str(meta.get("name") or "").strip():
+            if not (src / ENTRY_NAME).is_file():
                 continue
-            (DEFAULT_SKILLS_DIR / src.name).write_text(
-                src.read_text(encoding="utf-8"), encoding="utf-8"
-            )
+            shutil.copytree(src, DEFAULT_SKILLS_DIR / src.name, dirs_exist_ok=True)
             n += 1
         if n:
             done.append(f"放入 {n} 个示例技能")
@@ -157,45 +155,22 @@ def ensure_app_dirs() -> list[str]:
 # ──────────────────────────── 技能加载 ────────────────────────────
 
 
-def _split_frontmatter(text: str) -> tuple[dict, str]:
-    """拆 `---` 包裹的 YAML frontmatter 与正文；没有 frontmatter 时元数据为空。"""
-    stripped = text.lstrip()
-    if not stripped.startswith("---"):
-        return {}, text
-    end = stripped.find("\n---", 3)
-    if end == -1:
-        return {}, text
-    meta = yaml.safe_load(stripped[3:end]) or {}
-    return meta, stripped[end + 4 :].lstrip("\n")
-
-
 def _load_skills_dir(path_str: str) -> dict:
-    """从目录读技能：每个 `*.md` 的 frontmatter 给 name/description，正文即 instructions。
+    """从目录装技能包（相对路径按**仓库根**解析，子进程 cwd 变了也不受影响）。
 
-    口径与 `proto.skills.Skill` 一一对应 —— 适配版技能就按这个格式写
-    （见 `evals/skills/README.md`）。相对路径按仓库根解析，子进程 cwd 变了也不受影响。
-
-    ⚠️ **没有 frontmatter `name:` 的文件跳过**（目录里的 `README.md` 就是这种）——
-    否则它会被当成一个叫 "README" 的技能混进能力清单，主 agent 会看见它。
-    规则：**技能文件必须在 frontmatter 里声明 `name`**。
+    🔴 **格式解析不在这里** —— "技能包长什么样、怎么读"是**领域知识**，
+    在 `proto.skill_pack`（`Skill` / `Reference` 两个领域对象在 `proto.skills`）。
+    这里只做一件事：**把相对路径定到仓库根，然后交给它**。
     """
-    import proto.skills
+    from proto.skill_pack import load_skills_dir
 
     root = Path(path_str)
     if not root.is_absolute():
         root = ROOT / root
-    out: dict = {}
-    for p in sorted(root.glob("*.md")):
-        meta, body = _split_frontmatter(p.read_text(encoding="utf-8"))
-        name = str(meta.get("name") or "").strip()
-        if not name:
-            continue
-        out[name] = proto.skills.Skill(
-            name=name,
-            description=str(meta.get("description") or ""),
-            instructions=body.strip(),
-        )
-    return out
+    skills, warn = load_skills_dir(root)
+    for w in warn:
+        trace.note(f"技能加载：{w}")
+    return skills
 
 
 # ──────────────────────────── 装配 ────────────────────────────
@@ -207,10 +182,11 @@ def install(case: dict) -> dict:
     import proto.config
     import proto.executor
     import proto.llm
+    import proto.artifacts
     import proto.skills
 
     # ① 产物库清空 —— 全局 dict，不清就会带上上一轮
-    proto.skills.ARTIFACTS.clear()
+    proto.artifacts.ARTIFACTS.clear()
 
     # ② 技能集（case 可以带自己的：`skills_dir` 读目录 / `skills` 内联）
     extra: dict = {}
@@ -232,10 +208,10 @@ def install(case: dict) -> dict:
         proto.skills.SKILLS = merged
 
     # ③ 产物写入流水 —— 记「谁在什么时候写了什么」，用来判并发与归属
-    # ⚠️ **签名要跟着 `proto.skills.store_artifact` 走**：它变过（加 `file_type`），
+    # ⚠️ **签名要跟着 `proto.artifacts.store_artifact` 走**：它变过（加 `file_type`），
     # 漏改这里就是整轮 `TypeError` —— 和 `run_task` 那个包装同一个坑。
     writes: list[dict] = []
-    orig_store = proto.skills.store_artifact
+    orig_store = proto.artifacts.store_artifact
 
     def rec_store(title: str, summary: str, file_type: str, content: str) -> str:
         aid = orig_store(title, summary, file_type, content)
@@ -253,7 +229,7 @@ def install(case: dict) -> dict:
         return aid
 
     # `write_artifact` 的工具体在 `skills.py` 里按**模块全局**找 `store_artifact`，所以这里改得到
-    proto.skills.store_artifact = rec_store
+    proto.artifacts.store_artifact = rec_store
 
     # ③′ 执行器调用流水 —— 记「哪个线程在跑哪个 skill」，用来判产物归属
     #     （`agent.py` 是 `from proto.executor import run_task` 值导入，两处都得换）
@@ -266,7 +242,7 @@ def install(case: dict) -> dict:
         #    对不上（实测 threads 完全不重合），按线程判会**永远不报**。
         # ⚠️ 签名要跟着 `proto.executor.run_task` 走：它变过两次（`given`→`briefing`、
         #    去掉 `artifacts` 参数），**每次都漏改这里、每次都整轮崩** —— 改签名时记得搜一遍。
-        before = set(proto.skills.ARTIFACTS)
+        before = set(proto.artifacts.ARTIFACTS)
         out = orig_run_task(skill, briefing)
         run_tasks.append(
             {
@@ -274,7 +250,7 @@ def install(case: dict) -> dict:
                 "skill": skill.name,
                 "t": round(time.time(), 3),
                 # 这次真交付的产物（差集）
-                "produced": sorted(set(proto.skills.ARTIFACTS) - before),
+                "produced": sorted(set(proto.artifacts.ARTIFACTS) - before),
             }
         )
         return out
@@ -370,7 +346,7 @@ def _sys_prompt_chars() -> int:
 
 def snapshot(state: dict, user: str, prev_len: int, idx: int, wall_s: float) -> dict:
     from proto import trace
-    from proto.skills import ARTIFACTS
+    from proto.artifacts import ARTIFACTS
 
     msgs = state.get("messages") or []
     new = msgs[prev_len:]
@@ -422,8 +398,8 @@ def snapshot(state: dict, user: str, prev_len: int, idx: int, wall_s: float) -> 
 
 
 def _slug(s: str, n: int = 40) -> str:
-    """转发 `proto.skills.artifact_slug` —— 文件名怎么起，落盘和这里必须是同一套。"""
-    from proto.skills import artifact_slug
+    """转发 `proto.artifacts.artifact_slug` —— 文件名怎么起，落盘和这里必须是同一套。"""
+    from proto.artifacts import artifact_slug
 
     return artifact_slug(s, n)
 
@@ -438,7 +414,7 @@ def dump_artifacts(out_dir: Path, case_id: str, rep: int, result: dict) -> Path:
 
     落 `runs/<tag>/artifacts/<case>__r<rep>/`：每个产物一个文件 + 一份 `_index.md`。
     """
-    from proto.skills import ARTIFACTS
+    from proto.artifacts import ARTIFACTS
 
     d = out_dir / "artifacts" / f"{case_id}__r{rep}"
     d.mkdir(parents=True, exist_ok=True)
@@ -446,7 +422,7 @@ def dump_artifacts(out_dir: Path, case_id: str, rep: int, result: dict) -> Path:
         (d / "_index.md").write_text("# （本次没有产物）\n", encoding="utf-8")
         return d
 
-    from proto.skills import artifact_body
+    from proto.artifacts import artifact_body
 
     rows = ["| 产物 | 标题 | 字数 | 类型 | 文件 |", "|---|---|---|---|---|"]
     for aid, a in ARTIFACTS.items():

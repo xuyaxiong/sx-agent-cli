@@ -51,7 +51,7 @@ from evals.harness import (  # noqa: E402
 from proto import skills as proto_skills  # noqa: E402
 from proto import trace  # noqa: E402
 from proto.graph import build  # noqa: E402
-from proto.skills import ARTIFACTS  # noqa: E402
+from proto.artifacts import ARTIFACTS  # noqa: E402
 
 # ⚠️ 路径一律走 `harness`（`ROOT` / `RUNS_DIR` / `DEFAULT_SKILLS_DIR`）——
 # 这里不再自己算，否则打包后会算出解包目录，和 exe 旁边那个目录对不上。
@@ -467,8 +467,9 @@ def main() -> None:
     ap.add_argument(
         "--skills",
         default=str(DEFAULT_SKILLS_DIR),
-        help=f"技能文件夹（默认 {DEFAULT_SKILLS_DIR}）：目录下**所有** *.md 都注入，"
-        "每个须有 frontmatter name/description；正文即 instructions（渐进式披露，按需 read_skill）",
+        help=f"技能包目录（默认 {DEFAULT_SKILLS_DIR}）：**每个子目录是一个技能包**，"
+        "入口是 SKILL.md（frontmatter 给 name/description，正文即 instructions），"
+        "可选的 references/ 放参考文件（渐进式披露第三层，按需 read_reference）",
     )
     ap.add_argument("--thread", default="interactive-1")
     args = ap.parse_args()

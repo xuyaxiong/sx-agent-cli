@@ -20,7 +20,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from proto import trace
 from proto.config import describe
 from proto.graph import build
-from proto.skills import ARTIFACTS
+from proto.artifacts import ARTIFACTS
 
 BAR = "─" * 74
 

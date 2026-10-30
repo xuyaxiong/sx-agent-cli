@@ -50,7 +50,7 @@ from collections import Counter
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from proto.skills import ARTIFACTS, store_artifact
+from proto.artifacts import ARTIFACTS, store_artifact
 
 THREADS = 8
 ROUNDS = 3000

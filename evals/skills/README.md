@@ -5,11 +5,17 @@
 
 ```
 skills/
-└── adapted/    本项目口径的版本 —— evals case 用这份
-    ├── lesson-prep.md          教案（源包含 references/ 3 个，已内联）
-    ├── guided-learning.md      导学单（源包含 references/ 1 个，已内联）
-    └── interactive-webpage.md  交互网页（单文件）
+├── lesson-prep/SKILL.md          教案（源包含 references/ 3 个，**当前仍是内联的**）
+├── guided-learning/SKILL.md      导学单（源包含 references/ 1 个，**当前仍是内联的**）
+└── interactive-webpage/SKILL.md  交互网页（单文件）
 ```
+
+**形状**：每个子目录是一个技能包，入口固定叫 `SKILL.md`，可选 `references/`（见
+`proto/skill_pack.py`）。2026-10-30 从"平铺 `*.md`"改成这个形状 —— 那是为了对齐真实技能的形态。
+
+> ⚠️ **下面规则 ④「references 内联」现在可以撤了**：原型已经支持技能包带 `references/`
+> （渐进式披露第三层，`read_reference` 按需读）。但**这 3 个适配版还没拆回去** ——
+> 内联的内容原样留在 `SKILL.md` 里，等重做适配时再还原成真实的 `references/` 结构。
 
 来源：`sx-agent/test_data/skills`，复制日期 2026-10-29。源头的平台契约与本项目不同，
 所以必须有一次**机械适配**；规则固定，见下。

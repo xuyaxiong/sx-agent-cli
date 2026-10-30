@@ -353,7 +353,7 @@ def check_artifact_html_complete(run: dict, turn: dict, min_count: int = 1) -> R
 
     > 判据的差别：不是"看着像 HTML 就算网页"，而是"**你说了是网页，那就得是完整的网页**"。
     """
-    from proto.skills import file_ext
+    from proto.artifacts import file_ext
 
     arts = run.get("artifact_final") or {}
     html_ids = [aid for aid, a in arts.items() if file_ext(a.get("type") or "") == ".html"]

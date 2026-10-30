@@ -31,7 +31,14 @@ from pydantic import BaseModel, Field
 from proto import trace
 from proto.config import get_model
 from proto.llm import safe_structured
-from proto.skills import ARTIFACTS, Skill, read_artifact, store_artifact, write_artifact
+from proto.artifacts import (  # 产物领域
+    ARTIFACTS,
+    read_artifact,
+    store_artifact,
+    write_artifact,
+)
+from proto.skill_pack import read_reference, reference_index_lines  # 参考文件（磁盘）
+from proto.skills import Skill  # 技能领域
 
 #: 平台约定 —— 尽量少。技能作者写什么都不会破坏它，因为它不要求作者做任何事。
 _PLATFORM_RULE = (
@@ -378,13 +385,23 @@ def run_task(skill: Skill, briefing: str = "") -> ExecOutcome:
     """
     agent = create_agent(
         get_model(),
-        tools=[write_artifact, read_artifact],
+        tools=[write_artifact, read_artifact, read_reference],
         system_prompt=_PLATFORM_RULE,
         name="executor",
     )
 
     briefing_text = briefing.strip() or "（暂无 —— 你需要的任何信息都要先问，不要猜）"
-    task_text = f"【能力指令】\n{skill.instructions}\n\n【已知信息】\n{briefing_text}"
+    # 技能自带参考文件时，把**清单**（名字 + 字数）一起给执行器 —— 正文按需 `read_reference` 读。
+    # 清单**现场扫盘**（参考文件不缓存在 `Skill` 上，见 `skill_pack` 的模块 docstring）；
+    # **没有参考文件就一个字不加**（单文件技能本来就没有）。
+    refs = ""
+    have = reference_index_lines(skill.name)
+    if have:
+        refs = (
+            "\n\n【参考文件】要用哪一份就用 `read_reference` 读全文，**不要凭文件名猜内容**：\n"
+            + "\n".join(have)
+        )
+    task_text = f"【能力指令】\n{skill.instructions}{refs}\n\n【已知信息】\n{briefing_text}"
 
     run_id = f"R{next(_RUN_SEQ):02d}"
     trace.section(f"run_task · {run_id} · skill={skill.name}（通用执行器，隔离上下文）")
@@ -393,7 +410,7 @@ def run_task(skill: Skill, briefing: str = "") -> ExecOutcome:
     trace.block(
         "发给执行器的内容（能力指令按名引用）",
         f"【能力指令】{skill.name}"
-        f"（instructions {len(skill.instructions)} 字，原文见 evals/skills/ 下同名文件）\n\n"
+        f"（instructions {len(skill.instructions)} 字，原文见该技能包的 SKILL.md）\n\n"
         f"【已知信息】\n{briefing_text}",
     )
     t0 = time.time()

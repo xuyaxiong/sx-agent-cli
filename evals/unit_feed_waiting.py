@@ -97,7 +97,7 @@ def main() -> None:
     check("带上 agent_answer", "用户之前说过是三年级" in prompt, prompt[-240:] if prompt else "")
 
     print("\n③ 可读产物清单照旧要带上（否则续跑时执行器看不见前序产物）")
-    from proto.skills import ARTIFACTS, store_artifact
+    from proto.artifacts import ARTIFACTS, store_artifact
 
     ARTIFACTS.clear()
     readable = store_artifact("《白桦》教案", "四年级诗歌教学", "md", "教案正文" * 20)
