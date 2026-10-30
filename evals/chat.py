@@ -20,6 +20,7 @@ import os
 import re
 import sys
 import time
+import unicodedata
 import threading
 from pathlib import Path
 
@@ -64,21 +65,28 @@ def _load_case(which: str) -> tuple[Path, dict]:
 #    不吐这个字段）。能给你的是最接近的两样：**它自己说的话**（决策叙述）+ **它实际调了什么
 #    工具、参数是什么**（硬证据，不是它自称）。
 
-#: 角色 →（图标 + ANSI 颜色）。颜色在非 tty / NO_COLOR 下自动关掉。
+#: 角色 →（标签 + ANSI 颜色）。颜色在非 tty / `NO_COLOR` 下自动关掉。
+#:
+#: 🔴 **标签一律纯 ASCII、不带图标**（用户 2026-10-30 定）。
+#: 左对齐老是歪，两个来源都在"字符宽度"上：
+#:   ① 中英混排 —— CJK 占 2 列、ASCII 占 1 列，各终端实现还有差异；
+#:   ② **带变体选择符的 emoji**（`⚖️` = U+2696 + U+FE0F）—— 变体选择符是**零宽**的，
+#:      而"码点 > 0x2E80 就算 2 列"的老算法会把它也算成 2，每个这种图标**多算 2 列**。
+#: 全 ASCII 之后宽度就是"一个字符一列"，任何终端都对齐。
 _STYLE: dict[str, tuple[str, str]] = {
-    "user":   ("👤 用户",       "[96m"),   # 亮青
-    "agent":  ("🧠 主agent说",  "[92m"),   # 亮绿
-    "tool":   ("🔧 调工具",     "[93m"),   # 亮黄
-    "exec":   ("▶️ 执行器",     "[94m"),   # 亮蓝
-    "judge":  ("⚖️ 判定",       "[95m"),   # 亮紫
-    "say":    ("🗣 执行器说",   "[96m"),   # 亮青
-    "ret":    ("↩️ 返回",       "[90m"),   # 灰
-    "inject": ("📥 注入",       "[35m"),   # 紫
-    "decide": ("🧭 决策",       "[95m"),   # 亮紫
-    "ask":    ("❓ 提问",       "[91m"),   # 亮红
-    "plat":   ("📮 平台",       "[90m"),   # 灰
-    "done":   ("✅ 交付",       "[92m"),   # 亮绿
-    "task":   ("📋 台账",       "[90m"),
+    "user":   ("👤 USER",     "\033[96m"),   # 亮青
+    "agent":  ("🧠 AGENT",    "\033[92m"),   # 亮绿
+    "say":    ("🤖 EXECUTOR", "\033[96m"),   # 亮青
+    "tool":   ("🔧 TOOL",     "\033[93m"),   # 亮黄
+    "ret":    ("🔙 RETURN",   "\033[90m"),   # 灰
+    "inject": ("📥 INJECT",   "\033[35m"),   # 紫
+    "decide": ("🧭 DECIDE",   "\033[95m"),   # 亮紫
+    "judge":  ("🧭 DECIDE",   "\033[95m"),   # 旧角色名，同 DECIDE
+    "exec":   ("🚀 RUN",      "\033[94m"),   # 亮蓝
+    "ask":    ("💬 ASK",      "\033[91m"),   # 亮红
+    "plat":   ("📮 PLATFORM", "\033[90m"),   # 灰
+    "done":   ("🏁 DONE",     "\033[92m"),   # 亮绿
+    "task":   ("📋 TASKS",    "\033[90m"),
 }
 
 _COLOR = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
@@ -86,33 +94,61 @@ _COLOR = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
 #: 实时播报：trace 日志里**值得推到终端**的行。左边是判据（子串），右边是角色。
 #: 这些行**自带真实时间戳**（`proto.trace` 写的时候就打了），所以直接用它，不要自己补时间。
 _LIVE: tuple[tuple[str, str], ...] = (
-    # （主 agent 的工具调用由 dump 里的 tool_call= 播 —— 那行更全：带参数；
-    #    那行是同一件事，重复播两遍反而乱）
+    # （主 agent 的工具调用由 dump 里的 `tool_call=` 播 —— 那行更全、带参数）
     ("delegate · ", "plat"),
     ("取代了 ", "plat"),
     ("run_task · R", "exec"),
     ("run_task 结束", "exec"),
-    ("轮判定：status=", "judge"),
     ("prepare · 投递用户原话", "plat"),
     ("prepare: 待答", "plat"),
     ("prepare: ✅", "done"),
     ("prepare: ⏳", "ask"),
     ("prepare: ❌", "ask"),
-    ("finalize: 透传", "ask"),
 )
 
 
 def _dw(s: str) -> int:
-    """显示宽度（CJK 占 2 列）—— 用来对齐左侧的 gutter。"""
-    return sum(2 if ord(c) > 0x2E80 else 1 for c in s)
+    """显示宽度（按**终端实际渲染**算，不按码点阈值）。
+
+    三条规则，缺一条就会歪（每一条都实测踩过）：
+      1. **零宽**：变体选择符（U+FE0E/FE0F）与 ZWJ 不占列 —— 老算法把 `⚖️` 的
+         U+FE0F 也算成 2 列，于是每个这种图标**多算 2 列**
+      2. **emoji 区**（U+1F000–1FAFF）+ **杂项符号区**（U+2600–27BF）一律 2 列 ——
+         `❓`(U+2753) `✅`(U+2705) 的 East Asian Width 是 W，但 `🗣`(U+1F5E3) 是 N
+         却仍是 emoji 默认呈现，靠 EAW 判会漏
+      3. **带 VS16 的**按 emoji 呈现算 2 列 —— `↩️`(U+21A9+FE0F) 的 EAW 是 N，
+         不加这条就会算成 1
+      4. 其余按 East Asian Width：`W`/`F` 算 2，其他算 1
+    """
+    w, i, n = 0, 0, len(s)
+    while i < n:
+        c = s[i]
+        if c in "︎️‍":  # 零宽：变体选择符 / ZWJ
+            i += 1
+            continue
+        o = ord(c)
+        if (
+            (i + 1 < n and s[i + 1] == "️")  # 带 VS16 → emoji 呈现
+            or 0x1F000 <= o <= 0x1FAFF
+            or 0x2600 <= o <= 0x27BF
+            or unicodedata.east_asian_width(c) in ("W", "F")
+        ):
+            w += 2
+        else:
+            w += 1
+        i += 1
+    return w
 
 
-_LABEL_W = 12   # gutter 里角色名的宽度（按显示列算）
+#: **正文层**（顶格、亮色）—— 只有"人和主 agent 的对话"。
+#: 其余全部是**机制层**（缩进 + 暗灰 + `|`）：执行器的话、工具调用、判定、注入……
+#: 用户 2026-10-30 定：*"正文输出 用户输入 和其它日志搅在一起了"* ——
+#: 读对话只追顶格行，查机制看缩进行。
+_LABEL_W = 12   # gutter 里标签的宽度（按显示列算；最长的 EXECUTOR/PLATFORM 是 11 列）
 _TS = "[HH:MM:SS] "
 
-
-#: 播报里已经打过的"执行器的话"（归一化前 60 字）—— 回合小结靠它去重。
-#: 不去重的话，同一段话会以 🗣（实时）和 🧠（小结）出现两次，看着像说了两遍。
+#: 播报里已经打过的"执行器的话"（归一化前 60 字）—— 去重用。
+#: 不去重的话，同一段话会以 🗣 EXECUTOR（实时）和 🧠 AGENT（小结）出现两次。
 _SHOWN_EXEC: set[str] = set()
 
 
@@ -120,24 +156,32 @@ def _norm(s: str) -> str:
     return " ".join(s.split())[:60]
 
 
+_MAIN_ROLES = frozenset({"user", "agent"})
+_MECH_PREFIX = "   🔩 "     # 3 空格 + 🔩(2 列) + 空格 = 6 列
+_MECH_COLOR = "\033[90m"     # 暗灰：机制日志统一压暗，靠标签区分类型
+
+
+#: CLI 输出流落盘的 sink（`main()` 里打开）。**终端里滚过去的，文件里也得有** ——
+#: 用户 2026-10-30：*"更详细的日志 尤其是我cli里面的运行流程 都要记录到文件里面"*。
+#: 落的是**去色**的纯文本，和终端看到的内容逐行对应。
+_SINK: "object | None" = None
+
+
+def _to_file(line: str) -> None:
+    if _SINK is not None:
+        _SINK.write(line + "\n")
+        _SINK.flush()
+
+
 def paint(s: str, color: str = "") -> str:
-    """按角色上色（非 tty / `NO_COLOR` 时原样返回）。"""
+    """上色（非 tty / `NO_COLOR` 时原样返回）。"""
     return f"{color}{s}\033[0m" if (_COLOR and color) else s
 
 
-#: **正文层**（顶格、亮色）—— 只有"人和主 agent 的对话"。
-#: 其余全部是**机制层**（缩进 + 暗灰 + `⚙`）：执行器的话、工具调用、判定、注入……
-#: 用户 2026-10-30 定：*"正文输出 用户输入 和其它日志搅在一起了"* ——
-#: 读对话只追顶格行，查机制看缩进行。
-_MAIN_ROLES = frozenset({"user", "agent"})
-_MECH_PREFIX = "   ⚙ "      # 3 空格 + ⚙(2 列) + 空格 = 6 列
-_MECH_COLOR = "\033[90m"    # 暗灰：机制日志统一压暗，靠图标区分类型
-
-
 def _emit(role: str, text: str, stamp: str | None = None) -> None:
-    """按统一版式打一条：`[时间] 图标 角色 ┃ 内容`，续行对齐到 `┃`。
+    """按统一版式打一条：`[时间] 标签 ┃ 内容`，续行对齐到 `┃`。
 
-    正文层顶格；机制层多一个 `   ⚙ ` 前导并压成暗灰 —— 两层一眼分得开。
+    正文层顶格；机制层多一个 `   | ` 前导并压成暗灰 —— 两层一眼分得开。
     """
     icon, color = _STYLE[role]
     stamp = stamp or time.strftime("%H:%M:%S")
@@ -151,8 +195,10 @@ def _emit(role: str, text: str, stamp: str | None = None) -> None:
     cont = " " * indent + "┃ "
     lines = (text or "").splitlines() or [""]
     print(paint(head + lines[0], tint))
+    _to_file(head + lines[0])
     for ln in lines[1:]:
         print(paint(cont + ln, tint))
+        _to_file(cont + ln)
 
 
 def _live(role: str, line: str) -> None:
@@ -354,6 +400,10 @@ def main() -> None:
     out_dir = ROOT / "evals" / "runs" / tag
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # CLI 输出流原样落一份（终端里滚过去的东西，文件里也留得住）
+    global _SINK
+    _SINK = (out_dir / "_console.log").open("w", encoding="utf-8")
+
     print(BAR)
     print(f"交互式跑 case：{case['id']}")
     print(f"技能：{', '.join(sorted(proto.agent.SKILLS.keys()))}")
@@ -377,6 +427,7 @@ def main() -> None:
                 pad = " " * max(0, _LABEL_W - _dw(icon))
                 prompt = f"[{time.strftime('%H:%M:%S')}] {icon}{pad}┃ "
                 text = input(paint(prompt, color)).strip()
+                _to_file(prompt + text)
                 # 管道输入没有终端回显，补上（不然这行是空的）；真终端上**不要**补，
                 # 否则同一句话出现两次 —— 那正是用户 2026-10-30 指出的毛病。
                 if text and not sys.stdout.isatty():
@@ -438,6 +489,12 @@ def main() -> None:
     }
     dump_artifacts(out_dir, case["id"], 1, result)
     dump_run_record(out_dir, case["id"], 1, result)
+    # 把这次跑的**原始 trace** 作为附录并进 `_run.md`（跑批那条路径是 run.py 干的，交互式得自己做）
+    from evals.run import _append_trace
+
+    _append_trace(result, tag)
+    if _SINK is not None:
+        _SINK.close()
     (out_dir / "results.json").write_text(
         json.dumps([result], ensure_ascii=False, indent=2), encoding="utf-8"
     )
