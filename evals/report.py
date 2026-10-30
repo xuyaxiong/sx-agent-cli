@@ -20,8 +20,8 @@ from pathlib import Path
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-HERE = Path(__file__).resolve().parent
-RUNS_DIR = HERE / "runs"
+# 🔴 **不要自己算 `HERE / "runs"`** —— 路径只有 `harness` 一个来源（理由见 `run.py` 同处注释）
+from evals.harness import RUNS_DIR  # noqa: E402
 
 #: **测试有效性断言** —— 这些不绿，说明这次跑**根本没测到东西**，
 #: 同一 case 里其他断言的"通过"是假阴性（如：并发没触发 → "没撞车"毫无意义）

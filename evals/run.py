@@ -27,7 +27,10 @@ if hasattr(sys.stdout, "reconfigure"):  # Windows：不设中文/符号输出会
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent  # langgraph-lab/
 CASES_DIR = HERE / "cases"
-RUNS_DIR = HERE / "runs"
+# 🔴 **不要自己算 `HERE / "runs"`**（2026-10-30 踩过）：冻结后 `HERE` 在 `_internal/` 里，
+# 于是 `_append_trace` 把 trace 附录写进了 `_internal/evals/runs/` —— 用户永远看不到，
+# 收回来的一堆 `_run.md` 全都缺了附录。**路径只有 `harness` 一个来源。**
+from evals.harness import RUNS_DIR  # noqa: E402
 
 
 # ──────────────────────────── 载入 ────────────────────────────

@@ -24,6 +24,7 @@ uv run python -m evals.run --tag smoke --tier smoke    # 只跑 smoke 档
 uv run python -m evals.run --tag x --only s01-multi-skill-dedup --reps 5
 uv run python -m evals.report baseline                 # 只重出报告
 uv run python -m evals.unit_artifact_race              # 单元：产物 ID 竞态（不调 LLM）
+uv run python -m evals.unit_frozen_paths               # 单元：**冻结后的目录约定**（不调 LLM、不打 exe）
 ```
 
 **实测发现**（F1–F6）记在 `../docs/discussion-log.md`。
@@ -138,6 +139,14 @@ soft:                        # 软断言（LLM 评分）—— 只有必须语�
 | `_child.py` | **跑批子进程**：一个 case 的一遍 → JSON（`run.py` 用 `-m` 起它） | 只有跑批 |
 | `chat.py` | 交互式入口（你当用户） | 只有人 |
 | `run.py` / `report.py` / `checks.py` / `judge.py` | 跑批的调度 / 报告 / 断言 / 评分 | 只有跑批 |
+| `unit_*.py` | 不调 LLM 的单元测试（竞态 / 交接书 / 投递 / **冻结路径**） | 秒级，改完先跑它们 |
+
+> 🔴 **`unit_frozen_paths.py` 是"打包才走的那条分支"的常驻守卫** ——
+> 冻结后的路径算错，**开发态永远碰不到**，而跑一次打包要几分钟、用户还得干等。
+> 它用 `sys.frozen=True` + 假 exe 目录把那条分支走一遍，**秒级**。
+> 已经拦下两次（示例技能铺错、trace 附录写进 `_internal/`）。
+> **真打包仍然不可替代**（验"冻结本身"：漏收依赖、`_MEIPASS`、双击启动），
+> 但那是**攒着一起打**，不是改一处打一次。
 
 > 🔴 **为什么要拆**：原来这些都挤在 `_child.py`（803 行）里，其中只有 68 行是跑批独有的，
 > 其余全是共用的 —— 但文件名只描述了那 68 行，于是 `chat.py` 的
