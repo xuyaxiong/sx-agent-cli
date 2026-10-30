@@ -46,8 +46,8 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 def _full_task() -> dict:
     """**所有字段都填满**的 Task —— 空字段测不出"漏渲染"。"""
     ARTIFACTS.clear()
-    produced = store_artifact("《白桦》导学单", "课前预习用填空式导学单", "导学单正文" * 40)
-    readable = store_artifact("《白桦》教案", "四年级下册诗歌教学", "教案正文" * 60)
+    produced = store_artifact("《白桦》导学单", "课前预习用填空式导学单", "md", "导学单正文" * 40)
+    readable = store_artifact("《白桦》教案", "四年级下册诗歌教学", "md", "教案正文" * 60)
     return {
         "id": "t12345678",
         "skill": "guided-learning",

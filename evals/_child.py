@@ -79,12 +79,16 @@ def run_case(case: dict, rep: int, out_dir: Path | None = None) -> dict:
         "artifact_writes": inst["writes"],
         "run_tasks": inst["run_tasks"],
         "artifact_ids": list(ARTIFACTS.keys()),
-        # 正文全文一并带上：`artifact_no_placeholder` / `artifact_looks_like_html` 这类
+        # 正文全文一并带上：`artifact_no_placeholder` / `artifact_html_complete` 这类
         # **纯代码**断言要扫正文，而快照里只有字数的话它们无从判起。
         "artifact_final": {
             k: {
                 "title": v["title"],
                 "summary": v.get("summary", ""),
+                #: 产出方**声明的**类型（`md` / `html`）—— 断言按它判"哪些算网页"，
+                #: 不按内容嗅探（见 `checks.check_artifact_html_complete`）
+                "type": v.get("type", ""),
+                "ext": v.get("ext", ""),
                 "chars": len(v["content"]),
                 "content": v["content"],
             }

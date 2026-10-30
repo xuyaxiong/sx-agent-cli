@@ -48,6 +48,7 @@ from evals.harness import (  # noqa: E402
     install,
     snapshot,
 )
+from proto import skills as proto_skills  # noqa: E402
 from proto import trace  # noqa: E402
 from proto.graph import build  # noqa: E402
 from proto.skills import ARTIFACTS  # noqa: E402
@@ -194,6 +195,13 @@ def _norm(s: str) -> str:
     return " ".join(s.split())[:60]
 
 
+#: **播报层**里唯二会被截断的工具返回 —— 判据是"**全文另有出处**"：
+#: 技能原文在 `evals/skills/*.md`，产物正文在产物文件里。
+#: 🔴 **其余一律不截**（平台注入 / agent 的话 / 别的工具返回）：
+#: 那些是**优化 agent 表现的观察窗口**，截了就观察不到（用户 2026-10-30 定）。
+_CAPPED_TOOLS = ("read_skill", "read_artifact")
+_CAP_TOOL = 250
+
 _MAIN_ROLES = frozenset({"user", "agent"})
 _MECH_PREFIX = "   🔩 "     # 3 空格 + 🔩(2 列) + 空格 = 6 列
 _MECH_COLOR = "\033[90m"     # 暗灰：机制日志统一压暗，靠标签区分类型
@@ -270,10 +278,9 @@ def _feed(st: dict, line: str) -> None:
             if body.startswith(("PROMPT（", "RESPONSE（")):
                 st["block"][1].append(body)
                 return
-            text = "\n".join(st["block"][1])  # 上一个多行块到此为止
-            if len(text) > 1600:
-                text = text[:1600] + f"\n…（本块共 {len(text)} 字，后面截了）"
-            _emit(st["block"][0], text, stamp=st["block"][2])
+            # 🔴 **整块照打，不截断**：这些块是**平台注入**（交接书 / 台账）和
+            # **LLM 决策**（判定 / 试答）—— 用户点名"千万不要截断"的那类。
+            _emit(st["block"][0], "\n".join(st["block"][1]), stamp=st["block"][2])
             st["block"] = None
 
         if "消息轨迹" in body:  # 段落头：接下来的缩进行是谁的 dump
@@ -339,12 +346,27 @@ def _feed(st: dict, line: str) -> None:
         _emit("tool", f"{who} → {name}（{args[:300]}）", stamp=st["ts"])
         return
     if s.startswith("content="):
-        body = s[len("content=") :].strip().strip("'").replace(chr(92) + "n", "\n")
+        # 日志里是 Python repr（单行、转义过），这里还原成人看的样子：
+        # `\n` → 换行；`\\` → 单个反斜杠（**Windows 路径全靠这条** —— 不还原的话
+        # 用户看到的是 `C:\\Users\\...`，没法直接拷进资源管理器）。
+        # ⚠️ 顺序不能反：先还原 `\n`，再还原 `\\`；否则 `\\n`（字面反斜杠+n）会被拆错。
+        body = (
+            s[len("content=") :].strip().strip("'")
+            .replace(chr(92) + "n", "\n")
+            .replace(chr(92) * 2, chr(92))
+        )
         if st["kind"] == "ToolMessage":  # 工具**返回了什么**
             who = st["calls"].pop(0) if st["calls"] else "?"
-            _emit("ret", f"{who} 的返回：\n{body[:600]}", stamp=st["ts"])
+            # 🔴 **只有这两种工具返回截断**：它们的全文**另有出处**
+            # （技能原文在 `evals/skills/*.md`，产物正文在产物文件里），
+            # 摊在终端里只是噪音。**其余一律不截** —— 见下面两条。
+            if who in _CAPPED_TOOLS and len(body) > _CAP_TOOL:
+                body = body[:_CAP_TOOL] + f"（后面还有 {len(body) - _CAP_TOOL} 字未显示）"
+            _emit("ret", f"{who} 的返回：\n{body}", stamp=st["ts"])
         elif st["kind"] == "SystemMessage":  # 平台注入的台账
-            _emit("inject", f"平台 → 主 agent（每轮注入的任务台账）：\n{body[:600]}", stamp=st["ts"])
+            # 🔴 **不截断**：平台注入是"优化 agent 表现"的观察窗口
+            # （用户 2026-10-30：*"如果没有这些东西观察不到"*）
+            _emit("inject", f"平台 → 主 agent（每轮注入的任务台账）：\n{body}", stamp=st["ts"])
         elif st["kind"] == "AIMessage":
             # 执行器的话 → 机制层（🗣）；主 agent 的话 → **正文层**（🧠）。
             # ⚠️ 都从 dump 实时播：等轮末再打的话，主 agent 的话会跑到机制日志**前面**，
@@ -482,6 +504,12 @@ def main() -> None:
     global _SINK
     _SINK = (out_dir / "_console.log").open("w", encoding="utf-8")
 
+    # 🔴 **产物当场落盘**（2026-10-30 用户提的：*"保存地址要说一下 不然不清楚哪里找去"*）——
+    # 告诉产物库"这次 run 的产物放哪"，`store_artifact` 写完就落盘，
+    # 于是 `write_artifact` 的返回里能给出**真实路径**，用户当场就能打开看。
+    # 落点和最后 `dump_artifacts` 的目录**必须一致**，否则前后两份文件对不上。
+    proto_skills.ARTIFACT_DIR = out_dir / "artifacts" / f"{tag}__r1"
+
     skills = list(proto.agent.SKILLS.values())
     if FROZEN:
         # 给**用户**看的开场白：只说"这是什么、能干什么、怎么开始"。
@@ -583,6 +611,10 @@ def main() -> None:
             k: {
                 "title": v["title"],
                 "summary": v.get("summary", ""),
+                #: 产出方**声明的**类型（`md` / `html`）—— 断言按它判"哪些算网页"，
+                #: 不按内容嗅探（见 `checks.check_artifact_html_complete`）
+                "type": v.get("type", ""),
+                "ext": v.get("ext", ""),
                 "chars": len(v["content"]),
                 "content": v["content"],
             }

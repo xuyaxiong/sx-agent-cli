@@ -113,7 +113,7 @@ soft:                        # 软断言（LLM 评分）—— 只有必须语�
 
 **⑤ `results.json` 里带着**产物正文全文**（`artifact_final[].content`）。**
 
-`artifact_no_placeholder` / `artifact_looks_like_html` / `artifact_chars_over` 这几条
+`artifact_no_placeholder` / `artifact_html_complete` / `artifact_chars_over` 这几条
 **纯代码**断言要扫正文才判得了，所以只能把正文一起回传（一次跑几十 KB，和产物原文重复）。
 
 要清的话得改成**在子进程里先算结论**（只回传 pass/fail + 详情），

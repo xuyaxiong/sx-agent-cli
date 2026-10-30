@@ -323,12 +323,43 @@ class Skill:
 
 ```python
 ARTIFACTS: dict[str, dict[str, str]] = {}     # ⚠️ 内存 dict，生产必换
+_ART_SEQ = itertools.count(1)                 # ID 发号器 —— **不能用 len(ARTIFACTS)+1**（见下）
 
 def store_artifact(title, summary, content) -> str   # 返回 art_001 这样的 ID
 @tool write_artifact(title, summary, content) -> str # 梗概由**产出方**在交付时一起给
 @tool read_artifact(artifact_id) -> str              # 按需读回全文（渐进式披露第二层）
-@tool list_artifacts() -> str                        # 清单：ID/名称/字数/梗概，**不含正文**
+@tool list_artifacts() -> str                        # 清单：ID/名称/字数/**类型**/梗概，**不含正文**
 ```
+
+**产物记录有六个字段**：`title` / `summary` / `content` / **`type`** / **`ext`** / **`file`**
+（+ 落盘时的 `path`）。
+
+🔴 **文件类型由产出方在交付时一起说**（和 `title` / `summary` 并列），
+平台据此**硬性派发**保存：说 md 就存 `.md`，说 html 就存 `.html`。
+
+> ⚠️ **不要改成"按内容嗅探"**（2026-10-30 用户纠正：*"产物是什么 是生成产物的时候 ai 说的
+> 跟什么梗概 title 一起产出的 后续对产物的保存只是根据文件类型 硬性派发处理
+> **你不要多余操作**"*）。
+>
+> **谁产出谁最清楚**：执行器刚写完那份东西，它知道是 md 还是 html；
+> 平台去猜反而多一道可能猜错的逻辑。派发规则只有一处（`proto.skills.FILE_TYPES`），
+> 认不出来 / 没给 → 存 `.md`（**不报错**：产物已经产出来了，存不下比存错更糟）。
+>
+> **测试也不嗅探**（用户 2026-10-30：*"就是不用嗅探呀 测试也不用"*）：
+> 断言 `artifact_html_complete` 也是**以声明为基准** —— 先按声明的 `type` 挑出"网页"，
+> 再核对它**有头有尾**。不是"看着像 HTML 就算网页"，而是
+> "**你说了是网页，那就得是完整的网页**"。`proto/skills.py` 里已经没有嗅探函数了。
+
+> 🔴 **ID 发号器不能用 `len(ARTIFACTS) + 1`** —— 那是"先查后写"，两步之间有窗口：
+> 两个执行器同时算会拿到同一个 ID，后写覆盖先写，**产物静默丢失**。
+> 2026-10-30 实况：给 `store_artifact` 加"当场落盘"时两步之间多插了活，窗口被撑开，
+> `evals/unit_artifact_race.py` 当场从 🟡 翻 🔴（撞 18577 次）。改 `itertools.count()`
+> （`next()` 在 GIL 下原子）后闭合。**这条测试现在守的是回归。**
+
+> 🔴 **产物当场落盘**（`ARTIFACT_DIR` 设了的话，交互式入口会设）——
+> 产物是**交付物**，用户当场就要能打开。以前只在跑完时统一落盘，于是
+> `write_artifact` 那句"已写入产物 art_001"**指不到任何文件**（用户原话：
+> *"保存地址要说一下 不然不清楚哪里找去"*）。现在返回里带**真实路径**。
 
 **原型里的 4 个技能**：
 

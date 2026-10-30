@@ -100,7 +100,7 @@ def main() -> None:
     from proto.skills import ARTIFACTS, store_artifact
 
     ARTIFACTS.clear()
-    readable = store_artifact("《白桦》教案", "四年级诗歌教学", "教案正文" * 20)
+    readable = store_artifact("《白桦》教案", "四年级诗歌教学", "md", "教案正文" * 20)
     seen = _capture()
     state["tasks"][0]["refs"] = [readable]
     graph._feed_waiting(state)

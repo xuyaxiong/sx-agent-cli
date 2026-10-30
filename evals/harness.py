@@ -231,17 +231,20 @@ def install(case: dict) -> dict:
         #    实测踩点：`skills_mode: replace` + 多轮 + 有等待任务的 case 才会触发。
         proto.skills.SKILLS = merged
 
-    # ③ 产物写入流水 —— 查 `store_artifact` 的 `len(ARTIFACTS)+1` 并发竞态
+    # ③ 产物写入流水 —— 记「谁在什么时候写了什么」，用来判并发与归属
+    # ⚠️ **签名要跟着 `proto.skills.store_artifact` 走**：它变过（加 `file_type`），
+    # 漏改这里就是整轮 `TypeError` —— 和 `run_task` 那个包装同一个坑。
     writes: list[dict] = []
     orig_store = proto.skills.store_artifact
 
-    def rec_store(title: str, summary: str, content: str) -> str:
-        aid = orig_store(title, summary, content)
+    def rec_store(title: str, summary: str, file_type: str, content: str) -> str:
+        aid = orig_store(title, summary, file_type, content)
         writes.append(
             {
                 "aid": aid,
                 "title": title,
                 "summary": summary,
+                "type": file_type,
                 "chars": len(content),
                 "thread": threading.get_ident(),
                 "t": round(time.time(), 3),
@@ -419,20 +422,10 @@ def snapshot(state: dict, user: str, prev_len: int, idx: int, wall_s: float) -> 
 
 
 def _slug(s: str, n: int = 40) -> str:
-    import re
+    """转发 `proto.skills.artifact_slug` —— 文件名怎么起，落盘和这里必须是同一套。"""
+    from proto.skills import artifact_slug
 
-    return (re.sub(r"[^\w一-鿿]+", "-", s).strip("-") or "untitled")[:n]
-
-
-def _artifact_ext(content: str) -> str:
-    """按内容嗅探扩展名 —— HTML 产物落成 `.html`，人工审计能直接双击打开看效果。
-
-    判据与 `checks.looks_like_html` **同一份实现**（剥前导注释再判），
-    否则会出现"断言判它是 HTML、落盘却存成 .md"这种自相矛盾。
-    """
-    from evals.checks import looks_like_html
-
-    return ".html" if looks_like_html(content) else ".md"
+    return artifact_slug(s, n)
 
 
 def dump_artifacts(out_dir: Path, case_id: str, rep: int, result: dict) -> Path:
@@ -453,18 +446,18 @@ def dump_artifacts(out_dir: Path, case_id: str, rep: int, result: dict) -> Path:
         (d / "_index.md").write_text("# （本次没有产物）\n", encoding="utf-8")
         return d
 
-    rows = ["| 产物 | 标题 | 字数 | 文件 |", "|---|---|---|---|"]
+    from proto.skills import artifact_body
+
+    rows = ["| 产物 | 标题 | 字数 | 类型 | 文件 |", "|---|---|---|---|---|"]
     for aid, a in ARTIFACTS.items():
-        ext = _artifact_ext(a["content"])
-        fn = f"{aid}_{_slug(a['title'])}{ext}"
-        # HTML **原样落盘**：前面加 markdown 头，浏览器打开第一行就会把标题当正文渲染
-        body = (
-            a["content"]
-            if ext == ".html"
-            else f"# {a['title']}\n\n> `{aid}`｜{len(a['content'])} 字\n\n---\n\n{a['content']}\n"
+        # 类型和文件名都取**记录里那份**（`store_artifact` 按声明的类型定好的）——
+        # 这里另算一遍的话，会和它当场落盘时写的那份对不上。
+        fn = a.get("file") or f"{aid}_{_slug(a['title'])}{a.get('ext', '.md')}"
+        (d / fn).write_text(artifact_body(aid, a), encoding="utf-8")
+        rows.append(
+            f"| `{aid}` | {a['title']} | {len(a['content'])} "
+            f"| {a.get('ext', '.md').lstrip('.')} | [{fn}]({fn}) |"
         )
-        (d / fn).write_text(body, encoding="utf-8")
-        rows.append(f"| `{aid}` | {a['title']} | {len(a['content'])} | [{fn}]({fn}) |")
 
     (d / "_index.md").write_text(
         f"# {case_id} · 第 {rep} 遍 · 产物原文\n\n"

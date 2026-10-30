@@ -1,13 +1,20 @@
 """单元级：`store_artifact` 的 **ID 竞态**。
 
-## 代码上的窗口
+## 曾经的窗口（已闭合，这里留着防回归）
 
-`store_artifact` 用 `len(ARTIFACTS) + 1` 生成 ID —— **先查后写**，两步之间有窗口：
+`store_artifact` 原来用 `len(ARTIFACTS) + 1` 生成 ID —— **先查后写**，两步之间有窗口：
 
     aid = f"art_{len(ARTIFACTS) + 1:03d}"   # ① 算
     ARTIFACTS[aid] = {...}                  # ② 写
 
 两个执行器同时算 ① 会拿到**同一个 ID**，② 后者覆盖前者 —— 产物**静默丢失**。
+
+**2026-10-30 已修**：改成 `itertools.count()`（`next()` 在 GIL 下是原子的）。
+
+> 📌 **修它的直接原因是它当场复发了**：给 `store_artifact` 加"当场落盘"时，
+> ① 和 ② 之间**多插了两步**（嗅探文件类型、拼文件名），窗口被撑开 ——
+> 本测试当场从 🟡"没撞上"翻成 🔴"**撞了 18577 次**"。
+> 也就是说：**这个测试抓到了一个真实引入的回归**，不是纸面风险。
 
 ## 为什么必须单测
 
@@ -23,6 +30,10 @@
 **对照组**：把窗口人为撑开（两步之间 `time.sleep(0)` 主动让出 GIL），
 看这个测试**会不会报警**。对照组不炸，就说明测试根本没有探测能力，
 "没撞上"的结论也就不值钱。
+
+> ⚠️ **现在"原样没撞上"的含义变了**：不再是"窗口太窄、撞不上"，
+> 而是"**发号器结构上就不会重号**"。所以这条测试现在的价值是**防回归** ——
+> 谁把发号器改回 `len(ARTIFACTS) + 1`，或者往两步之间再插活，这里必须红。
 
     uv run python -m evals.unit_artifact_race
 
@@ -55,7 +66,7 @@ def hammer(store, label: str) -> tuple[int, int]:
 
     def worker(tid: int) -> None:
         barrier.wait()
-        local = [store(f"t{tid}-{i}", "梗概", "x") for i in range(ROUNDS)]
+        local = [store(f"t{tid}-{i}", "梗概", "md", "x") for i in range(ROUNDS)]
         with lock:
             out.extend(local)
 
@@ -78,7 +89,7 @@ def main() -> None:
     # ── 对照：窗口撑开（只为验证这个测试有探测能力，不是在测产品代码）──
     D: dict = {}
 
-    def wide(title: str, summary: str, content: str) -> str:
+    def wide(title: str, summary: str, file_type: str, content: str) -> str:
         aid = f"art_{len(D) + 1:03d}"
         time.sleep(0)  # 主动让出 GIL —— 把微秒窗口撑到肉眼可见
         D[aid] = {"title": title, "summary": summary, "content": content}
@@ -94,13 +105,15 @@ def main() -> None:
 
     print(f"✅ 对照组炸了（{lost2} 次），说明测试**能**探到碰撞。")
     if lost:
-        print(f"🔴 原样也撞了 {lost} 次 —— **真 bug，产物会静默丢失**。")
+        print(
+            f"🔴 原样也撞了 {lost} 次 —— **发号器坏了，产物会静默丢失**。\n"
+            "   查 `proto.skills._ART_SEQ`：它必须走 `itertools.count()`（`next()` 原子），\n"
+            "   不能退回 `len(ARTIFACTS) + 1`（先查后写，两步之间有窗口）。"
+        )
     else:
         print(
-            "🟡 原样 **没撞上** —— 窗口太窄，加压也没压出来。\n"
-            "   结论：**风险真实但概率极低**。不是'安全'，是'难触发'。\n"
-            "   要不要修是取舍：改成 `itertools.count()` 成本近乎为零，\n"
-            "   但代价是产物 ID 不再等于'库里第几个'（`_recover_artifacts` 不依赖这个，所以无影响）。"
+            "✅ 原样 **没撞上** —— 发号器结构上不重号（`itertools.count()`）。\n"
+            "   这条现在守的是**回归**：谁把两步之间的活插回来、或退回 `len()`，这里就该红。"
         )
 
 

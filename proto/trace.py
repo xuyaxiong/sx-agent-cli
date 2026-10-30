@@ -98,15 +98,19 @@ def tool_calls_of(messages: list) -> list[tuple[str, str]]:
 
 
 def render_message(m) -> str:
-    """把一条 LangChain 消息渲染成可读文本。"""
+    """把一条 LangChain 消息渲染成可读文本。
+
+    🔴 **这里不截断**（2026-10-30 用户定）：日志是**原始记录**，
+    而"平台注入了什么、agent 说了什么"正是**优化 agent 表现的唯一观察窗口** ——
+    *"这是优化agent表现的细节 如果没有这些东西观察不到"*。
+    要少看噪音就在**播报层**（`chat._feed`）砍，别在记录层砍。
+    """
     kind = type(m).__name__
     content = str(m.content)
     parts = [f"{kind}({len(content)}字)"]
     if content.strip():
-        # AI 的话给宽一点（**日志可读性**：执行器的提问往往在正文末尾，截 400 就看不到了）；
-        # 工具返回仍压到 400（那里面多是技能原文/产物正文，另有出处）。
-        cap = 2000 if kind == "AIMessage" else 400
-        parts.append(f"    content={content[:cap]!r}" + ("…" if len(content) > cap else ""))
+        # `!r` 只为**压成一行**（日志一行一条），不是为了截断。
+        parts.append(f"    content={content!r}")
     for c in getattr(m, "tool_calls", None) or []:
         parts.append(f"    tool_call={c.get('name')} args={brief_args(c.get('args') or {})}")
     return "\n".join(parts)

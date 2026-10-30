@@ -325,11 +325,11 @@ def check_artifact_no_placeholder(run: dict, turn: dict, words: list[str] | None
     return (not hits), ("；".join(hits) if hits else f"{len(arts)} 份产物无占位符（扫 {len(words)} 个词）")
 
 
-def strip_leading_comments(text: str) -> str:
-    """剥掉开头的空白与 HTML 注释。
+def _strip_leading_comments(text: str) -> str:
+    """剥掉开头的空白与 HTML 注释（**只为核对**，不是判类型）。
 
     技能契约明确允许「`<!DOCTYPE html>` 之前先放一段 `<!-- 设计说明 -->` 注释」，
-    所以判"是不是 HTML 文档"必须先剥注释 —— 用"开头 N 字里找标记"这种近似窗口会误判：
+    所以核对"这份 html 完不完整"必须先剥注释 —— 用"开头 N 字里找标记"这种近似窗口会误判：
     实测（`t2-refs5`）设计说明写了 36 行，`<!DOCTYPE html>` 落在 1000 字开外，
     产物完全合规却被判成"不是 HTML"。
     """
@@ -342,24 +342,33 @@ def strip_leading_comments(text: str) -> str:
     return s
 
 
-def looks_like_html(text: str) -> bool:
-    """剥掉前导注释后，正文是不是从 HTML 文档头开始。"""
-    s = strip_leading_comments(text).lower()
-    return s.startswith("<!doctype html") or s.startswith("<html")
-
-
 @_reg
-def check_artifact_looks_like_html(run: dict, turn: dict, min_count: int = 1) -> Result:
-    """至少 `min_count` 份产物是**完整的 HTML 文档**（有头有尾）—— 验"网页"这种交付形态。"""
+def check_artifact_html_complete(run: dict, turn: dict, min_count: int = 1) -> Result:
+    """**声明为 `html` 的产物**要"有头有尾"（文档头开头、`</html>` 结尾）—— 验"网页"这种交付形态。
+
+    🔴 **类型以声明为准，不嗅探**（用户 2026-10-30：*"就是不用嗅探呀 测试也不用"*）：
+    哪些产物算"网页"，看它交付时**声明的 `file_type`**（`proto.skills.file_ext` 那张表，
+    和落盘派发用的是同一张），**不看内容像不像**。
+    这里只做一件事：核对"声明了 html 的那几份，正文是不是真的完整"。
+
+    > 判据的差别：不是"看着像 HTML 就算网页"，而是"**你说了是网页，那就得是完整的网页**"。
+    """
+    from proto.skills import file_ext
+
     arts = run.get("artifact_final") or {}
+    html_ids = [aid for aid, a in arts.items() if file_ext(a.get("type") or "") == ".html"]
+    if not html_ids:
+        return False, f"没有一份产物声明为 html（共 {len(arts)} 份：{list(arts)}）"
     ok_ids: list[str] = []
     bad: list[str] = []
-    for aid, a in arts.items():
-        content = str(a.get("content") or "")
-        if looks_like_html(content) and "</html>" in content.lower():
+    for aid in html_ids:
+        s = _strip_leading_comments(str(arts[aid].get("content") or "")).lower()
+        if not (s.startswith("<!doctype html") or s.startswith("<html")):
+            bad.append(f"{aid} 声明 html，但正文不是从文档头开始")
+        elif "</html>" not in s:
+            bad.append(f"{aid} 声明 html，有开头但没有 </html>")
+        else:
             ok_ids.append(aid)
-        elif looks_like_html(content):
-            bad.append(f"{aid} 有开头但没有 </html>")
     if len(ok_ids) >= min_count:
         return True, f"{len(ok_ids)} 份完整 HTML：{ok_ids}；{'；'.join(bad)}"
     return False, f"完整 HTML 只有 {len(ok_ids)} 份（要 {min_count}）：{ok_ids}；{'；'.join(bad)}"

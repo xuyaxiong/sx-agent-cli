@@ -37,7 +37,7 @@ checks:
   # ⚠️ 不断言 artifact_count: 3 —— 执行器被推回去时会重写一份新产物（e13 实测 4–5 个）
   - check: artifact_titles_contain
     subs: ["教案", "导学单"]
-  - check: artifact_looks_like_html
+  - check: artifact_html_complete
   - check: artifact_no_placeholder
     words:
       - 待补充
