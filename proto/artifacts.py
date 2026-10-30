@@ -69,7 +69,23 @@ _ART_SEQ = itertools.count(1)
 
 #: 产物**落盘到哪** —— 由入口设（`evals.chat` 设成本次 run 的产物目录）。
 #: 不设 = 只进内存，最后由 `dump_artifacts` 统一落盘（跑批那条路径就是这样）。
+#: ⚠️ **别直接赋值**，用 `use_dir()` —— 见它的 docstring。
 ARTIFACT_DIR: Path | None = None
+
+
+def use_dir(path: Path) -> None:
+    """告诉产物库"这次 run 的产物放哪"。**入口调这个，不要直接赋值 `ARTIFACT_DIR`。**
+
+    🔴 **为什么要有这个函数**（2026-10-30 踩过，代价是"产物路径说了好几次都没加上"）：
+    `ARTIFACT_DIR` 从 `skills.py` 搬到 `artifacts.py` 之后，入口那句
+    `proto_skills.ARTIFACT_DIR = ...` **照样跑得通** —— Python 允许给模块加新属性。
+    于是它挂在一个**没人读的**属性上，真正那份一直是 `None`：
+    **产物不落盘、`write_artifact` 的返回里没有路径，而且一声不吭。**
+
+    走函数就没这个缝：**写错模块会当场 `AttributeError`**（启动就炸，不用等人发现）。
+    """
+    global ARTIFACT_DIR
+    ARTIFACT_DIR = path
 
 
 def artifact_body(aid: str, a: dict) -> str:

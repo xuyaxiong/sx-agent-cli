@@ -97,6 +97,80 @@ def tool_calls_of(messages: list) -> list[tuple[str, str]]:
     return out
 
 
+#: 流式打出来的正文行长这样：`[时间戳] ⟨生成·主 agent⟩ 这一行的原文`
+#: （`chat._feed` 认这个前缀，实时推到终端）。
+STREAM_MARK = "⟨生成·"
+
+
+def stream_agent(graph, state, config, who: str):
+    """跑一个 agent 图，**每一步 + 每个字**都录下来 —— 边跑边写日志。
+
+    Yields：每个 super-step 的完整 state（`stream_mode="values"` 那一支）。
+
+    🔴 **为什么要有它**（2026-10-30）：`invoke` 会把整个 agent 循环跑完才返回，
+    于是"模型→工具→模型→工具…"这一串**全程静默**。实测一次真实会话：
+    主 agent 连调 8 个工具、**336 秒里日志一行不动** —— 而 CLI 是 tail 日志的，
+    用户侧就是**黑屏**，分不清"在干活"还是"卡住了"。
+
+    两层一起给：
+      - **每个 super-step** → `values` 那一支，调用方拿去做逐步骤 dump
+      - **每个字** → `messages` 那一支，**攒到换行就写一行日志**
+        （日志是按行读的，逐字写进去 CLI 也看不见）
+
+    ⚠️ **前提：所有 `AIMessage` 都从这里流过** —— 所以 `render_message` 对 AI 的话
+    **只写头部、不再重复正文**（正文已经在上面流出来了）。改调用点时记得这条。
+
+    ⚠️ 多个执行器**并行**时，它们的流式行会交错 —— 所以 `who` 要能分辨是谁
+    （主 agent / 执行器·`<技能名>`）。
+    """
+    buf = ""
+    buf_where = who
+
+    def flush_line(line: str) -> None:
+        if line.strip():
+            write(f"[{_stamp()}] {STREAM_MARK}{buf_where}⟩ {line}")
+
+    for mode, payload in graph.stream(state, config, stream_mode=["values", "messages"]):
+        if mode == "messages":
+            chunk, meta = payload
+            text = _chunk_text(chunk)
+            if not text:
+                continue
+            # 🔴 **`node='tools'` 是「工具内部的 LLM 调用」**（实测：判定 / 试答 ——
+            # 它们跑在 `delegate` 这个工具里面，却被**外层**的 stream 捕获）。
+            # 不标出来的话，一段判定 JSON 会被当成"主 agent 在说话"。
+            where = who if meta.get("langgraph_node") == "model" else f"{who}·工具内"
+            # ⚠️ **换人就先清缓冲**：两个调用的 token 会进同一个 `buf`，
+            # 不清的话上一段没换行的尾巴会和下一段的开头**挤成一行**
+            # （实测：判定 JSON 的 `}` 黏在主 agent 那句话前面）。
+            if where != buf_where:
+                flush_line(buf)
+                buf, buf_where = "", where
+            buf += text
+            while "\n" in buf:
+                line, buf = buf.split("\n", 1)
+                flush_line(line)
+            continue
+        yield payload
+    flush_line(buf)  # 收尾：最后一行没有换行符
+
+
+#: 流式行里"这一段是谁写的" —— 见 `stream_agent` 里 `where` 的注释。
+STREAM_TOOL_MARK = "·工具内"
+
+
+def _chunk_text(chunk) -> str:
+    """从一个流式 chunk 里取纯文本（内容可能是 str，也可能是分块列表）。"""
+    content = getattr(chunk, "content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(
+            str(p.get("text") or "") if isinstance(p, dict) else str(p) for p in content
+        )
+    return ""
+
+
 def render_message(m) -> str:
     """把一条 LangChain 消息渲染成可读文本。
 
@@ -104,11 +178,14 @@ def render_message(m) -> str:
     而"平台注入了什么、agent 说了什么"正是**优化 agent 表现的唯一观察窗口** ——
     *"这是优化agent表现的细节 如果没有这些东西观察不到"*。
     要少看噪音就在**播报层**（`chat._feed`）砍，别在记录层砍。
+
+    ⚠️ **AI 的话只写头部，不重复正文** —— 正文已经由 `stream_agent` **逐行流过**了
+    （见它的 docstring）。再写一遍的话：日志里两份、终端里也两份。
     """
     kind = type(m).__name__
     content = str(m.content)
     parts = [f"{kind}({len(content)}字)"]
-    if content.strip():
+    if content.strip() and kind != "AIMessage":
         # `!r` 只为**压成一行**（日志一行一条），不是为了截断。
         parts.append(f"    content={content!r}")
     for c in getattr(m, "tool_calls", None) or []:

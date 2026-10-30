@@ -107,7 +107,7 @@ def main() -> None:
     if lost:
         print(
             f"🔴 原样也撞了 {lost} 次 —— **发号器坏了，产物会静默丢失**。\n"
-            "   查 `proto.skills._ART_SEQ`：它必须走 `itertools.count()`（`next()` 原子），\n"
+            "   查 `proto.artifacts._ART_SEQ`：它必须走 `itertools.count()`（`next()` 原子），\n"
             "   不能退回 `len(ARTIFACTS) + 1`（先查后写，两步之间有窗口）。"
         )
     else:

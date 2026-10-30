@@ -48,7 +48,7 @@ from evals.harness import (  # noqa: E402
     install,
     snapshot,
 )
-from proto import skills as proto_skills  # noqa: E402
+from proto import artifacts as proto_artifacts  # noqa: E402
 from proto import trace  # noqa: E402
 from proto.graph import build  # noqa: E402
 from proto.artifacts import ARTIFACTS  # noqa: E402
@@ -80,6 +80,25 @@ def _cut(s: str, width: int) -> str:
         out += ch
         w += cw
     return out + "…"
+
+
+#: 能力清单的配色：**名字亮、说明暗**（用户 2026-10-30：*"名字可以亮一些 描述暗一些
+#: 搞些颜色差别啊"*）。非 tty / `NO_COLOR` 下 `paint()` 自动原样返回。
+_SKILL_NAME_COLOR = "\033[97m"   # 亮白：名字
+_SKILL_DESC_COLOR = "\033[90m"   # 暗灰：一句话说明
+
+
+def _print_skills(skills, indent: str = "   ") -> None:
+    """打能力清单：**名字一行、说明一行**，名字亮、说明暗。
+
+    用户 2026-10-30：*"名字 和描述 换个行嘛 你直接显示太丑了"* ——
+    原来挤在一行（`· AI 备课　根据学科、年级、课题生成教案`），中英混排一长就糊成一片。
+    """
+    for s in skills:
+        head, detail = _skill_label(s)
+        print(f"{indent}· {paint(head, _SKILL_NAME_COLOR)}")
+        if detail:
+            print(f"{indent}  {paint(detail, _SKILL_DESC_COLOR)}")
 
 
 def _skill_label(skill) -> tuple[str, str]:
@@ -183,12 +202,12 @@ def _dw(s: str) -> int:
     return w
 
 
-#: **正文层**（顶格、亮色）—— 只有"人和主 agent 的对话"。
-#: 其余全部是**机制层**（缩进 + 暗灰 + `|`）：执行器的话、工具调用、判定、注入……
-#: 用户 2026-10-30 定：*"正文输出 用户输入 和其它日志搅在一起了"* ——
-#: 读对话只追顶格行，查机制看缩进行。
+#: **正文层**（亮色）—— 只有"人和主 agent 的对话"。
+#: 其余全部是**机制层**（暗灰）：执行器的话、工具调用、判定、注入……
+#: 🔴 用户 2026-10-30 定：**两层靠颜色分，左边一律对齐**（原来机制层带缩进 + 🔩 图标）——
+#: *"那个缩进还是不缩进了 对齐吧 反正颜色不一样能区分"*。
 _LABEL_W = 12   # gutter 里标签的宽度（按显示列算；最长的 EXECUTOR/PLATFORM 是 11 列）
-_TS = "[0000-00-00 00:00:00.000] "   # gutter 宽度占位（真实时间戳走 trace.stamp()）
+_TS = "[00:00:00.000] "   # gutter 宽度占位（显示只到时间，日期省掉）
 
 #: 播报里已经打过的"执行器的话"（归一化前 60 字）—— 去重用。
 #: 不去重的话，同一段话会以 🗣 EXECUTOR（实时）和 🧠 AGENT（小结）出现两次。
@@ -207,7 +226,6 @@ _CAPPED_TOOLS = ("read_skill", "read_artifact")
 _CAP_TOOL = 250
 
 _MAIN_ROLES = frozenset({"user", "agent"})
-_MECH_PREFIX = "   🔩 "     # 3 空格 + 🔩(2 列) + 空格 = 6 列
 _MECH_COLOR = "\033[90m"     # 暗灰：机制日志统一压暗，靠标签区分类型
 
 
@@ -228,20 +246,27 @@ def paint(s: str, color: str = "") -> str:
     return f"{color}{s}\033[0m" if (_COLOR and color) else s
 
 
+def _short_ts(stamp: str) -> str:
+    """`2026-10-30 17:03:48.301` → `17:03:48.301` —— **显示层省掉日期**。
+
+    用户 2026-10-30：*"加上日期太占用地方了 还是去掉只保留时间吧"*。
+    ⚠️ 只改**显示**：trace 日志和 `_run.md` 里仍是完整时间戳（那是留档，跨天要能分）。
+    """
+    return stamp[11:] if len(stamp) >= 19 and stamp[10] == " " else stamp
+
+
 def _emit(role: str, text: str, stamp: str | None = None) -> None:
     """按统一版式打一条：`[时间] 标签 ┃ 内容`，续行对齐到 `┃`。
 
-    正文层顶格；机制层多一个 `   | ` 前导并压成暗灰 —— 两层一眼分得开。
+    🔴 **两层靠颜色分，不靠缩进**（用户 2026-10-30：*"那个缩进还是不缩进了 对齐吧
+    反正颜色不一样能区分"*）：正文层亮色、机制层暗灰，**左边一律对齐**。
     """
     icon, color = _STYLE[role]
-    stamp = stamp or trace.stamp()
+    stamp = _short_ts(stamp or trace.stamp())
     pad = " " * max(0, _LABEL_W - _dw(icon))
-    if role in _MAIN_ROLES:
-        head = f"[{stamp}] {icon}{pad}┃ "
-        indent, tint = _dw(_TS) + _LABEL_W, color
-    else:
-        head = f"{_MECH_PREFIX}[{stamp}] {icon}{pad}┃ "
-        indent, tint = _dw(_MECH_PREFIX) + _dw(_TS) + _LABEL_W, _MECH_COLOR
+    head = f"[{stamp}] {icon}{pad}┃ "
+    indent = _dw(_TS) + _LABEL_W
+    tint = color if role in _MAIN_ROLES else _MECH_COLOR
     cont = " " * indent + "┃ "
     lines = (text or "").splitlines() or [""]
     print(paint(head + lines[0], tint))
@@ -275,6 +300,16 @@ def _feed(st: dict, line: str) -> None:
     if m:
         st["ts"] = m.group(1)
         body = m.group(2)
+        if body.startswith(trace.STREAM_MARK):
+            # 🔴 **模型正在写的那一行**（`trace.stream_agent` 攒到换行就写一行）。
+            # 这是"看着它干活"的唯一来源 —— 一次 LLM 调用那几十秒，别的什么都没有。
+            who, _, text = body[len(trace.STREAM_MARK) :].partition("⟩ ")
+            # 工具内部的 LLM 调用（判定 / 试答）走**机制层**（暗灰），
+            # 和 agent 自己说的话分开 —— 它不是"agent 在跟用户说话"。
+            in_tool = who.endswith(trace.STREAM_TOOL_MARK)
+            role = "plat" if in_tool else ("say" if who.startswith("执行器") else "agent")
+            _emit(role, text, stamp=st["ts"])
+            return
         if st["block"] is not None:
             # ⚠️ `PROMPT（…）` / `RESPONSE（…）` 这两行**自带新时间戳**，但它们属于**同一个事件**
             # （`safe_structured` 先 section 再 block，两行都带 [ts]）——
@@ -287,7 +322,7 @@ def _feed(st: dict, line: str) -> None:
             _emit(st["block"][0], "\n".join(st["block"][1]), stamp=st["block"][2])
             st["block"] = None
 
-        if "消息轨迹" in body:  # 段落头：接下来的缩进行是谁的 dump
+        if "消息轨迹" in body:  # 段落头：接下来的续行是谁的 dump
             st["section"] = "exec" if "run_task" in body else "agent"
             return
         if body.startswith("发给执行器的内容"):
@@ -331,7 +366,7 @@ def _feed(st: dict, line: str) -> None:
                 return
         return
 
-    # ── 缩进行：要么在多行块里，要么在某个 dump 里 ──
+    # ── 续行：要么在多行块里，要么在某个 dump 里（trace 日志里没有时间戳前缀的行）──
     s = line.strip()
     if st["block"] is not None:
         st["block"][1].append(line[2:] if line.startswith("  ") else line)
@@ -513,7 +548,8 @@ def main() -> None:
     # 告诉产物库"这次 run 的产物放哪"，`store_artifact` 写完就落盘，
     # 于是 `write_artifact` 的返回里能给出**真实路径**，用户当场就能打开看。
     # 落点和最后 `dump_artifacts` 的目录**必须一致**，否则前后两份文件对不上。
-    proto_skills.ARTIFACT_DIR = out_dir / "artifacts" / f"{tag}__r1"
+    # ⚠️ 走函数而不是直接赋值 —— 写错模块会当场 AttributeError（见 `use_dir` 的 docstring）
+    proto_artifacts.use_dir(out_dir / "artifacts" / f"{tag}__r1")
 
     skills = list(proto.agent.SKILLS.values())
     if FROZEN:
@@ -524,11 +560,7 @@ def main() -> None:
         # 只留模型名，不留端点 URL（"@ https://..." 是开发看的）
         print(f"  {APP_TITLE} · {describe().split(' @ ')[0]}\n")
         print("  我能帮你做这些：\n")
-        for s in skills:
-            head, detail = _skill_label(s)
-            print(f"    · {head}")
-            if detail:
-                print(f"      {detail}")
+        _print_skills(skills, indent="    ")
         print()
         print("  直接说你要什么就行，比如：")
         print("    「帮我备一节三年级语文《荷花》的课」\n")
@@ -540,17 +572,15 @@ def main() -> None:
     else:
         print(BAR)
         # 开发态：路径和日志**有用**，照旧打全。
-        print(f"原型交互式 ｜ 模型 {describe()}")
-        print(f"技能 {len(skills)} 个（来自 {args.skills}）")
-        for s in skills:
-            head, detail = _skill_label(s)
-            print(f"   · {head}" + (f"　{detail}" if detail else ""))
+        # 模型只显示**名字**（端点 URL 在 `.env` 里，打在这里只是噪音 —— 用户 2026-10-30 定）。
+        print(f"{APP_TITLE} ｜ 模型 {describe().split(' @ ')[0]}")
+        print("技能清单")
+        _print_skills(skills, indent="   ")
         print(BAR)
         print(f"日志   {trace.LOG_FILE}")
         print(f"记录   {out_dir}")
         print(BAR)
-        print("直接说你要什么。退出：Ctrl-C 或 exit。")
-        print("技能需要什么信息会自己问，你答就行。\n")
+        print("直接说你要什么。退出：Ctrl-C 或 exit。\n")
 
     turns: list[dict] = []
     seen_len = 0
@@ -565,7 +595,7 @@ def main() -> None:
                 # （终端回显一次、播报一次），用户 2026-10-30 指出："没必要显示两条啊"。
                 icon, color = _STYLE["user"]
                 pad = " " * max(0, _LABEL_W - _dw(icon))
-                prompt = f"[{trace.stamp()}] {icon}{pad}┃ "
+                prompt = f"[{_short_ts(trace.stamp())}] {icon}{pad}┃ "
                 text = input(paint(prompt, color)).strip()
                 _to_file(prompt + text)
                 # 管道输入没有终端回显，补上（不然这行是空的）；真终端上**不要**补，

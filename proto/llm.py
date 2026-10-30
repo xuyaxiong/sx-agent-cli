@@ -5,10 +5,30 @@
 
 from __future__ import annotations
 
+import warnings
 from typing import Any
 
 from proto import trace
 from proto.config import get_model
+
+# 🔴 **压掉一条 pydantic 序列化警告**（2026-10-30 查清根因）。
+#
+# 现象：`UserWarning: Pydantic serializer warnings: PydanticSerializationUnexpectedValue(
+# Expected `none` - serialized value may not be as expected [field_name='parsed',
+# input_value=_Judgement(...)])`
+#
+# 根因（**实测确认，不是猜的**）：`trace.stream_agent` 用 `stream_mode="messages"`
+# 之后，流式回调会传播到图内**所有** LLM 调用 —— 包括这里 `safe_structured` 的 `.invoke()`。
+# 而 LangChain 在**流式**路径下会把 `with_structured_output` 的解析结果序列化，
+# 它把 `additional_kwargs["parsed"]` 那个字段声明成 `None` 类型 —— 对不上，于是警告。
+#
+#   实测：同一个 runnable，`.invoke()` 不警告、`.stream()` 警告；**返回的结果是对的**。
+#
+# ⚠️ **只压这一条**（按消息正则匹配），**不要**用 `simplefilter("ignore")` 把别的警告一起埋了
+# —— "看不到就观察不到"（用户原则）。真出别的问题时，这里的注释能指回去。
+warnings.filterwarnings(
+    "ignore", message=r".*Pydantic serializer warnings.*", category=UserWarning
+)
 
 
 def safe_structured(

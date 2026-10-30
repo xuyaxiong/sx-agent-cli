@@ -420,8 +420,12 @@ def run_task(skill: Skill, briefing: str = "") -> ExecOutcome:
     #: 进来之前就存在的产物 —— 这次跑**读到的**不算它交付的（见 `_recover_artifacts`）
     preexisting = set(ARTIFACTS)
     for round_i in range(MAX_REACT_ROUNDS):
-        # 不传 config —— 传了执行器会变成独立根图
-        resp = agent.invoke({"messages": messages})
+        # 不传 config —— 传了执行器会变成独立根图。
+        # `stream_agent` 边跑边录（每个字都写进日志）—— 一次 LLM 调用那几十秒不再黑屏。
+        # ⚠️ `who` 带上技能名：多个执行器**并行**时，流式行会交错，得能分辨是谁。
+        resp = {}
+        for chunk in trace.stream_agent(agent, {"messages": messages}, None, f"执行器·{skill.name}"):
+            resp = chunk
         trace.dump_trace(f"run_task 第 {round_i + 1} 轮", resp["messages"])
 
         outcome.artifacts = _recover_artifacts(resp, preexisting)

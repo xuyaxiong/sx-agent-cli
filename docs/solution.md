@@ -1039,8 +1039,53 @@ if not unasked: return {"log": ["finalize: N 条待答都已问出 ✅"]}
 | 文件 | 作用 |
 |------|------|
 | `config.py` | 模型配置（环境变量 / `.env`）；`get_model()` 带 `lru_cache`。<br>⚠️ **没有 fake / 离线模式** —— 所有 LLM 调用都走真实模型（见 §9.3） |
-| `trace.py` | 全量日志到 `logs/proto-<时间戳>.log`：**每次 LLM 调用的 PROMPT 全文与 RESPONSE 原文** + 执行器消息轨迹 |
+| `trace.py` | 全量日志到 `logs/proto-<时间戳>.log`：**每次 LLM 调用的 PROMPT 全文与 RESPONSE 原文** + 消息轨迹 + **逐字流式**（见 §4.7） |
 | `__main__.py` | 交互式 CLI；显示 Task 列表、主 agent 上下文体积、隔离比 |
+
+---
+
+### 4.7 可观测性：**agent 在干嘛，全程看得见**
+
+> 用户（MVP 原型的设计与实现者，2026-10-30）：*"我需要知道主 agent 在干嘛 subagent 在干嘛
+> ……**越多越好**，而不是看到一个 loading。"*
+
+**能看到什么，取决于挂在哪一层**：
+
+| 层 | 能看到 | 谁提供 |
+|---|---|---|
+| **图（super-step）** | 每步：模型调用完 → 决定了什么；工具跑完 → 返回了什么 | `trace.stream_agent` 的 `values` 那一支 |
+| **LLM（token）** | 模型**正在写**的每一个字 | 同一个函数的 `messages` 那一支 |
+| **工具内部** | 工具自己的日志（`trace.note`） | 各工具 |
+
+**两层都在 `trace.stream_agent()` 里**（`graph.node_agent` 和 `executor.run_task` 共用）：
+
+```python
+for mode, payload in graph.stream(state, config, stream_mode=["values", "messages"]):
+    if mode == "messages":   # ← 逐字：攒到换行就写一行日志
+        ...write(f"[{ts}] ⟨生成·{who}⟩ {line}")
+    else:
+        yield payload        # ← 每个 super-step 的完整 state，调用方拿去做逐步 dump
+```
+
+**为什么必须这么干**（实测，不是推测）：
+
+| | 静默占比（同一条 case `s01b`） |
+|---|---|
+| 原来：`invoke` 跑完整个循环才 dump | **80–92%**，最大一段 **336 秒**（一次真实 PBL 会话） |
+| 逐 super-step dump | 降到"一次 LLM 调用"，最大仍有 **123 秒** |
+| **+ 逐字流式** | **0%** |
+
+> 📌 **黑屏的代价**：用户分不清"在干活"还是"卡住了"。实测就发生过 ——
+> 用户看到 336 秒没动静，以为进程卡死（`discussion-log` 第二十五次）。
+
+**三个实现上的坑**（都踩过）：
+
+1. **日志是按行读的** —— 逐字写进去 CLI 也看不见（没有换行）。所以攒到**换行**才写一行。
+2. **`render_message` 对 AI 的话只写头部** —— 正文已经流过了，再写一遍就是日志两份、终端两份。
+   ⚠️ 这条依赖一个**不变量**：**所有 `AIMessage` 都从 `stream_agent` 流过**。改调用点时记得。
+3. **`node='tools'` 是「工具内部的 LLM 调用」** —— 实测：判定 / 试答跑在 `delegate` 这个工具**里面**，
+   却被**外层**的 stream 捕获。不标出来的话，一段判定 JSON 会被当成"主 agent 在说话"。
+   现在标成 `⟨生成·主 agent·工具内⟩`，CLI 走**机制层**（暗灰）而不是正文层。
 
 ---
 

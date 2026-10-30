@@ -278,28 +278,49 @@ def build():
     main_agent = build_agent(AgentState)  # 主 agent：完整的 agent（工具 + 循环）
 
     def node_agent(state: State, config: RunnableConfig) -> dict:
-        """跑主 agent 子图，并把它**这一轮的工具调用**写进日志。
+        """跑主 agent 子图，**每走一步就把它露出来**。
 
-        🔴 为什么必须在这里记：主 agent 的消息**不进** `run_task` 的轨迹 dump
+        🔴 **为什么必须在这里记**：主 agent 的消息**不进** `run_task` 的轨迹 dump
         （那是执行器的），所以它的 `delegate` / `read_artifact` / `write_artifact`
         在日志里原来**一点痕迹都没有**。实测踩过：一个 case 里主 agent 读了 5162 字的产物，
         日志里查不到，只能从"3 个 ToolMessage 但只有 2 次 delegate"反推 ——
         **日志的职责是让这种事直接可查，不靠推断。**
+
+        🔴 **为什么是 `stream` 而不是 `invoke`**（2026-10-30 改）：`invoke` 会把**整个
+        agent 循环**跑完才返回，于是"模型→工具→模型→工具…"这一串**全程静默**。
+        实测一次真实会话：主 agent 连调 8 个工具、**336 秒里日志一行不动** ——
+        而 CLI 是 tail 日志的，用户侧就是**黑屏**，分不清"在干活"还是"卡住了"。
+
+        改成 `stream(stream_mode="values")` 后，**每个 super-step 结束就 dump 一次**
+        （模型那步 → 它的工具调用；工具那步 → 返回了什么）。静默窗口从"整个循环"
+        缩到"一次 LLM 调用"。
+
+        ⚠️ **这不是加日志，是把已经发生的事更早露出来** —— 行为一点没变，
+        返回的仍是最终 state（`stream` 的最后一个 chunk）。
         """
-        out = main_agent.invoke(state, config)
-        messages = out.get("messages") or []
-        prev = state.get("messages") or []
-        new = messages[len(prev) :] if len(messages) >= len(prev) else messages
-        if not new:
-            return out
-        trace.dump_trace("主 agent 本轮", new)
-        # 同一批调用**也进 state 的 log** —— 逐轮审计文件（`_run.md`）读的是它，
-        # 只写 trace 文件的话，审计时还得两个文件对着看。
-        logs = []
-        for name, args in trace.tool_calls_of(new):
-            line = f"[工具] 主 agent → {name}（{args}）"
-            trace.note(line)
-            logs.append(line)
+        out: dict = {}
+        prev_n = len(state.get("messages") or [])
+        logs: list[str] = []
+        step = 0
+        # `stream_agent` 顺带把**每个字**也写进日志（攒到换行写一行）——
+        # 一次 LLM 调用那几十秒不再是黑屏。
+        for chunk in trace.stream_agent(main_agent, state, config, "主 agent"):
+            out = chunk
+            msgs = chunk.get("messages") or []
+            new = msgs[prev_n:]
+            if not new:
+                continue  # 第一个 chunk 是输入 state 本身，没有新消息
+            prev_n = len(msgs)
+            step += 1
+            trace.dump_trace(f"主 agent 第 {step} 步", new)
+            # 同一批调用**也进 state 的 log** —— 逐轮审计文件（`_run.md`）读的是它，
+            # 只写 trace 文件的话，审计时还得两个文件对着看。
+            for name, args in trace.tool_calls_of(new):
+                line = f"[工具] 主 agent → {name}（{args}）"
+                trace.note(line)
+                logs.append(line)
+        if not out:  # 理论上不会（stream 至少吐一次最终 state）—— 兜一下，别把状态弄丢
+            return main_agent.invoke(state, config)
         return {**out, "log": logs} if logs else out
 
     g.add_node("agent", node_agent)

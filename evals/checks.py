@@ -347,7 +347,7 @@ def check_artifact_html_complete(run: dict, turn: dict, min_count: int = 1) -> R
     """**声明为 `html` 的产物**要"有头有尾"（文档头开头、`</html>` 结尾）—— 验"网页"这种交付形态。
 
     🔴 **类型以声明为准，不嗅探**（用户 2026-10-30：*"就是不用嗅探呀 测试也不用"*）：
-    哪些产物算"网页"，看它交付时**声明的 `file_type`**（`proto.skills.file_ext` 那张表，
+    哪些产物算"网页"，看它交付时**声明的 `file_type`**（`proto.artifacts.file_ext` 那张表，
     和落盘派发用的是同一张），**不看内容像不像**。
     这里只做一件事：核对"声明了 html 的那几份，正文是不是真的完整"。
 
