@@ -23,6 +23,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import sys
 import time
 import unicodedata
@@ -255,6 +256,31 @@ def _short_ts(stamp: str) -> str:
     return stamp[11:] if len(stamp) >= 19 and stamp[10] == " " else stamp
 
 
+def _wrap(s: str, width: int) -> list[str]:
+    """按**显示宽度**折行（CJK 占 2 列）。
+
+    🔴 **为什么必须自己折**（2026-10-30 用户提的：*"我们能处理这种行太长的显示问题吗"*）：
+    交给终端折的话，**续行会顶到最左边** —— `┃` 那道 gutter 就断了，
+    读的人分不清"这半句是上面那条的续行"还是"另一条消息"。
+    自己折，续行就能**带上同一道 gutter**（`_emit` 的 `cont`）。
+
+    宽度按 `_dw` 算，和 gutter 对齐用的是同一套口径（见 `_dw` 的注释）。
+    """
+    if width <= 1:
+        return [s]
+    out: list[str] = []
+    cur, w = "", 0
+    for ch in s:
+        cw = _dw(ch)
+        if w + cw > width and cur:
+            out.append(cur)
+            cur, w = "", 0
+        cur += ch
+        w += cw
+    out.append(cur)
+    return out
+
+
 def _emit(role: str, text: str, stamp: str | None = None) -> None:
     """按统一版式打一条：`[时间] 标签 ┃ 内容`，续行对齐到 `┃`。
 
@@ -268,7 +294,13 @@ def _emit(role: str, text: str, stamp: str | None = None) -> None:
     indent = _dw(_TS) + _LABEL_W
     tint = color if role in _MAIN_ROLES else _MECH_COLOR
     cont = " " * indent + "┃ "
-    lines = (text or "").splitlines() or [""]
+    # 折行宽度 = 终端列数 − gutter（`┃ ` 前面那截）—— 自己折，续行才带得上 gutter。
+    # ⚠️ 管道运行（没有 tty）时 `get_terminal_size()` 会退到 fallback —— 用 100 而不是默认的 80：
+    # 这个宽度也决定 `_console.log` 怎么折，80 会把记录折得过窄。
+    avail = shutil.get_terminal_size(fallback=(100, 30)).columns - indent - 2
+    lines = [
+        ln for raw in ((text or "").splitlines() or [""]) for ln in _wrap(raw, avail)
+    ]
     print(paint(head + lines[0], tint))
     _to_file(head + lines[0])
     for ln in lines[1:]:
@@ -304,11 +336,7 @@ def _feed(st: dict, line: str) -> None:
             # 🔴 **模型正在写的那一行**（`trace.stream_agent` 攒到换行就写一行）。
             # 这是"看着它干活"的唯一来源 —— 一次 LLM 调用那几十秒，别的什么都没有。
             who, _, text = body[len(trace.STREAM_MARK) :].partition("⟩ ")
-            # 工具内部的 LLM 调用（判定 / 试答）走**机制层**（暗灰），
-            # 和 agent 自己说的话分开 —— 它不是"agent 在跟用户说话"。
-            in_tool = who.endswith(trace.STREAM_TOOL_MARK)
-            role = "plat" if in_tool else ("say" if who.startswith("执行器") else "agent")
-            _emit(role, text, stamp=st["ts"])
+            _emit("say" if who.startswith("执行器") else "agent", text, stamp=st["ts"])
             return
         if st["block"] is not None:
             # ⚠️ `PROMPT（…）` / `RESPONSE（…）` 这两行**自带新时间戳**，但它们属于**同一个事件**
@@ -382,7 +410,10 @@ def _feed(st: dict, line: str) -> None:
         args = rest.split("args=", 1)[1] if "args=" in rest else ""
         st["calls"].append(name)
         who = "执行器" if st["section"] == "exec" else "主 agent"
-        _emit("tool", f"{who} → {name}（{args[:300]}）", stamp=st["ts"])
+        # ⚠️ **不截参数**：`delegate(task=...)` 就是交接本身，砍了等于看不到交接了什么
+        # （2026-10-30 用户：*"你怎么把这么关键的上下文交接信息给去掉了？？"*）。
+        # 太长由 `_emit` 自己折行（续行带 gutter），不需要在这里砍。
+        _emit("tool", f"{who} → {name}（{args}）", stamp=st["ts"])
         return
     if s.startswith("content="):
         # 日志里是 Python repr（单行、转义过），这里还原成人看的样子：

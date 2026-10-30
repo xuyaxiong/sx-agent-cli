@@ -73,14 +73,26 @@ def kv(label: str, **fields: Any) -> None:
     write(f"[{_stamp()}] {label} | {inner}")
 
 
+#: **正文类参数**：只留字数。
+#:
+#: 🔴 **只有它们该省**（2026-10-30 用户纠正）：`write_artifact(content=...)` 的正文
+#: **另有出处**（产物文件），灌进日志纯属浪费。
+#:
+#: ⚠️ **其余参数一律照原样给全** —— 原来按"超过 120 字就省"一刀切，
+#: 结果把 `delegate(task=...)` 也省成了 `<220字>`，而**那正是整个交接的核心**
+#: （用户：*"你怎么把这么关键的上下文交接信息给去掉了？？"*）。
+#: 判据跟显示层那条一样：**全文另有出处才省，没有就全给**。
+BODY_ARGS = frozenset({"content"})
+
+
 def brief_args(args: Any, limit: int = 120) -> str:
-    """工具参数的一行摘要 —— 短值原样，长值只留字数（正文类参数不往日志里灌）。"""
+    """工具参数的一行摘要 —— **只有 `BODY_ARGS` 里的正文类参数**会被压成字数。"""
     if not isinstance(args, dict):
-        return str(args)[:limit]
+        return str(args)
     parts = []
     for k, v in args.items():
         text = str(v)
-        parts.append(f"{k}={text!r}" if len(text) <= limit else f"{k}=<{len(text)}字>")
+        parts.append(f"{k}=<{len(text)}字>" if k in BODY_ARGS and len(text) > limit else f"{k}={text!r}")
     return ", ".join(parts)
 
 
@@ -122,30 +134,34 @@ def stream_agent(graph, state, config, who: str):
 
     ⚠️ 多个执行器**并行**时，它们的流式行会交错 —— 所以 `who` 要能分辨是谁
     （主 agent / 执行器·`<技能名>`）。
+
+    ⚠️ **只流 `node='model'` 的 chunk** —— 工具内部的结构化调用（判定 / 试答）
+    流出来是裸 JSON，既不可读、又和已解开的展示重复，见下面的注释。
     """
     buf = ""
-    buf_where = who
 
     def flush_line(line: str) -> None:
         if line.strip():
-            write(f"[{_stamp()}] {STREAM_MARK}{buf_where}⟩ {line}")
+            write(f"[{_stamp()}] {STREAM_MARK}{who}⟩ {line}")
 
     for mode, payload in graph.stream(state, config, stream_mode=["values", "messages"]):
         if mode == "messages":
             chunk, meta = payload
+            # 🔴 **只流 agent 自己说的话**（`node='model'`）。
+            #
+            # `node='tools'` 是**工具内部的 LLM 调用** —— 实测就是判定 / 试答那几个
+            # **结构化输出**（它们跑在 `delegate` 里面，却被外层的 stream 捕获）。
+            # 流出来的是**裸 JSON**：既不可读（用户 2026-10-30：*"就打个 json 算啥"*），
+            # 又和**已经解开的展示重复**（`轮判定：status=… 理由：… 进度：… 还缺：…`）。
+            # 而且连续两次结构化调用会黏成一行（`}{`）。
+            #
+            # 所以这里**跳过**：它们的**结论**在 `_feed` 的「判定 / 试答」分支里
+            # 已经是人话，这里再流一遍只是噪音。
+            if meta.get("langgraph_node") != "model":
+                continue
             text = _chunk_text(chunk)
             if not text:
                 continue
-            # 🔴 **`node='tools'` 是「工具内部的 LLM 调用」**（实测：判定 / 试答 ——
-            # 它们跑在 `delegate` 这个工具里面，却被**外层**的 stream 捕获）。
-            # 不标出来的话，一段判定 JSON 会被当成"主 agent 在说话"。
-            where = who if meta.get("langgraph_node") == "model" else f"{who}·工具内"
-            # ⚠️ **换人就先清缓冲**：两个调用的 token 会进同一个 `buf`，
-            # 不清的话上一段没换行的尾巴会和下一段的开头**挤成一行**
-            # （实测：判定 JSON 的 `}` 黏在主 agent 那句话前面）。
-            if where != buf_where:
-                flush_line(buf)
-                buf, buf_where = "", where
             buf += text
             while "\n" in buf:
                 line, buf = buf.split("\n", 1)
@@ -154,9 +170,6 @@ def stream_agent(graph, state, config, who: str):
         yield payload
     flush_line(buf)  # 收尾：最后一行没有换行符
 
-
-#: 流式行里"这一段是谁写的" —— 见 `stream_agent` 里 `where` 的注释。
-STREAM_TOOL_MARK = "·工具内"
 
 
 def _chunk_text(chunk) -> str:
