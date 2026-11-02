@@ -20,7 +20,7 @@
 | 概念 | 是什么 | 载体 |
 |------|--------|------|
 | **Skill** | 专业能力（静态） | 只有 `description` + `instructions` |
-| **Task** | 一次具体业务工作（动态） | `state["tasks"]` 里一条 —— **12 个字段**，见 `architecture-diagram.md` §5.1，**跨轮存活** |
+| **Task** | 一次具体业务工作（动态） | `state["tasks"]` 里一条 —— **14 个字段**，见 `architecture-diagram.md` §5.1，**跨轮存活** |
 | **Sub Agent** | **可选**执行者（一次性） | 通用 `run_task()`，**不绑任何 skill** |
 
 ### 0.2 四条设计原则
@@ -264,7 +264,7 @@
 | 概念 | 是什么 | 载体 | 生命周期 |
 |------|--------|------|---------|
 | **Skill** | 专业能力包（静态） | `description` + `instructions` | 长期 |
-| **Task** | 一次具体业务工作（动态） | `state["tasks"]` 里一条（**12 个字段**，见 `architecture-diagram.md` §5.1） | **跨轮存活**（同一 thread 内） |
+| **Task** | 一次具体业务工作（动态） | `state["tasks"]` 里一条（**14 个字段**，见 `architecture-diagram.md` §5.1） | **跨轮存活**（同一 thread 内） |
 | **Sub Agent** | **可选**执行者 | `create_agent` 建的一次性实例 | **用完即弃** |
 
 **关键推论**：
@@ -923,12 +923,23 @@ CLI 和 `_run.md` 都调它 —— 超了多打一行
 
 | 工具 | 用途 |
 |------|------|
-| `delegate(skill_name, task, artifacts=[...])` | 委派一件具体工作（**建 Task**）；`artifacts` 是这次要参考的**产物 ID**，平台当场校验 |
+| `delegate(skill_name, task, artifacts=[...], based_on_turns=[...])` | 委派一件具体工作（**建 Task**）；`artifacts` 是这次要参考的**产物 ID**，两者都**当场校验**（引用了不存在的 → 拒绝派发） |
 | `write_artifact(title, summary, content)` | 自己产出短内容（**不建 Task**） |
 | `list_artifacts()` | 产物清单（ID/名称/字数/梗概），**不含正文** |
 | `read_artifact(artifact_id)` | 按需读回产物全文（渐进式披露第二层） |
 | `read_skill(skill_name)` | 按需读技能原文（渐进式披露第二层）——写 task 前核对交付标准 |
 | `read_skill_file(skill_name, path)` | 按需读技能包里**某一份文件**的全文（渐进式披露第三层）——路径照抄清单里的 |
+
+> ⚠️ **上面是默认档（`EXEC_PATH="auto"`）的六个工具。** 工具集**由 `proto/agent.EXEC_PATH` 决定**：
+>
+> | 档 | 工具 | 硬度 |
+> |---|---|---|
+> | `auto`（默认，产品行为） | 上面六个 | — |
+> | `delegate` **强制委派** | `[delegate, list_artifacts]` | **半硬** —— 拿掉了"自己干"的原料，但挡不住它在回复里硬写 |
+> | `inline` **强制主 agent 自己干** | 六个里**去掉 `delegate`** | **全硬** —— 工具不存在，它调不了 |
+>
+> 用途是**跑批时"测哪条链路就开哪条"**，不用碰运气碰一个愿意走那条路的 case。
+> 见 `evals/README.md` 的「执行路径开关」与 `architecture-diagram.md` §4.1。
 
 #### 4.4.2 系统提示的**五块**（逐字要点）
 

@@ -38,31 +38,31 @@
 
 **`proto/` —— 运行期（产品本体）**
 
-| 文件 | 领域 | 负责 | **不**负责 | 行数 |
-|---|---|---|---|---|
-| `config.py` | 配置 | `app_root()`（冻结后 = exe 目录）· `RESOURCE_ROOT` · `.env` 加载 · **三流 UTF-8** · `get_model()` · `describe()` | 不碰任何业务 | 96 |
-| `llm.py` | LLM 公共 | `safe_structured()`（重试 1 次 → 保守默认）· 压掉 pydantic 序列化警告 | 不知道谁在调它 | 72 |
-| `skills.py` | **技能领域** | `Skill`（`name`/`description`/`instructions`）· `SKILLS` 表 · `read_skill` 工具 · `catalog()` | **不做磁盘 I/O** | 140 |
-| `skill_pack.py` | **技能包 I/O** | 文件夹形态 → `Skill`：`split_frontmatter` / `load_skill_pack` / `load_skills_dir`；自带文件的**列与读**（`list_skill_files` / `read_skill_file`） | 不定义 Skill 的语义 | 212 |
-| `artifacts.py` | **产物领域** | 产物库 `ARTIFACTS` · ID 发号器 · 类型→扩展名**硬性派发** · 当场落盘 · `write/read/list_artifact` | 不管技能 | 175 |
-| `executor.py` | 执行器 | `_PLATFORM_RULE` · 三态判定 · 出口限制循环 · `run_task()` · `ExecOutcome` · **`read_user_turn`**（闭包造，见 §3.2.2） | **不持有状态、不跨轮、不直接问用户** | 534 |
-| `agent.py` | 主 agent | `_MAIN_PROMPT` · `delegate` 工具（含平台强制的四步）· **交接书** `render_briefing` · **用户原话快照** `_user_turns` · `absorb_outcome` | **不解析、不抽取参数** | 521 |
-| `graph.py` | 图 | `State`/`AgentState` · `prepare`（投递 + 台账注入）· `agent` · `finalize`（透传）· `build()` | 不做业务判断 | 332 |
-| `trace.py` | 可观测 | 全量日志 · **逐 super-step + 逐字流式**（`stream_agent`）· 参数摘要策略（`brief_args`） | 不截断正文（记录层不砍） | 217 |
-| `__main__.py` | 裸原型 CLI | 交互式跑内置玩具技能 | — | 141 |
+| 文件 | 领域 | 负责 | **不**负责 |
+|---|---|---|---|
+| `config.py` | 配置 | `app_root()`（冻结后 = exe 目录）· `RESOURCE_ROOT` · `.env` 加载 · **三流 UTF-8** · `get_model()` · `describe()` | 不碰任何业务 |
+| `llm.py` | LLM 公共 | `safe_structured()`（重试 1 次 → 保守默认）· 压掉 pydantic 序列化警告 | 不知道谁在调它 |
+| `skills.py` | **技能领域** | `Skill`（`name`/`description`/`instructions`）· `SKILLS` 表 · `read_skill` 工具 · `catalog()` | **不做磁盘 I/O** |
+| `skill_pack.py` | **技能包 I/O** | 文件夹形态 → `Skill`：`split_frontmatter` / `load_skill_pack` / `load_skills_dir`；自带文件的**列与读**（`list_skill_files` / `read_skill_file`） | 不定义 Skill 的语义 |
+| `artifacts.py` | **产物领域** | 产物库 `ARTIFACTS` · ID 发号器 · 类型→扩展名**硬性派发** · 当场落盘 · `write/read/list_artifact` | 不管技能 |
+| `executor.py` | 执行器 | `_PLATFORM_RULE` · 三态判定 · 出口限制循环 · `run_task()` · `ExecOutcome` · **`read_user_turn`**（闭包造，见 §3.2.2） | **不持有状态、不跨轮、不直接问用户** |
+| `agent.py` | 主 agent | `_MAIN_PROMPT` · `delegate` 工具（含平台强制的四步）· **交接书** `render_briefing` · **用户原话快照** `_user_turns` · `absorb_outcome` | **不解析、不抽取参数** |
+| `graph.py` | 图 | `State`/`AgentState` · `prepare`（投递 + 台账注入）· `agent` · `finalize`（透传）· `build()` | 不做业务判断 |
+| `trace.py` | 可观测 | 全量日志 · **逐 super-step + 逐字流式**（`stream_agent`）· 参数摘要策略（`brief_args`） | 不截断正文（记录层不砍） |
+| `__main__.py` | 裸原型 CLI | 交互式跑内置玩具技能 | — |
 
 **`evals/` —— 装配 + 评测（原型的外部脚手架，不是产品本体）**
 
-| 文件 | 负责 | 行数 |
-|---|---|---|
-| `harness.py` | **装配 + 记录层**：`install()`（装技能）· `snapshot()` · 路径约定（`FROZEN`/`ROOT`/`RUNS_DIR`）· `ensure_app_dirs()` · `dump_artifacts()` / `dump_run_record()` · `ctx_warn()` · **回执解析**（`_RECEIPT_KINDS` / `_split_receipt`） | 746 |
-| `chat.py` | **交互式入口**（你当用户）：CLI 版式 · 主循环 · 实时 tail 日志 | 713 |
-| `run.py` | **跑批**：case → 子进程 → 汇总 | 256 |
-| `_child.py` | 跑批的**子进程**：跑一个 case 的一遍 | 119 |
-| `checks.py` | **硬判断**（代码断言） | 520 |
-| `judge.py` | **软判断**（LLM 评分）+ **留档** | 200 |
-| `report.py` | 汇总出 `report.md` | 178 |
-| `unit_*.py` | 纯函数单测（不调 LLM） | 491 |
+| 文件 | 负责 |
+|---|---|
+| `harness.py` | **装配 + 记录层**：`install()`（装技能）· `snapshot()` · 路径约定（`FROZEN`/`ROOT`/`RUNS_DIR`）· `ensure_app_dirs()` · `dump_artifacts()` / `dump_run_record()` · `ctx_warn()` · **回执解析**（`_RECEIPT_KINDS` / `_split_receipt`） |
+| `chat.py` | **交互式入口**（你当用户）：CLI 版式 · 主循环 · 实时 tail 日志 |
+| `run.py` | **跑批**：case → 子进程 → 汇总 |
+| `_child.py` | 跑批的**子进程**：跑一个 case 的一遍 |
+| `checks.py` | **硬判断**（代码断言） |
+| `judge.py` | **软判断**（LLM 评分）+ **留档** |
+| `report.py` | 汇总出 `report.md` |
+| `unit_*.py` | 纯函数单测（不调 LLM） |
 
 ### 1.2 依赖方向（**单向，无环**）
 
@@ -131,7 +131,7 @@ config ──► trace ──► (所有模块都在写日志)
 │        · write_artifact    —— 自己产出短内容（**不建 Task**）          │
 │        · delegate(...)     —— 需要专业能力时（**建 Task**）            │
 └──────────────────────────┬──────────────────────────────────────────┘
-                           │ delegate(skill_name, task, artifacts=[...])
+                           │ delegate(skill_name, task, artifacts=[...], based_on_turns=[...])
                            ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │ ③ delegate 工具内部（**平台代码，这几步 LLM 跳不过**）                  │
@@ -219,7 +219,7 @@ ExecOutcome{status, artifacts, report, rounds, progress, missing}
 |---|---|---|---|---|
 | ① | 用户输入 | 用户 → 图 | `HumanMessage` | 原话（不加工） |
 | ② | **台账注入** | 平台 → 主 agent | `SystemMessage` | 见 §3.2.1 |
-| ③ | **派发** | 主 agent → 平台 | `delegate` 工具参数 | `skill_name` / `task` / `artifacts[]` |
+| ③ | **派发** | 主 agent → 平台 | `delegate` 工具参数 | `skill_name` / `task` / `artifacts[]` / **`based_on_turns[]`** |
 | ④ | **交接书** | 平台 → 执行器 | `HumanMessage` | 见 §3.2.2 |
 | ⑤ | 执行器产出 | 执行器 → 产物库 | `ARTIFACTS` + 磁盘 | 7 字段（§5.4） |
 | ⑥ | **判定输入** | 平台 → 判定 | 结构化调用 prompt | 见 §3.2.3 |
@@ -494,7 +494,18 @@ absorb_outcome(rec, outcome)
 |---|---|---|---|---|---|
 | **S1** | **三态判定**：任务完成了没 | `executor._judge` | `instructions` + `briefing` + `material` + 产物数量 | `_Judgement{status, progress, missing, reason}` | `incomplete`（**会让它再 react 一轮**） |
 | **S2** | **主 agent 试答**：你上下文里有它缺的信息吗 | `agent._ask_main` | `skill_name` + `task` + `outcome.report` + 进度/缺失项 + 最近 10 条消息 | `_AgentAnswer{can_answer, answer}` | `can_answer=False`（**交给用户，不编答案**） |
-| **S3** | 主 agent 自己的决策 | `create_agent` 的模型调用 | 系统提示 + 对话历史 + 台账 + 工具定义 | 工具调用 / 直接回复 | —（原生 tool calling，无兜底） |
+| **S3** | 主 agent 自己的决策（**六个子选择**，见下） | `create_agent` 的模型调用 | 系统提示 + 对话历史 + 台账 + 工具定义 | 工具调用 / 直接回复 | —（原生 tool calling，无兜底） |
+
+**S3 的六个子选择**（逐个看能不能收紧 —— 这决定了「理解」这一层还剩多少软的）：
+
+| # | 选择 | 能不能收紧 |
+|---|---|---|
+| ① | **要不要委派** | ✅ **有开关** —— `EXEC_PATH=delegate` 拿掉「自己干」的工具（§4.1 那条注）|
+| ② | 派给哪个技能 | ⚠️ 需求 **F2** 本来要求「用户在 UI 中显式选中」，**原型未实现**（见 `solution.md` §0.6）|
+| ③ | 产出范围（做几样） | 随 ② 一起收窄 —— 选了几个就做几个 |
+| ④ | **`task` 怎么写** | ⚠️ 它是**转述**（会丢、会加料）→ 平台用【用户原话】**对冲**，见 §3.2.2 |
+| ⑤ | **`based_on_turns` 点名哪几轮** | LLM 只做**选择**，平台做**搬运** —— 点名的轮次**原文直给** |
+| ⑥ | 回复怎么组织 | ❌ 不收紧 —— 按 `solution.md` **§0.7**，正文交付**不保证** |
 | **S4** | 执行器自己的决策 | 同上（执行器实例） | `_PLATFORM_RULE` + 能力指令 + 已知信息 | 工具调用 / 回复 | — |
 | **S5** | 判定规则里"什么算请求信息" | `_JUDGE_RULES` 规则 3 | 同上 | 同上 | 同上 |
 
@@ -537,6 +548,7 @@ absorb_outcome(rec, outcome)
 | H21 | 技能包**只认 `SKILL.md`** | `skill_pack.ENTRY_NAME` | "这个目录是不是技能包"要靠猜 |
 | H22 | **三流 UTF-8**（stdin/stdout/stderr） | `config.py` | 中文 Windows 上报错与正常输出两种编码；管道喂中文解成代理字符 → 一条坏字符整场崩 |
 | H23 | 路径**只从 `config.app_root()` 算** | `config.py` / `trace.py` | 冻结后算出解包目录（`_internal/`），用户找不到、重建还会被清掉 |
+| H24 | **`based_on_turns` 的轮次当场校验**（点了不存在的轮次 → **拒绝派发**） | `agent.delegate` | 放行的话平台会"**以为把原文给了**"，实际什么都没给，而执行器不知道 —— **静默降级** |
 
 > 📌 **"硬"的定义是"违反会导致状态不一致"**，不是"代码写的"。
 > 比如 `_STAGE_MARK` 的文案、台账的措辞，都是代码写的但属**展示**，不在本表。
@@ -779,7 +791,7 @@ class AgentState(TypedDict):     # 主 agent 子图 —— **故意不含 log**
 | `turn` / `user` / `wall_s` | 入参 |
 | `input_source` | 默认 `"scripted"`，**交互式覆盖成 `"human"`**（`_run.md` 的标题按它分叉） |
 | `reply` | 最后一条有内容的 `AIMessage` |
-| `tasks` | `state["tasks"]`（**12 个字段全带上**） |
+| `tasks` | `state["tasks"]`（**14 个字段全带上**） |
 | `main_ctx_chars` | 消息 content + tool_call args 长度（**不含 system prompt**） |
 | `sys_prompt_chars` | `_MAIN_PROMPT` + 能力清单的长度（**不在 state 里**，故单记） |
 | `artifacts_chars` / `artifacts` | 产物库正文总量 / `{aid: 字数}` |

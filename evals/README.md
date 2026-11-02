@@ -92,9 +92,15 @@ soft:                        # 软断言（LLM 评分）—— 只有必须语�
 ## 执行路径开关（`exec_path`）—— **平台造路**
 
 ```yaml
+# case 里（evals/cases/*.yaml）
 exec_path: auto        # 默认：两条路都开，由模型自己选（**产品行为**）
 exec_path: delegate    # 强制委派
 exec_path: inline      # 强制主 agent 自己干
+```
+
+```bash
+# 交互式入口也一样能用（2026-11-02 接上）—— 想手工看某条链路时用它
+uv run python -m evals.chat --skills evals/skills --exec-path delegate
 ```
 
 **为什么要它**：跑批时想验某条链路，原来只能**碰运气**碰上一个模型愿意走那条路的 case ——
