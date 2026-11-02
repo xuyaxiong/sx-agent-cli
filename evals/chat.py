@@ -537,6 +537,12 @@ def main() -> None:
         "包里的文本文件（references/ assets/ …随作者）按需读（渐进式披露第三层，read_skill_file）",
     )
     ap.add_argument("--thread", default="interactive-1")
+    ap.add_argument(
+        "--exec-path", choices=["auto", "delegate", "inline"], default="auto",
+        help="执行路径：auto 两条都开（默认，产品行为）｜ delegate **强制委派**（主 agent 拿不到"
+             "自己干的工具）｜ inline 强制主 agent 自己干（不给 delegate）。"
+             "⚠️ 想验「执行器那条链路」时用它，别靠碰运气 —— 见 proto/agent.EXEC_PATH",
+    )
     args = ap.parse_args()
 
     # 首次运行（只在打包后）：建 skills/ 和 runs/，空的话放一遍示例技能。
@@ -550,7 +556,9 @@ def main() -> None:
     # 技能来自**文件夹**（不再绑 case）—— 用户 2026-10-30：*"有一个文件夹里面有各种 skill
     # cli 启动时候自动注入文件夹里面的全部 skill"*。case 那套是跑批用的（预置 turns + 断言），
     # 这个入口是给人自由对话用的。
-    inst = install({"skills_dir": args.skills, "skills_mode": "replace"})
+    inst = install(
+        {"skills_dir": args.skills, "skills_mode": "replace", "exec_path": args.exec_path}
+    )
     graph = build()
     config = {"configurable": {"thread_id": args.thread}}
 
