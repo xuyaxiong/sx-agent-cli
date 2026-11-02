@@ -34,6 +34,13 @@ EXCLUDED: dict[str, str] = {
     "agent_tried": "布尔标记；它要传达的信息由 `agent_answer` 承载（置 True 时必然非空）",
 }
 
+#: 通用循环**查不了**的字段 —— 由下面的专门分块断言（不是排除，是换一种查法）
+SPECIAL: dict[str, str] = {
+    "user_turns": "嵌套结构（每轮 {n, text}）；而且**只有开头几十个字该进交接书**（渐进式披露），"
+                  "通用循环要求「值全文出现」，对它是反的 —— 见 ⑤",
+    "based_on": "数字列表；通用循环里 `str(1) in text` 恒真，查了等于没查 —— 见 ⑤",
+}
+
 PASS: list[str] = []
 FAIL: list[str] = []
 
@@ -61,6 +68,18 @@ def _full_task() -> dict:
         "answers": ["课前预习", "填空形式"],
         "agent_answer": "用户之前说过是四年级",
         "agent_tried": True,
+        # 第 1 轮**点名**了（主 agent 说"这次工作依据的就是它"）→ 交接书里给**全文**
+        # 第 2/3 轮没点名 → 只给**开头几十个字**（全文按需 `read_user_turn`）
+        # ⚠️ 没点名的这两轮必须**长于 40 字**，否则"开头"就是全文，⑤ 的负向断言就测不出东西
+        "user_turns": [
+            {"n": 1, "text": "帮我给三年级语文《荷花》备一节课，出教案。人教版三年级下册，"
+                             "第一课时，探究型上法，学生基础一般。直接生成，不用再问我。"},
+            {"n": 2, "text": "导学单用在课前预习，填空形式；网页是给三年级学生看的，别太深。"
+                             "另外导学单和网页的内容都要参考教案。"},
+            {"n": 3, "text": "再补一句：教案里的比喻句部分要多留一点时间，学生基础一般，"
+                             "常见卡点是比喻句的理解，需要搭支架。"},
+        ],
+        "based_on": [1],
     }
 
 
@@ -70,7 +89,7 @@ def main() -> None:
 
     print("① 每个非排除字段的值都要出现在交接书里")
     for key, value in task.items():
-        if key in EXCLUDED:
+        if key in EXCLUDED or key in SPECIAL:
             continue
         values = value if isinstance(value, list) else [value]
         missing = [v for v in values if str(v) not in text]
@@ -89,11 +108,45 @@ def main() -> None:
     check("说了冲突以后面的为准", "以后面的为准" in text)
     check("说了在已有产物上补全", "在它基础上补全" in text)
 
-    print("\n④ 首跑不该出现「续跑」相关的话（否则它会以为有前情）")
+    print("\n④ 用户原话：清单逐轮出现、点名的给全文、**没点名的不给全文**")
+    picked = set(task["based_on"])
+    for t in task["user_turns"]:
+        head = " ".join(t["text"].split())[:40]
+        listed = f"第 {t['n']} 轮" in text and head in text
+        check(
+            f"第 {t['n']} 轮在清单里（轮次 + 开头）",
+            listed,
+            "" if listed else f"没找到：第 {t['n']} 轮 / {head!r}",
+        )
+        if t["n"] in picked:
+            check(f"第 {t['n']} 轮**点名了 → 给了全文**", t["text"] in text)
+        else:
+            # 🔴 这条是**渐进式披露的正向保证**：没点名的轮次，全文**不该**进交接书
+            check(f"第 {t['n']} 轮没点名 → **没给全文**", t["text"] not in text)
+    check("说了这是事实来源、冲突以原话为准", "以原话为准" in text)
+    check("说了要看全文用 read_user_turn", "read_user_turn" in text)
+
+    print("\n⑤ 来源标注：**哪句是用户说的、哪句是模型说的**，一眼分得清")
+    check("【任务】标明是主 agent 交代的", "主 agent 交代的" in text)
+    check("【用户原话】标明是用户说的", "**用户说的**" in text)
+    check("【已经答复过的信息】逐条标了来源", "用户：" in text and "主 agent 补充：" in text)
+    # 这一段里混着**两方**的话，子段必须各自标来源（判定是第三方评审，执行器是当事人）
+    check(
+        "【你上次说到哪】子段标了来源",
+        "**判定说**" in text and "**你上次说**" in text,
+        "缺「判定说」或「你上次说」",
+    )
+
+    print("\n⑥ 首跑不该出现「续跑」相关的话（否则它会以为有前情）")
     fresh = {k: ([] if isinstance(v, list) else "") for k, v in task.items()}
     fresh.update({"task": "生成《白桦》导学单", "stage": "running", "id": "t1", "skill": "s"})
     fresh_text = render_briefing(fresh)
-    check("首跑只有任务", fresh_text.strip() == "【任务】\n生成《白桦》导学单", repr(fresh_text))
+    # ⚠️ **不逐字钉标题**（标题带来源标注，措辞会改）—— 只断"**只有【任务】这一段**"
+    check(
+        "首跑只有【任务】一段",
+        fresh_text.strip().startswith("【任务】") and fresh_text.count("【") == 1,
+        repr(fresh_text),
+    )
     check("首跑没有续跑提示", "续跑提示" not in fresh_text)
 
     print("\n" + "═" * 78)

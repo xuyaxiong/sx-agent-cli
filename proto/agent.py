@@ -22,7 +22,7 @@ from typing import Any
 
 from langchain.agents import create_agent
 from langchain.tools import ToolRuntime, tool
-from langchain_core.messages import ToolMessage
+from langchain_core.messages import HumanMessage, ToolMessage
 from langgraph.types import Command
 from pydantic import BaseModel, Field
 
@@ -90,6 +90,15 @@ _MAIN_PROMPT = (
     "- 不确定某个能力**交付什么、按什么标准交付** → `read_skill(name)` 读原文核对，\n"
     "  **不要凭一句话描述猜**：你猜出来的要求会压过能力自己的交付标准。\n"
     "- 传了不存在的产物 ID 会被当场拒绝，并告诉你现有的清单。\n"
+    "\n"
+    "## 🔴 派发时**点名你依据的用户原话**\n"
+    "\n"
+    '`delegate(skill_name="...", task="...", based_on_turns=[1, 3])`\n'
+    "平台会把这几轮的**原文**原样交给执行器 —— **比你转述可靠**：你写的是理解，原文是事实。\n"
+    "\n"
+    "- **只点真正依据的那几轮** —— 全点等于没点，还把执行器的上下文塞满；\n"
+    "- 轮次从对话开头数**用户消息**的顺序（第 1 条就是第 1 轮）；\n"
+    "- 不点也行：执行器会拿到一份**全部轮次的清单**（每轮几十个字），需要哪轮它自己读全文。\n"
     "\n"
     "## 🔴 回复用户时的硬要求\n"
     "\n"
@@ -209,6 +218,39 @@ def _supersede_old(runtime: ToolRuntime, skill_name: str) -> list[dict]:
     return out
 
 
+# ──────────────────────────── 用户原话（平台硬搬） ────────────────────────────
+
+
+def _user_turns(messages: list) -> list[dict]:
+    """把对话历史里的**用户原话**抽出来，按顺序编号 —— 平台硬搬，不经任何转述。
+
+    🔴 **为什么要搬**（2026-11-02）：首次派发时执行器看到的"任务"**100% 是主 agent 的转述**，
+    而转述**不只丢、还会加** —— 实测一次真实运行里，主 agent 自己补了用户没说的
+    「人教版三年级下册」「叶圣陶的经典散文」（`docs/solution.md` §9.2 有完整对照）。
+    丢了能靠追问补回来；**加了会变成一份"基于错误前提的成品"，而用户不知道**。
+
+    ⚠️ **只认 `HumanMessage`**：主图里注入的台账是 `SystemMessage`、透传是 `AIMessage`，
+    所以"HumanMessage = 用户本人说的"在**主图**里成立（执行器自己的图里不成立，别复用）。
+
+    ⚠️ 这里存的是**全文**（可能很长，用户会粘长文）—— 交接书里只渲染**开头几个字**，
+    全文由执行器按需用 `read_user_turn(n)` 取（渐进式披露，见 `render_briefing` 那段）。
+    """
+    out: list[dict] = []
+    for m in messages:
+        if not isinstance(m, HumanMessage):
+            continue
+        text = str(m.content).strip()
+        if text:
+            out.append({"n": len(out) + 1, "text": text})
+    return out
+
+
+def _one_line(text: str, limit: int = 40) -> str:
+    """压成一行 + 截到 limit 字 —— 清单里**一行一轮**，不能让它撑成多行。"""
+    flat = " ".join(text.split())
+    return flat if len(flat) <= limit else flat[:limit] + "…"
+
+
 # ──────────────────────────── 重入交接书 ────────────────────────────
 
 
@@ -228,19 +270,49 @@ def render_briefing(task: dict) -> str:
     """
     from proto.artifacts import ARTIFACTS
 
-    lines = [f"【任务】\n{task.get('task', '')}"]
+    lines = [
+        # 🔴 **来源标注**（用户 2026-11-02）：执行器必须能分清"**哪句是用户说的、
+        # 哪句是模型说的**"。平台**不阻止**主 agent 补充信息（那是它的活），
+        # 但**必须让下游知道这是谁的话** —— 否则模型补的东西会被当成用户的事实。
+        # 实测（b3-smoke2）：执行器把主 agent 编的"三年级/四年级"说成了
+        # "**您写的是**三年级/四年级" —— 而用户从来没写过。
+        f"【任务】（**主 agent 交代的** —— 它根据对话写的，可能补了用户没说的东西）\n"
+        f"{task.get('task', '')}"
+    ]
+
+    # ── 用户原话（平台硬搬，未经转述）—— 渐进式披露：清单常驻、全文按需 ──
+    turns = task.get("user_turns") or []
+    if turns:
+        picked = set(task.get("based_on") or [])
+        block = ["【用户原话】（**用户说的** —— 平台直接搬，未经转述）"]
+        for t in turns:
+            n, text = t.get("n"), str(t.get("text") or "")
+            if n in picked:
+                # 主 agent **点名**的那几轮 → 直接给全文（点名本身就是一次"按需取"）
+                block.append(f"- **第 {n} 轮（{len(text)} 字）—— 本次工作依据的就是它**：\n{text}")
+            else:
+                block.append(f"- 第 {n} 轮（{len(text)} 字）：{_one_line(text)}")
+        block.append(
+            "（**这是事实来源**；【任务】是这次的要求，两者冲突时**以原话为准**。"
+            "要看哪一轮的全文就用 `read_user_turn(轮次)` 读，不要凭那几十个字猜。）"
+        )
+        lines.append("\n".join(block))
 
     progress = (task.get("progress") or "").strip()
     missing = [m for m in (task.get("missing") or []) if m]
     report = (task.get("report") or "").strip()
     if progress or missing or report:
+        # 🔴 **子段也要标来源**（用户 2026-11-02）：这一段里混着**两方**的话 ——
+        # 「已做到 / 还缺」是**判定**说的（第三方评审，它可能判错），
+        # 「你上次说」才是**执行器自己**的话。原来笼统写成"你上次说到哪"，
+        # 读的人分不出哪句是谁说的 —— 而这两者的可信度**根本不是一回事**。
         block = ["【你上次说到哪】（**这是上一轮的情况，不是本轮**）"]
         if progress:
-            block.append(f"已做到：{progress}")
+            block.append(f"- **判定说**已做到：{progress}")
         if missing:
-            block.append("还缺：\n" + "\n".join(f"- {m}" for m in missing))
+            block.append("- **判定说**还缺：\n" + "\n".join(f"  - {m}" for m in missing))
         if report:
-            block.append(f"你上次说的话：\n{report}")
+            block.append(f"- **你上次说**：\n{report}")
         lines.append("\n".join(block))
 
     answers = [a for a in (task.get("answers") or []) if a]
@@ -329,6 +401,7 @@ def delegate(
     task: str,
     runtime: ToolRuntime,
     artifacts: list[str] | None = None,
+    based_on_turns: list[int] | None = None,
 ) -> Command:
     """把**一件具体工作**委派给隔离的执行器（它在独立上下文里干，只把产物和摘要带回来）。
 
@@ -341,10 +414,30 @@ def delegate(
             把产物 ID 放进 `artifacts`，执行器会自己读全文（转述既失真、又白占你的上下文）。
         artifacts: 这次工作要参考的产物 ID（如 `["art_001"]`）。不确定有哪些产物先
             `list_artifacts()`；不确定某个能力交付什么先 `read_skill(name)`。
+        based_on_turns: 这次工作**依据的是哪几轮用户原话**（从对话开头数**用户消息**的顺序，
+            第 1 条就是第 1 轮）。平台会把这几轮的**原文**原样交给执行器 ——
+            **比你转述可靠**（你写的是理解，原文是事实）。
+            **只点真正依据的那几轮**：全点等于没点，还把执行器的上下文塞满。
+            不点也行 —— 执行器会拿到一份全部轮次的清单，需要时自己读全文。
     """
     skill = SKILLS.get(skill_name)
     if skill is None:
         return _cmd(runtime, None, f"没有能力「{skill_name}」。可用：{'、'.join(SKILLS)}")
+
+    # 用户原话**平台硬搬**（快照进 Task）—— 见 `_user_turns` 的 docstring
+    turns = _user_turns(runtime.state.get("messages") or [])
+    known = {t["n"] for t in turns}
+    picked = [n for n in (based_on_turns or []) if n]
+    # 点名的轮次**当场校验**：编一个不存在的轮次直接拒掉 —— 放行的话，
+    # 平台会"以为把原文给了"，实际什么都没给，而执行器不知道（静默降级）。
+    unknown_turns = [n for n in picked if n not in known]
+    if unknown_turns:
+        have = "、".join(str(n) for n in sorted(known)) or "（本会话还没有用户原话）"
+        return _cmd(
+            runtime, None,
+            f"轮次 {'、'.join(str(n) for n in unknown_turns)} 不存在，**这次没有派发**。"
+            f"本会话的用户原话有：{have}",
+        )
 
     # 产物引用**当场校验**：编出来的 ID 直接拒掉，并给出真实清单 ——
     # 放行的话，执行器读不到会自己找补，错误被埋进产物里。
@@ -374,6 +467,13 @@ def delegate(
         # 不累积的话下一次投递会把之前的答复冲掉（2026-10-29 人在环实测踩过）。
         "answers": [],
         "agent_answer": "",
+        # 用户原话**快照**（不是渲染交接书时现取），两个理由：
+        # ① 答复投递那条路（`graph._feed_waiting`）也调 `render_briefing`，快照在 Task 上它自动跟着走
+        # ② 与 `answers` **天然去重** —— 快照是"派发**之前**用户说的"，
+        #    `answers` 是"派发**之后**用户答的"，时间上不重叠
+        "user_turns": turns,
+        # 主 agent **点名**依据哪几轮（平台据此把那几轮原文直接给执行器）—— 见 `render_briefing`
+        "based_on": picked,
     }
     trace.section(f"delegate · {skill_name} · {tid}")
     if superseded:
@@ -384,7 +484,8 @@ def delegate(
         return _cmd(runtime, [rec, *superseded], msg)
 
     # ① 派发 —— run_task 内部已含「出口限制」：既没完成也没提问会被推回去继续
-    outcome = run_task(skill, render_briefing(rec))
+    # 第三个参数是用户原话（给执行器的 `read_user_turn` 用）—— 交接书里只有清单，全文按需取
+    outcome = run_task(skill, render_briefing(rec), rec.get("user_turns"))
     absorb_outcome(rec, outcome)
 
     # ② 按**三态枚举**分派 —— 穷举，没有第四种（用户「封闭原则」）
@@ -409,7 +510,7 @@ def delegate(
             # 否则执行器换一次上下文就把它忘了。
             rec["agent_answer"] = answer
             # 试答后重跑也是**重入**：走同一份交接书（带上刚才那一轮的进度 / 它问过什么）
-            o2 = run_task(skill, render_briefing(rec))
+            o2 = run_task(skill, render_briefing(rec), rec.get("user_turns"))
             absorb_outcome(rec, o2)
             if o2.status == "completed":
                 rec.update(stage="completed", artifacts=o2.artifacts, report=o2.report)

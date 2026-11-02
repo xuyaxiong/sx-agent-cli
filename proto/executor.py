@@ -25,6 +25,7 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from langchain.agents import create_agent
+from langchain.tools import tool
 from langchain_core.messages import AIMessage, HumanMessage
 from pydantic import BaseModel, Field
 
@@ -368,7 +369,29 @@ def _judge(skill: Skill, arts: list[str], material: str, briefing: str = "") -> 
     )
 
 
-def run_task(skill: Skill, briefing: str = "") -> ExecOutcome:
+def _user_turn_reader(user_turns: list[dict]):
+    """造一个**只认这次交接里那几轮**的读取工具（渐进式披露第三层）。
+
+    ⚠️ **用闭包，不用模块级全局**：并行 delegate 时两个执行器会互相覆盖 ——
+    `ARTIFACT_DIR` 那种全局状态在这儿就是坑（同源教训见 `graph._merge_tasks`）。
+    """
+    by_n = {int(t["n"]): str(t["text"]) for t in user_turns}
+
+    @tool
+    def read_user_turn(turn: int) -> str:
+        """读某一轮**用户原话的全文**（交接书里的清单只有开头几十个字）。
+
+        交接书【用户原话】那一段列了每一轮的开头；**确定这一轮确实用得上再读** ——
+        别把每一轮都拉进上下文。
+        """
+        if turn not in by_n:
+            return f"没有第 {turn} 轮。现有：{'、'.join(str(n) for n in sorted(by_n))}"
+        return f"【用户原话 · 第 {turn} 轮】\n{by_n[turn]}"
+
+    return read_user_turn
+
+
+def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = None) -> ExecOutcome:
     """通用执行器：干活、**判定出口**、没出口就推它继续。
 
     Args:
@@ -379,13 +402,19 @@ def run_task(skill: Skill, briefing: str = "") -> ExecOutcome:
             已产出产物 / 可读产物），不是"这一轮的增量"—— 执行器用完即弃，每次都是重入。
             ⚠️ **可读产物清单也由它承载**（原来是 `run_task` 单独拼一个 `artifacts` 参数，
             两处都渲染 → 执行器看到两遍；现在只有一个来源）。
+        user_turns: 用户原话（`[{"n": 1, "text": "..."}]`）—— 只给 `read_user_turn` 工具用。
+            **交接书里只渲染清单**（每轮一行、开头几十字），全文按需取：
+            用户可能粘长文，一上来全加载就把执行器的上下文塞满了（渐进式披露）。
 
     Returns:
         `ExecOutcome` —— 平台据此定任务状态（**不再靠"产物库空不空"猜**）。
     """
+    tools = [write_artifact, read_artifact, read_skill_file]
+    if user_turns:
+        tools.append(_user_turn_reader(user_turns))
     agent = create_agent(
         get_model(),
-        tools=[write_artifact, read_artifact, read_skill_file],
+        tools=tools,
         system_prompt=_PLATFORM_RULE,
         name="executor",
     )

@@ -162,6 +162,9 @@ def _load_skills_dir(path_str: str) -> dict:
     在 `proto.skill_pack`（`Skill` / `Reference` 两个领域对象在 `proto.skills`）。
     这里只做一件事：**把相对路径定到仓库根，然后交给它**。
     """
+    # ⚠️ **局部导入是有意的**：`proto.trace` 一被导入就开日志文件（模块级的 `_fh`），
+    # 而 `harness` 也被 `report.py` 这类**不该产生日志**的地方导入。**别提到模块级去。**
+    from proto import trace
     from proto.skill_pack import load_skills_dir
 
     root = Path(path_str)
@@ -236,14 +239,14 @@ def install(case: dict) -> dict:
     run_tasks: list[dict] = []
     orig_run_task = proto.executor.run_task
 
-    def rec_run_task(skill, briefing: str = ""):
+    def rec_run_task(skill, briefing: str = "", user_turns=None):
         # 本次 run **前后**产物库的差集 = 这次真写出来的。
         # ⚠️ 不能按线程归属：产物写入发生在 langgraph 的工具线程里，和 run_task 的线程
         #    对不上（实测 threads 完全不重合），按线程判会**永远不报**。
         # ⚠️ 签名要跟着 `proto.executor.run_task` 走：它变过两次（`given`→`briefing`、
         #    去掉 `artifacts` 参数），**每次都漏改这里、每次都整轮崩** —— 改签名时记得搜一遍。
         before = set(proto.artifacts.ARTIFACTS)
-        out = orig_run_task(skill, briefing)
+        out = orig_run_task(skill, briefing, user_turns)
         run_tasks.append(
             {
                 "thread": threading.get_ident(),

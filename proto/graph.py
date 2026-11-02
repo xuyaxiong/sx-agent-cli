@@ -155,7 +155,8 @@ def _feed_waiting(state: State) -> tuple[list[dict], list[str]]:
         trace.block("投过去的原话", user)
         trace.note(f"累计答复 {len(rec['answers'])} 条（历次一起带上，否则执行器会重问）")
         # ⚠️ `refs` 要一起带上：不重建可读产物清单，执行器在续跑时就"看不见"前序产物了
-        outcome = run_task(skill, render_briefing(rec))
+        # 用户原话也一起带上（快照在 Task 上，所以这条重入路径**自动**有它）
+        outcome = run_task(skill, render_briefing(rec), rec.get("user_turns"))
         absorb_outcome(rec, outcome)
         if outcome.status == "completed":
             rec.update(stage="completed", artifacts=outcome.artifacts)
