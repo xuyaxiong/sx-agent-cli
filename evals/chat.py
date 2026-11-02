@@ -38,7 +38,6 @@ if hasattr(sys.stdout, "reconfigure"):
 
 from evals.harness import (  # noqa: E402
     DEFAULT_SKILLS_DIR,
-    FROZEN,
     RUNS_DIR,
     _RECEIPT_KINDS,
     _split_receipt,
@@ -57,14 +56,12 @@ from proto.artifacts import ARTIFACTS  # noqa: E402
 # ⚠️ 路径一律走 `harness`（`ROOT` / `RUNS_DIR` / `DEFAULT_SKILLS_DIR`）——
 # 这里不再自己算，否则打包后会算出解包目录，和 exe 旁边那个目录对不上。
 BAR = "─" * 74
-#: 用户版开场白的横线 —— **比开发态窄**。74 列铺满终端像分隔日志，不像界面的边。
-BAR_USER = "─" * 42
 
 #: 打这些就退出（大小写不敏感）—— 和 Ctrl-C / Ctrl-D 一样。
 #: ⚠️ **空行不是退出**：原来空行就退出，一个多余的回车能把整场会话结束掉（见主循环的注释）。
 _EXIT_WORDS = frozenset({"exit", "quit", "退出", "再见"})
 
-#: 打包后开场白里的标题 —— **产品名**（用户 2026-10-30：*"我这不是 ai 助教 我是 SX Agent"*）。
+#: 开场白里的标题 —— **产品名**（用户 2026-10-30：*"我这不是 ai 助教 我是 SX Agent"*）。
 #: 面向用户，不是面向开发：所以不叫"原型"，也不按技能内容起名。
 APP_TITLE = "SX Agent"
 
@@ -583,35 +580,27 @@ def main() -> None:
     proto_artifacts.use_dir(out_dir / "artifacts" / f"{tag}__r1")
 
     skills = list(proto.agent.SKILLS.values())
-    if FROZEN:
-        # 给**用户**看的开场白：只说"这是什么、能干什么、怎么开始"。
-        # 🔴 路径 / 日志 / 文件构成 / 模型端点这类信息**不要往这里放**（用户 2026-10-30：
-        # *"类似这种信息不要加了啊 太冗余了"*）—— 开发要看，下面开发态那支里给。
-        print(BAR_USER)
-        # 只留模型名，不留端点 URL（"@ https://..." 是开发看的）
-        print(f"  {APP_TITLE} · {describe().split(' @ ')[0]}\n")
-        print("  我能帮你做这些：\n")
-        _print_skills(skills, indent="    ")
-        print()
-        print("  直接说你要什么就行，比如：")
-        print("    「帮我备一节三年级语文《荷花》的课」\n")
-        print("  需要补充信息我会问你，你答就行。")
-        print("  结束：按 Ctrl-C，或打 exit。")
-        print(BAR_USER)
-        if seed_notes:
-            print(f"  {seed_notes[0]}\n")
-    else:
-        print(BAR)
-        # 开发态：路径和日志**有用**，照旧打全。
-        # 模型只显示**名字**（端点 URL 在 `.env` 里，打在这里只是噪音 —— 用户 2026-10-30 定）。
-        print(f"{APP_TITLE} ｜ 模型 {describe().split(' @ ')[0]}")
-        print("技能清单")
-        _print_skills(skills, indent="   ")
-        print(BAR)
-        print(f"日志   {trace.LOG_FILE}")
-        print(f"记录   {out_dir}")
-        print(BAR)
-        print("直接说你要什么。退出：Ctrl-C 或 exit。\n")
+    # 🔴 **开场白只有一套**（用户 2026-11-02：*"合成一套啊 以开发态为主"*）——
+    # 原来按 `FROZEN` 分叉成"用户版 / 开发版"两份文案：同一个屏幕上看过两遍，
+    # 改一句话还得改两处。留开发态这版。
+    # ⚠️ 10-30 曾把路径当"用户版里的冗余"删掉（*"类似这种信息不要加了啊 太冗余了"*）；
+    # 现在**两边都留着** —— `记录` 那个文件夹打包后正是要用户发回来的东西。
+    print(BAR)
+    # 模型只显示**名字**（端点 URL 在 `.env` 里，打在这里只是噪音 —— 用户 2026-10-30 定）。
+    print(f"{APP_TITLE} ｜ 模型 {describe().split(' @ ')[0]}")
+    # 标题自己占一块（用户 2026-11-02：*"技能清单这一行上面也加一个横线分隔"*）——
+    # 原来标题下面直接顶"技能清单"，扫一眼分不出哪行是"这是谁"、哪行是"有什么"。
+    print(BAR)
+    print("技能清单")
+    _print_skills(skills, indent="   ")
+    print(BAR)
+    print(f"日志   {trace.LOG_FILE}")
+    print(f"记录   {out_dir}")
+    print(BAR)
+    print("直接说你要什么。退出：Ctrl-C 或 exit。\n")
+    if seed_notes:
+        # 只在打包后首次运行有（开发态目录本来就在）—— 用户得知道技能从哪来。
+        print(f"  {seed_notes[0]}\n")
 
     turns: list[dict] = []
     seen_len = 0
@@ -713,14 +702,13 @@ def main() -> None:
         json.dumps([result], ensure_ascii=False, indent=2), encoding="utf-8"
     )
     trace.close()
-    if FROZEN:
-        # 收尾才说记录在哪 —— 用户刚做完事，这时候说"把它发我"才自然；
-        # 开场就说路径只会变成噪音。**回收是功能，不是附注。**
-        # 🔴 **退出必须说一声**（2026-10-30）：原来一声不吭就结束，
-        # 用户看到的就是"进程突然没了" —— 分不清是正常结束还是崩了。
-        print(f"\n  再见 —— 这次对话已记录，请把这个文件夹发给我：\n    {out_dir}\n")
-    else:
-        print(f"\n再见。记录：{out_dir / 'artifacts' / f'{tag}__r1' / '_run.md'}")
+    # 收尾**也只有一套**（用户 2026-11-02：*"结尾也统一起来 这个以打包为主"*）——
+    # 留打包那版：**说清记录在哪 + 请对方发回来**。收尾才说路径不唐突
+    # （刚做完事，这时候说"把它发我"才自然）；开场就说才叫噪音。
+    # **回收是功能，不是附注。**
+    # 🔴 **退出必须说一声**（2026-10-30）：原来一声不吭就结束，
+    # 用户看到的就是"进程突然没了" —— 分不清是正常结束还是崩了。
+    print(f"\n  再见 —— 这次对话已记录，请把这个文件夹发给我：\n    {out_dir}\n")
 
 
 if __name__ == "__main__":
