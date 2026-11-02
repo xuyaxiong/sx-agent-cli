@@ -26,7 +26,9 @@ skills:
 turns:
   - "帮我备课、导学单、随堂小测，人教版三年级数学《分数的初步认识》第一课时，难度基础"
 checks:
-  - check: task_count
+  # ⚠️ **下界**不是精确值（2026-11-02）：派几个任务是模型的自由选择，
+  # 多派一路不算坏事，**少派才说明并发没被压到**
+  - check: task_count_at_least
     n: 3
   - check: every_task_has_artifact
   # 每个 task 的产物，只能来自它自己那个执行器

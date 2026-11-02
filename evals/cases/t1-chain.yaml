@@ -20,7 +20,7 @@ checks:
   # 🔬 **有效性断言**：第 1 轮只许派 1 个 —— 三条链子必须真的**跨轮**长出来。
   # 若它第 1 轮就把三样一起派了，这条 case 退化成 t2-same-turn 的重复，
   # 下面"跨轮依赖"那几条绿了也不算数。
-  - check: delegate_calls_exact
+  - check: delegate_calls_max
     at: 1
     n: 1
   - check: task_stages

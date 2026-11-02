@@ -555,7 +555,8 @@ absorb_outcome(rec, outcome)
 
 | 组 | 断言 | 断言什么 |
 |---|---|---|
-| **台账** | `task_count` | `turn.tasks` 条数 == n |
+| **台账** | `task_count` | `turn.tasks` 条数 == n（⚠️ **只有 `n=0` 该用它** —— "闲聊不该建 Task"是不变量；`n>0` 是中段值，会 flake） |
+| | `task_count_at_least` | `turn.tasks` 条数 ≥ n —— **下界**，压"至少发生了 N 路工作"（如并发测试） |
 | | `task_stages` | 每个 skill **至少一个** task 命中给定 stage（值可为 str 或 list） |
 | | `no_task_stage` | 指定 skill 下**不允许**存在这些 stage |
 | | `all_tasks_given_contain` | **每个** task 的 `task` 文本都含全部子串（验"派发前收齐信息"） |
@@ -563,7 +564,7 @@ absorb_outcome(rec, outcome)
 | | `missing_includes` | 至少一个没了结 task 的 `progress + missing` 里出现**全部**这些词 |
 | | `every_task_has_artifact` | 每个 task 都有非空 `artifacts`；**无 task 也算失败** |
 | | `artifact_no_cross_attribution` | 每个 task 记的产物必须出现在**它自己 skill 的** `run_tasks[].produced` 里（不许把读来的算产出） |
-| **委派与兜底** | `delegate_calls_max` / `delegate_calls_exact` | 到该轮为止的 `delegate` 调用数 ≤ n / == n |
+| **委派与兜底** | `delegate_calls_max` | 到该轮为止的 `delegate` 调用数 ≤ n（**上界**：少派不算坏事，"该不该派"由 `task_stages` 兜；多派才是 bug） |
 | | `platform_relayed` | 平台把待答透传给了用户（日志里出现 `finalize: 透传`） |
 | | `no_platform_relay` | 不该有透传 |
 | | `platform_fed_answer` | 平台把用户原话投给待答任务（日志含 `把用户这条消息**原话**投过去`） |
@@ -582,7 +583,7 @@ absorb_outcome(rec, outcome)
 | | `artifact_writes_timing` | 🔬 写入最小时间间隔 ≤ `max_gap_s`（**真并发**，不是只数线程） |
 | | `no_exception` | 整轮没炸（`run["error"]` 为空） |
 | | `fault_fired` | 🔬 注入的故障**真发生**了 |
-| | `run_task_count_over` | 🔬 该技能被跑次数 ≥ n（首跑 + 每次投递各算一次） |
+| | `run_task_count_over` | 🔬 该技能被跑次数 ≥ n（首跑 + 每次投递各算一次）—— ⚠️ **脆**：它断的是"**模型会不会重入**"。正解是让平台造路（`initial_tasks` 注入一个待答 Task），见下 |
 | | `llm_calls_under` | LLM 调用总数 ≤ n |
 | | `reply_contains` / `reply_excludes` / `reply_nonempty` | 回复含 / 不含这些子串；非空 |
 | | `no_duplicate_completed` | 同一技能最多一个 `completed` task（**不能用 `delegate_calls_max` 代替** —— 补救性重派是合法的） |
@@ -598,6 +599,31 @@ absorb_outcome(rec, outcome)
 > `reply_excludes` · `supersede_worked`。
 > 其中 `artifact_write_no_collision` 端到端**测不到**（竞态窗口微秒级、真实写入间隔 4–205 秒），
 > 改由 `evals/unit_artifact_race.py` 用 Barrier 压 —— **记档，不假装它被覆盖了**。
+
+#### 🔴 写断言前先问：**这条断的是「谁的行为」？**（2026-11-02）
+
+模型是**概率**的 —— 断"模型走了几步、输出多长"的断言**必然脆**，
+flake 时还说不清是系统坏了、还是模型今天走了另一条路。用户原话：
+*"你经常断言一些**数量上的东西**……有没有想过这些断言**极其脆弱**？大语言模型本就是**基于概率**的呀。"*
+
+| 断谁 | 判 | 例 |
+|---|---|---|
+| **平台机制**（代码） | ✅ **稳** | `platform_relayed` · `platform_fed_answer` · `artifact_write_no_collision` · `artifact_no_cross_attribution` |
+| **产物性质** | ✅ **稳** | `artifact_no_placeholder` · `artifact_html_complete` |
+| **不变量** | ✅ **稳** | `task_count: 0` · `no_duplicate_completed` · `every_task_has_artifact` |
+| **目标状态**（断结果，不断路径） | ✅ 大体稳 | `task_stages`（某技能**最终** completed） |
+| 🔴 **模型走了几步 / 输出多长** | **脆** | `delegate_calls_max` · `task_count_at_least` · `llm_calls_under` · `reply_chars_under` · `artifact_chars_over` |
+
+**脆断言不是不能写，是不能当回归哨兵**：它们红了先怀疑采样，别急着改代码。
+**真要压某条路径，让平台把路造出来** —— 先例是 `fault.structured` **故障注入**（不靠模型配合）；
+case 还可以用 **`initial_tasks`** 直接注入一个"等用户答复"的 Task，
+于是"答复投递（重入）"那条路**从第 1 轮起就必然被走到**（见 `_child.py`）。
+
+> 📌 **2026-11-02 的实测**：`t3-split-answers` 原来靠 `run_task_count_over: 3` 压重入路径 ——
+> 结果主 agent 自己把信息收齐了才派发、执行器一次就干完，**路径压根没被走到**：
+> 基线臂和实验臂**逐字相同地都挂这一条**。改法 = 注入 `waiting_for_input` 的初始 Task
+> ＋ 断言换成 `platform_fed_answer`（**平台行为**，稳）。
+> 顺带：删掉 `delegate_calls_exact`（中段精确值）、`task_count: n>0` 改成 `task_count_at_least`。
 
 #### 4.4.1 `artifact_html_complete` 的"**不按内容嗅探**"规则
 

@@ -18,10 +18,10 @@ checks:
   # 答复由平台投递，主 agent 不重派
   - check: platform_fed_answer
     at: 2
-  - check: delegate_calls_exact
+  - check: delegate_calls_max
     n: 1
   # 同一个 Task 直接完成 —— 台账里既没有待答，也没有被取代的残骸
-  - check: task_count
+  - check: task_count_at_least
     n: 1
   - check: task_stages
     stages: {quiz: completed}

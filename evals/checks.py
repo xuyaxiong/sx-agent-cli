@@ -8,6 +8,25 @@
 
 `CHECKS` 的 key 就是 case YAML 里 `check:` 的名字。
 **detail 要能直接看懂**：失败时不用打开 JSON 就能判断是"机制坏了"还是"断言写错了"。
+
+## 🔴 写断言前先问：**这条断的是「谁的行为」？**（2026-11-02）
+
+模型是**概率**的 —— 断"模型走了几步、输出多长"的断言**必然脆**，而且 flake 时
+**说不清是系统坏了、还是模型今天走了另一条路**（用户原话：
+*"你经常断言一些数量上的东西……有没有想过这些断言**极其脆弱**？大语言模型本就是**基于概率**的呀"*）。
+
+| 断谁 | 判 | 例 |
+|---|---|---|
+| **平台机制**（代码） | ✅ **稳** | `platform_relayed` / `platform_fed_answer` · `artifact_write_no_collision` · `artifact_no_cross_attribution` |
+| **产物性质** | ✅ **稳** | `artifact_no_placeholder` · `artifact_html_complete` |
+| **不变量**（"不该有" / "至多一个" / "每个都有"） | ✅ **稳** | `task_count: 0` · `no_duplicate_completed` · `every_task_has_artifact` |
+| **目标状态**（断结果，不断路径） | ✅ 大体稳 | `task_stages`（某技能**最终** completed） |
+| 🔴 **模型走了几步 / 输出多长** | **脆** | `delegate_calls_max` · `task_count_at_least` · `llm_calls_under` · `reply_chars_under` · `artifact_chars_over` |
+
+**脆断言不是不能写，是不能当回归哨兵**：它们红了先怀疑采样，别急着改代码。
+**真要压某条路径，让平台把路造出来** —— 先例是 `fault.structured` 故障注入；
+case 也可以用 `initial_tasks` 直接注入一个"等用户答复"的 Task，
+于是"答复投递（重入）"那条路**从第 1 轮起就必然被走到**（见 `_child.py`）。
 """
 
 from __future__ import annotations
@@ -59,8 +78,25 @@ def _as_list(v: Any) -> list:
 
 @_reg
 def check_task_count(run: dict, turn: dict, n: int) -> Result:
+    """task 数**精确等于** n。
+
+    ⚠️ **只有 `n=0` 该用它** —— "闲聊不该建 Task"是不变量。
+    `n>0` 是**中段值**：派几个任务是模型的自由选择，会 flake；
+    要断"至少发生了 N 路工作"请用 `task_count_at_least`。
+    """
     got = len(_tasks(turn))
     return got == n, f"task 数 = {got}（期望 {n}）：{_fmt_tasks(turn)}"
+
+
+@_reg
+def check_task_count_at_least(run: dict, turn: dict, n: int) -> Result:
+    """task 数 **≥ n** —— 下界，用来压"至少发生了 N 路工作"（并发测试那类）。
+
+    ⚠️ 它断的**仍然是模型的行为**（派几个由它定），但下界比精确值稳得多：
+    模型多派一个不算坏事，**少派才说明这条 case 没被压到**。
+    """
+    got = len(_tasks(turn))
+    return got >= n, f"task 数 = {got}（要 ≥{n}）：{_fmt_tasks(turn)}"
 
 
 @_reg
@@ -192,15 +228,17 @@ def check_missing_includes(run: dict, turn: dict, words: list[str]) -> Result:
 
 @_reg
 def check_delegate_calls_max(run: dict, turn: dict, n: int) -> Result:
-    """到该轮为止，主 agent 一共发了几次 `delegate` —— 验"不重复委派"。"""
+    """到该轮为止，主 agent 一共发了几次 `delegate` —— 验"不重复委派"。
+
+    ⚠️ **上界**：断的是模型的行为，会 flake。但方向是合理的 ——
+    少派不算坏事（"该不该派"由 `task_stages` 兜），**多派才是 bug**（S14 重复委派）。
+
+    📌 **原来还有一条 `delegate_calls_exact`（精确次数），2026-11-02 删了** ——
+    "正好派 1 次"是中段值，模型不派（0 次）时它反而**不报**，
+    而"该派没派"该由 `task_stages` 报。上界 + 目标状态两条合起来覆盖更全、也更稳。
+    """
     got = sum(len(t.get("delegate_calls") or []) for t in run["turns"][: turn["turn"]])
     return got <= n, f"delegate 调用 {got} 次（上限 {n}）"
-
-
-@_reg
-def check_delegate_calls_exact(run: dict, turn: dict, n: int) -> Result:
-    got = sum(len(t.get("delegate_calls") or []) for t in run["turns"][: turn["turn"]])
-    return got == n, f"delegate 调用 {got} 次（期望 {n}）"
 
 
 @_reg
@@ -455,9 +493,14 @@ def check_fault_fired(run: dict, turn: dict) -> Result:
 def check_run_task_count_over(run: dict, turn: dict, skill: str, n: int) -> Result:
     """🔬 **测试有效性**：这个技能真的被跑了几次（首跑 + 每次投递各算一次）。
 
-    用来判"这条 case 有没有压到重入路径"：如果执行器一上来把两个问题一起问了，
-    就只会有 1 次 `run_task` —— 那条"用户分两次答"的回归**根本没被触发**，
-    `task_stages: completed` 绿了也不算数。
+    ⚠️ **它断的是"模型会不会重入" —— 那是模型的自由选择，所以它脆。**
+    原来 `t3-split-answers` 用它（`n: 3`）压"答复投递"那条路，结果：
+    主 agent 自己把信息收齐了才派发，执行器**一次就干完** → 路径压根没被走到
+    → **基线臂和实验臂逐字相同地都挂这一条**（2026-11-02 实测）。
+
+    **正解不是调 n，是让平台把路造出来**：case 用 `initial_tasks` 注入一个
+    `waiting_for_input` 的 Task（见 `_child.py`），那条路就**必然**被走到；
+    要断"平台确实投递了"就用 `platform_fed_answer` —— 那条断的是**平台行为**，稳。
     """
     got = sum(1 for x in (run.get("run_tasks") or []) if x.get("skill") == skill)
     return got >= n, f"{skill} 跑了 {got} 次（要 ≥{n} 才算压到重入路径）"

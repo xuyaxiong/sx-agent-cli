@@ -30,5 +30,5 @@ checks:
   - check: no_task_stage
     stages: {quiz: [waiting_for_input, superseded]}
   # 🔴 主 agent 全程只该委派 1 次（第 1 轮）。多于 1 次 = 它在重派 = F7 复发
-  - check: delegate_calls_exact
+  - check: delegate_calls_max
     n: 1

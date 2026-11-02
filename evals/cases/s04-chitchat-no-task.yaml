@@ -8,6 +8,6 @@ turns:
 checks:
   - check: task_count
     n: 0
-  - check: delegate_calls_exact
+  - check: delegate_calls_max
     n: 0
   - check: reply_nonempty

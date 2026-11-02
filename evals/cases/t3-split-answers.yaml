@@ -24,23 +24,45 @@ skills:
       2. 拿到答复后，再问：「篇幅多长？」（半页 / 一页）
 
       **两个都拿到之前不要动笔**。缺哪个问哪个，不要自己编一个默认值。
+# 🔴 **平台造路**（2026-11-02）：直接注入一个"等用户答复"的 Task，
+# 于是"**答复投递（重入）**"那条路径**从第 1 轮起就必然被走到** ——
+# 不用再指望"执行器先问一轮"（那是模型的自由选择）。
+#
+# 为什么改成这样：原来靠 `run_task_count_over: 3` 判"有没有压到重入路径"，
+# 实测两臂**逐字相同地都挂这一条** —— 主 agent 自己在第 2、3 轮把信息收齐了才派发，
+# 执行器**一次就干完**，那条路径压根没被走到。**有效性不该押在模型的自由选择上。**
+# 判据见 `evals/checks.py` 顶部。
+initial_tasks:
+  - id: t-injected
+    skill: product-brief
+    task: 为「智学笔」撰写一份产品说明
+    stage: waiting_for_input          # ← 关键：一上来就是"等用户答复"
+    artifacts: []
+    refs: []
+    report: 你希望这份产品说明是什么风格？（简洁 / 详细 / 活泼）
+    progress: 已确认产品与目标受众
+    missing: [风格, 篇幅]
+    answers: []
+    agent_answer: ""
+    agent_tried: false
+    # 用户第 1 轮的原话（平台硬搬进交接书的那份快照）—— 注入的 Task 也得带上，
+    # 否则交接书里缺【用户原话】段，和真实路径对不上
+    user_turns:
+      - n: 1
+        text: 帮我写一份产品说明。产品：智学笔，一支能实时翻译的智能笔，面向学生和家长。
+    based_on: [1]
+
 turns:
-  # ⚠️ 首轮**必须给足信息**：第一版只写"帮我写一份产品说明"，主 agent 判断"没法动手"，
-  # 三轮都在自己问用户"产品叫什么"、**一次都没派发**（F3 那条路径）——
-  # 这条 case 要压的是**重入**，不是"主 agent 会不会派发"，所以把前提给全。
-  - "帮我写一份产品说明。产品：智学笔，一支能实时翻译的智能笔，面向学生和家长。"
+  # 用户**一次答一个** —— 每次答复都会被投给那个待答 Task（重入）
   - "风格要简洁"
   - "篇幅一页"
 checks:
   - check: task_stages
     stages: {product-brief: completed}
   - check: every_task_has_artifact
-  # 🔬 **有效性断言**：它必须真的分了两次问。
-  # 若执行器一上来把两问一起问了，就只有 1 次 run_task —— 这条回归**没被触发**，
-  # 上面那两条绿了也不算数（这是 `artifact_writes_multithreaded` 那一类断言的用法）。
-  - check: run_task_count_over
-    skill: product-brief
-    n: 3
+  # 🔴 **断平台行为**（不是模型行为）：平台有没有把用户答复投给待答任务。
+  # 它替代了原来那条脆的 `run_task_count_over` —— 那条断的是"模型会不会重入"。
+  - check: platform_fed_answer
 soft:
   # 用户在轮 2 已经答过风格，再问就是 F15 复发
   - check: no_repeat_question

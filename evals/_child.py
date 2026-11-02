@@ -63,7 +63,18 @@ def run_case(case: dict, rep: int, out_dir: Path | None = None) -> dict:
     try:
         for i, user in enumerate(case["turns"], 1):
             t1 = time.time()
-            state = graph.invoke({"messages": [HumanMessage(user)], "log": []}, config)
+            init: dict = {"messages": [HumanMessage(user)], "log": []}
+            # 🔴 **平台造路**（2026-11-02）：case 可以往**第 1 轮**的初始 state 里注入 Task
+            # （典型是 `stage: waiting_for_input` 的），于是"答复投递 / 重入"那条路径
+            # **必然**被走到 —— 不用再指望"执行器先问一轮"。
+            #
+            # 为什么必须这么干：指望模型走某条路 = 把 case 的有效性押在**它的自由选择**上，
+            # 那条断言必然脆（`t3-split-answers` 的 `run_task_count_over: 3` 就是这么挂的：
+            # 主 agent 自己把信息收齐了才派发，执行器一次就干完，路径压根没被走到）。
+            # 判据见 `checks.py` 顶部。
+            if i == 1 and case.get("initial_tasks"):
+                init["tasks"] = case["initial_tasks"]
+            state = graph.invoke(init, config)
             turns.append(snapshot(state, user, seen, i, round(time.time() - t1, 1)))
             seen = len(state.get("messages") or [])
     except Exception as e:  # noqa: BLE001
