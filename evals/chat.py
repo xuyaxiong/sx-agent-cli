@@ -545,11 +545,9 @@ def main() -> None:
     # ⚠️ 返回的是"做了什么"（建目录 / 放技能），但**只有"放了技能"值得告诉用户** ——
     # "建目录"是内部事务，说了只是噪音。措辞也换成人话（不提目录名）。
     created = ensure_app_dirs()
-    seed_notes = (
-        ["已放入 3 个示例技能 —— 你也可以自己往 skills 文件夹里加。"]
-        if any("示例技能" in c for c in created)
-        else []
-    )
+    # ⚠️ 数字**由 `ensure_app_dirs` 报**，别写死 —— 原来硬编码"3 个"，
+    # 而 `evals/skills/` 里早就是 5 个包了（2026-11-02 空跑时发现：嘴上说 3、实际铺 5）。
+    seed_note = next((c for c in created if "示例技能" in c), "")
 
     # 技能来自**文件夹**（不再绑 case）—— 用户 2026-10-30：*"有一个文件夹里面有各种 skill
     # cli 启动时候自动注入文件夹里面的全部 skill"*。case 那套是跑批用的（预置 turns + 断言），
@@ -598,9 +596,9 @@ def main() -> None:
     print(f"记录   {out_dir}")
     print(BAR)
     print("直接说你要什么。退出：Ctrl-C 或 exit。\n")
-    if seed_notes:
+    if seed_note:
         # 只在打包后首次运行有（开发态目录本来就在）—— 用户得知道技能从哪来。
-        print(f"  {seed_notes[0]}\n")
+        print(f"  {seed_note} —— 你也可以自己往 skills 文件夹里加。\n")
 
     turns: list[dict] = []
     seen_len = 0
