@@ -426,9 +426,18 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
     refs = ""
     have = skill_file_index_lines(skill.name)
     if have:
+        # 🔴 **必须把 `skill_name` 写进去**（2026-11-02 实测踩到）：清单里只有路径，
+        # 而 `read_skill_file(skill_name, path)` 的**第一个参数是技能名** ——
+        # 不写，执行器就只能**猜**：实测它试了「课堂活动配置生成」「classroom-activity-config」
+        # 「activity-config」「config」四个变体，全返回"没有自带文件"，
+        # 卡了 121 秒后放弃，反过来问用户"这个技能的确切名称是什么"。
+        # ⚠️ 这个坑只在"**技能包有 references 且活是委派出去的**"时才出现 ——
+        # 走委派的现有技能都没有 references，有 references 的真技能又被主 agent 自己干了，
+        # 所以一直没暴露；`EXEC_PATH=delegate` 一开，第一次跑就撞上。
         refs = (
-            "\n\n【技能自带文件】要用哪一份就用 `read_skill_file` 读全文"
-            "（路径照抄，**不要凭文件名猜内容**）：\n" + "\n".join(have)
+            f"\n\n【技能自带文件】要用哪一份就用 `read_skill_file` 读全文 ——"
+            f"**`skill_name` 传「{skill.name}」**，`path` 照抄下面的清单"
+            "（**不要凭文件名猜内容**）：\n" + "\n".join(have)
         )
     task_text = f"【能力指令】\n{skill.instructions}{refs}\n\n【已知信息】\n{briefing_text}"
 

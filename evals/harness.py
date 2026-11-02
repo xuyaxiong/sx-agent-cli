@@ -261,6 +261,12 @@ def install(case: dict) -> dict:
     proto.executor.run_task = rec_run_task
     proto.agent.run_task = rec_run_task
 
+    # ④ 执行路径开关（case 可选）—— 默认 `"auto"`（两条路都开，产品行为）。
+    # 🔴 **它是"平台造路"**：想验"执行器的正文交付"就得先让委派**真的发生**，
+    # 而"走哪条路"是模型的自由选择 —— 靠碰运气压路径的断言必然脆。
+    # 见 `proto/agent.EXEC_PATH` 的 docstring。
+    proto.agent.EXEC_PATH = str(case.get("exec_path") or "auto")
+
     # ④ token / 调用计数 —— 三处值导入一起换
     counter = UsageCounter()
     orig_get_model = proto.config.get_model

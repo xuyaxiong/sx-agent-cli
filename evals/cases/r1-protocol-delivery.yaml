@@ -1,0 +1,36 @@
+id: r1-protocol-delivery
+family: 真实技能
+why: >
+  真技能 `zhiwo-ai-multi-role-agent-builder` 的交付物是**回复正文里的协议块**
+  （`@@SXW_PLAN_START/END` 包方案、`@@SXW_*_START/END` 包六类配置），**不落库** ——
+  "平台的方案卡片与配置写入**只认回复正文里的这些边界标记，产物通道对它无效**"。
+  这条 case 验的就是：**块能不能原样到用户手上**（块被改写一个字符，平台就解析不到 = 等于没交付）。
+realism: >
+  用户在真实产品里踩过 —— "这个 skill 执行带来的一些不稳定的问题"。
+  架构上的嫌疑点：① 执行器的块写在倒数第二条时，`report` 只取最后一条 → 块丢；
+  ② 主 agent 转述而非原样转达（那只是提示词）；③ `_MAIN_PROMPT` 的"回复用户时的硬要求"
+  要求报"产物 ID / 文件路径"—— **正文交付这两样都不存在**，模型只能自己发挥。
+tier: full
+# ⚠️ 依赖 `evals/skills/zhiwo-ai-multi-role-agent-builder/`（**未入库**的真实技能样例，
+# 见 `.gitignore`）。换机器跑之前先把那个包拷进 `evals/skills/`。
+skills_dir: evals/skills
+skills_mode: replace
+turns:
+  # 照 SKILL.md 自己给的例子写（信息给全 → 技能规则是"已选情境不重复询问"）
+  - "我想搭建一个面向「小学」学生的「数学」学科的AI学伴智能体，名字是「测试skill」，我希望这个智能体使用的教学情境以「讲解释疑」为主，请你帮我设计一下这个AI学伴智能体"
+  - "可以，按这个来，帮我生成配置"
+  - "好的，谢谢"
+checks:
+  - check: no_exception
+  # 正文交付**不该落库** —— 不变量（技能明写"不交成产物"）
+  - check: artifact_count
+    n: 0
+  # 🔴 **核心目标**：协议块必须到用户手上（断"交付到没到"，不是断"走了哪条路"）
+  - check: reply_contains
+    at: 1
+    subs: ["@@SXW_PLAN_START", "@@SXW_PLAN_END"]
+  # 确认之后要出正式配置（系统提示词 + 开场白是**必出**的两块）
+  - check: reply_contains
+    at: 2
+    subs: ["@@SXW_SYSTEM_PROMPT_START", "@@SXW_SYSTEM_PROMPT_END",
+           "@@SXW_OPENING_MESSAGE_START", "@@SXW_OPENING_MESSAGE_END"]

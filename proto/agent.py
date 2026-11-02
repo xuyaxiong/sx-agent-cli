@@ -562,15 +562,57 @@ def delegate(
 
 # ──────────────────────────── 装配 ────────────────────────────
 
+#: **执行路径开关** —— 主 agent 到底"自己干"还是"派出去"。
+#:
+#:   - `"auto"`（**默认，产品行为**）：两条路都开，由它自己选
+#:   - `"delegate"` **强制委派**：裁掉"自己干"的工具（`write_artifact` /
+#:     `read_skill` / `read_skill_file`）→ 它**拿不到原料**，只能派出去
+#:   - `"inline"` **强制主 agent 自己干**：**不给 `delegate`** → 工具不存在，它调不了
+#:
+#: 🔴 **为什么要这个开关**（用户 2026-11-02）：跑批时想验某条链路，只能**碰运气**
+#: 碰上一个模型愿意走那条路的 case —— 而"走哪条路"是**模型的自由选择**，
+#: 于是那条断言必然脆（判据见 `evals/checks.py` 顶部）。
+#: 有了开关，**测哪条就开哪条**，不用再"妄图正好有一条符合路径的 case"。
+#:
+#: ⚠️ **两档的硬度不一样**，别当成一回事：
+#:   - `"inline"` 是**全硬**的 —— `delegate` 工具根本不存在，它调不了。
+#:   - `"delegate"` 是**半硬**的 —— 裁掉工具能拿掉它的原料（读不到技能、写不了产物），
+#:     但**挡不住它在回复里直接写**。所以这一档还要配一句系统提示（`_MODE_NOTE`），
+#:     并且跑批时用 `task_count_at_least` 盯着"到底派没派"。
+EXEC_PATH = "auto"
+
+#: 三种模式各给哪些工具。⚠️ 改这里时想清楚**拿掉某个工具会不会顺手拿掉一条合法能力**。
+_TOOLS: dict[str, list] = {
+    "auto": [delegate, write_artifact, read_artifact, list_artifacts, read_skill, read_skill_file],
+    "delegate": [delegate, list_artifacts],
+    "inline": [write_artifact, read_artifact, list_artifacts, read_skill, read_skill_file],
+}
+
+#: 非默认模式下，往系统提示里补一句 —— 工具集变了，得让它知道**为什么**。
+_MODE_NOTE: dict[str, str] = {
+    "delegate": (
+        "\n\n🔴 **本轮强制委派**：专业能力的活**一律**用 `delegate` 派出去，"
+        "**不要自己在回复里写成品** —— 你手边既没有产出工具，也没有技能原文。"
+    ),
+    "inline": (
+        "\n\n🔴 **本轮不委派**：你手边**没有 `delegate` 工具**，"
+        "专业能力的活自己按能力清单和技能原文做。"
+    ),
+}
+
 
 def build_agent(state_schema: type) -> Any:
-    """主 agent：一个完整的 agent（工具 + 循环）。"""
+    """主 agent：一个完整的 agent（工具 + 循环）。
+
+    ⚠️ **工具集由 `EXEC_PATH` 决定**（默认 `"auto"` = 两条路都开）。
+    """
     return create_agent(
         get_model(),
-        tools=[delegate, write_artifact, read_artifact, list_artifacts, read_skill, read_skill_file],
-        system_prompt=_MAIN_PROMPT + "\n\n可用能力：\n" + "\n".join(
-            f"- {s.name}：{s.description}" for s in SKILLS.values()
-        ),
+        tools=list(_TOOLS[EXEC_PATH]),
+        system_prompt=_MAIN_PROMPT
+        + _MODE_NOTE.get(EXEC_PATH, "")
+        + "\n\n可用能力：\n"
+        + "\n".join(f"- {s.name}：{s.description}" for s in SKILLS.values()),
         state_schema=state_schema,
         name="main_agent",
     )

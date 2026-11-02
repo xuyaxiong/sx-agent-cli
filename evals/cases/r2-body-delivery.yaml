@@ -1,0 +1,39 @@
+id: r2-body-delivery
+family: 正文交付
+why: >
+  B2 要治的那条链路：**执行器产出的是"回复正文里的协议块"**（不落库）——
+  验"**块能不能原样到用户手上**"。块被改写一个字符 / 包进代码围栏 / 只留一句
+  "已经生成好了"，平台就解析不到，**等于没交付**。
+realism: >
+  用户在真实技能 `zhiwo-ai-multi-role-agent-builder` 上踩过（"执行带来的一些不稳定的问题"）。
+  ⚠️ 那条真技能**压不到这条路** —— 实测主 agent 会自己把活干完（一次都没委派，
+  见 `r1-protocol-delivery`），所以专门造了 `evals/fixture-skills/activity-config-builder`
+  这个**一眼就该委派**的 fixture 技能（产出长 + 名字像专业能力 + 交付形态是正文块）。
+tier: smoke
+# ⚠️ fixture 技能**故意不放进 `evals/skills/`** —— 那里会被 `ensure_app_dirs`
+# 当成示例技能铺给打包后的用户（`SEED_SKILLS_DIR`）。
+skills_dir: evals/fixture-skills
+skills_mode: replace
+# 🔴 **平台造路**：强制委派 —— 这条 case 要验的就是"执行器产出正文块"那条链路，
+# 而"主 agent 会不会委派"是它的自由选择（实测默认模式下它会自己干完，
+# 见 `r1-protocol-delivery`）。开关的硬度与代价见 `proto/agent.EXEC_PATH`。
+exec_path: delegate
+turns:
+  - "帮我做一份课堂活动配置：三年级数学《分数的初步认识》，主题是「分一分」"
+checks:
+  - check: no_exception
+  # 🔬 **有效性断言**：这条 case 的全部价值就在"**委派那条链路**"上 ——
+  # 主 agent 要是自己把活干了，下面的断言绿了也不算数。
+  # ⚠️ 它断的是"模型会不会委派"（**脆**，见 `checks.py` 顶部判据）；红了先看是不是
+  # 没压到路径，别急着改代码。fixture 技能已按"一眼就该委派"设计，就是为了让它稳一点。
+  - check: task_count_at_least
+    n: 1
+  # 正文交付**不该落库** —— 不变量（技能明写"不交成产物"）
+  - check: artifact_count
+    n: 0
+  # 🔴 **核心目标**：协议块必须**到用户手上**（断"交付到没到"，不断"走了哪条路"）
+  - check: reply_contains
+    subs: ["@@CFG_START", "@@CFG_END"]
+  # 四个板块缺一不可（平台按板块解析，缺一个整块作废）
+  - check: reply_contains
+    subs: ["### 一、活动名称", "### 二、活动目标", "### 三、活动流程", "### 四、评价要点"]

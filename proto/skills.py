@@ -133,8 +133,10 @@ def read_skill(skill_name: str) -> str:
 
     files = skill_file_index_lines(skill.name)
     if files:
+        # ⚠️ 同 `executor.run_task`：**`skill_name` 要写进清单**（调用方的第一个参数就是它）
         out += (
-            "\n\n【技能自带文件】要用哪一份就用 `read_skill_file` 读全文"
-            "（路径照抄，**不要凭文件名猜内容**）：\n" + "\n".join(files)
+            f"\n\n【技能自带文件】要用哪一份就用 `read_skill_file` 读全文 ——"
+            f"**`skill_name` 传「{skill.name}」**，`path` 照抄下面的清单"
+            "（**不要凭文件名猜内容**）：\n" + "\n".join(files)
         )
     return out
