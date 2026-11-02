@@ -35,7 +35,8 @@
 | 设计 / 机制变了 | `solution.md` 对应章节 | **改** |
 | 提示词改了 | **`proto/executor.py` 里的常量**（真值在代码） | 代码；只有"调优方向"变了才动 `solution.md` §十一 |
 | 新场景 / 某条场景状态变了 | `scenarios.md` **和** `evals/cases/` | **两边都改**（人读版 ↔ 可执行版） |
-| 架构图变了 | `architecture-diagram.md` + `figures/*.svg` | **改**（图**只出 SVG**） |
+| 架构图变了 | `architecture-diagram.md` + `figures/*.svg` | 🔴 **先改文档、再照它画图**（文档是唯一依据；图**只出 SVG**） |
+| 某个交接的内容变了 / 多了一处 LLM 判定 | `architecture-diagram.md` **§三 数据交接** / **§四 软判断·硬判断** | **改**（这两节是"现状说明书"的承重墙） |
 | 评审点有了新结论 | `architecture-review.md` | **改** |
 | 处事原则变了 | `principles.md` | **改** |
 
@@ -57,6 +58,9 @@
 | **每次架构迭代后跑回归** | **`scenarios.md`** —— 场景回归集 |
 | **调提示词** | **`solution.md` §十一** —— 判定机制 + 实测对比 + 可调优点 |
 | **讲清楚架构**（给人看） | **`architecture-diagram.md`** + `figures/*.svg` |
+| **查"这一跳交接了什么"** | **`architecture-diagram.md` §三** —— 13 跳逐跳的精确内容 |
+| **查"这个是 LLM 判的还是代码保证的"** | **`architecture-diagram.md` §四** —— 运行期 + 评测期两半 |
+| **查某个字段是什么** | **`architecture-diagram.md` §五 字段字典** |
 | **查某个评审点怎么定的** | **`architecture-review.md`** —— 20 个点逐条结论 |
 
 ---
@@ -84,8 +88,13 @@ README.md（本文）              入口 + **导航**（找东西 / 写东西�
 │                              三、推演过程   当时怎么推的（§ 编号保留，含已被取代的草案）
 │                              ⚠️ "修法"是建议、不等于已决；**现行设计看 `solution.md`**
 │
-├── architecture-diagram.md    架构图（ASCII）+ 20 条关键细节 + 与最初版本对比  【现行的】
-│                              ★ 讲清楚架构时看；SVG 版在 figures/
+├── architecture-diagram.md    ★ **现状说明书** —— **画图的唯一依据**  【现行的】
+│                              §一 模块划分（谁负责什么 / 依赖方向）
+│                              §二 数据如何流动（一次 invoke 的全过程）
+│                              §三 数据交接（**13 跳逐跳的精确内容**）
+│                              §四 软判断 / 硬判断（运行期 + 评测期两半）
+│                              §五 字段字典 · §六 图与生命周期 · §七 一次完整运行 · §八 对比
+│                              ★ 讲清楚架构时看；**改图先改这里**；SVG 版在 figures/
 │
 ├── architecture-review.md     外部评审反馈的逐条讨论 —— 20 个点全部有结论  【现行的】
 │                              ★ 想知道"某个设计为什么这么定"时看
@@ -187,7 +196,7 @@ README.md（本文）              入口 + **导航**（找东西 / 写东西�
 
 ```bash
 cd langgraph-lab
-uv run python -m evals.chat --case t2-same-turn   # 交互式（或直接 F5）
+uv run python -m evals.chat --skills evals/skills  # 交互式（技能来自文件夹，不再绑 case）
 uv run python -m evals.run --tag baseline         # 跑批
 uv run python -m proto                            # 裸原型（内置玩具技能）
 ```
