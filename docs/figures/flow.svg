@@ -1,146 +1,155 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 980" width="1180" height="980" font-family="Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 760" width="1400" height="760" font-family="Microsoft YaHei, PingFang SC, Noto Sans CJK SC, sans-serif">
   <defs>
     <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M 0 0 L 10 5 L 0 10 z" fill="#5F6368"/>
     </marker>
-    <marker id="aR" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#C62828"/>
+    <marker id="aO" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#EF6C00"/>
     </marker>
     <marker id="aG" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#43A047"/>
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2E7D32"/>
     </marker>
-    <marker id="aO" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#FB8C00"/>
-    </marker>
-    <marker id="aP" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8E24AA"/>
+    <marker id="aB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1565C0"/>
     </marker>
   </defs>
 
-  <rect width="1180" height="980" fill="#FFFFFF"/>
-  <text x="590" y="42" text-anchor="middle" font-size="26" font-weight="700" fill="#202124">一次请求的完整流程</text>
-  <text x="590" y="70" text-anchor="middle" font-size="14" fill="#5F6368">主 Agent 自己决定怎么做；平台在关键节点兜底</text>
+  <rect width="1400" height="760" fill="#FFFFFF"/>
+  <text x="700" y="38" text-anchor="middle" font-size="24" font-weight="700" fill="#202124">关键流程 —— 主干、三态分派、「待答」的一生</text>
+  <text x="700" y="63" text-anchor="middle" font-size="12.5" fill="#5F6368">上排：一次 invoke 的主干　｜　下排：执行器缺信息时问题怎么走完一圈（含跨轮）　｜　〔〕＝ 这一跳交接了什么</text>
 
-  <!-- 用户提问 -->
-  <rect x="430" y="96" width="320" height="50" rx="25" fill="#E8F0FE" stroke="#4285F4" stroke-width="1.8"/>
-  <text x="590" y="127" text-anchor="middle" font-size="17" font-weight="600" fill="#174EA6">用户提问</text>
-  <line x1="590" y1="146" x2="590" y2="180" stroke="#5F6368" stroke-width="1.8" marker-end="url(#a)"/>
+  <!-- 图例 -->
+  <rect x="70" y="80" width="1260" height="28" rx="6" fill="#FAFAFA" stroke="#E0E0E0"/>
+  <line x1="88" y1="94" x2="118" y2="94" stroke="#5F6368" stroke-width="2.4"/>
+  <text x="126" y="99" font-size="11.5" fill="#5F6368">主干前进</text>
+  <line x1="222" y1="94" x2="252" y2="94" stroke="#EF6C00" stroke-width="2.4"/>
+  <text x="260" y="99" font-size="11.5" fill="#EF6C00">① 执行器在等 → 进下排</text>
+  <line x1="486" y1="94" x2="516" y2="94" stroke="#2E7D32" stroke-width="2.4"/>
+  <text x="524" y="99" font-size="11.5" fill="#2E7D32">② 试答答得上 → 回执行器重跑</text>
+  <line x1="762" y1="94" x2="792" y2="94" stroke="#1565C0" stroke-width="2.4"/>
+  <text x="800" y="99" font-size="11.5" fill="#1565C0">③ 用户答复 → <tspan font-weight="600">直接回执行器（不经主 agent）</tspan></text>
 
-  <!-- 主 Agent 判断 -->
-  <rect x="330" y="184" width="520" height="62" rx="12" fill="#FFF8F0" stroke="#FB8C00" stroke-width="2"/>
-  <text x="590" y="211" text-anchor="middle" font-size="16.5" font-weight="700" fill="#E65100">主 Agent 判断：这件事该怎么做？</text>
-  <text x="590" y="233" text-anchor="middle" font-size="12" fill="#8D6E63">看得到：对话历史 + 平台注入的任务台账</text>
+  <text x="60" y="132" font-size="13" font-weight="700" fill="#616161">主干（一次 invoke）</text>
 
-  <path d="M 400 246 L 400 282 L 190 282 L 190 316" fill="none" stroke="#5F6368" stroke-width="1.8" marker-end="url(#a)"/>
-  <path d="M 590 246 L 590 316" fill="none" stroke="#5F6368" stroke-width="1.8" marker-end="url(#a)"/>
-  <path d="M 790 246 L 790 282 L 985 282 L 985 316" fill="none" stroke="#5F6368" stroke-width="1.8" marker-end="url(#a)"/>
+  <!-- ═══════════ 上排：主干 ═══════════ -->
+  <rect x="60" y="140" width="1280" height="240" rx="12" fill="#FCFCFC" stroke="#E0E0E0" stroke-width="1.2"/>
 
-  <rect x="60" y="320" width="260" height="100" rx="10" fill="#FFFFFF" stroke="#90CAF9" stroke-width="1.6"/>
-  <text x="190" y="350" text-anchor="middle" font-size="15.5" font-weight="600" fill="#1565C0">① 直接回答</text>
-  <text x="190" y="375" text-anchor="middle" font-size="12" fill="#5F6368">闲聊 / 追问 / 澄清</text>
-  <text x="190" y="395" text-anchor="middle" font-size="12" fill="#5F6368">不需要专业能力的事</text>
-  <text x="190" y="412" text-anchor="middle" font-size="11.5" font-weight="600" fill="#43A047">不建 Task，立刻回复</text>
+  <rect x="80" y="190" width="130" height="56" rx="26" fill="#E8F0FE" stroke="#4285F4" stroke-width="1.8"/>
+  <text x="145" y="214" text-anchor="middle" font-size="13" font-weight="600" fill="#174EA6">用户提问</text>
+  <text x="145" y="232" text-anchor="middle" font-size="9" fill="#1565C0">一次 invoke 的起点</text>
+  <line x1="212" y1="218" x2="232" y2="218" stroke="#5F6368" stroke-width="1.8" marker-end="url(#a)"/>
 
-  <rect x="460" y="320" width="260" height="100" rx="10" fill="#FFFFFF" stroke="#90CAF9" stroke-width="1.6"/>
-  <text x="590" y="350" text-anchor="middle" font-size="15.5" font-weight="600" fill="#1565C0">② 自己产出短内容</text>
-  <text x="590" y="375" text-anchor="middle" font-size="12" fill="#5F6368">说明 / 对比表 …</text>
-  <text x="590" y="395" text-anchor="middle" font-size="12" fill="#5F6368">写进产物库</text>
-  <text x="590" y="412" text-anchor="middle" font-size="11.5" font-weight="600" fill="#43A047">不建 Task</text>
+  <rect x="234" y="190" width="130" height="56" rx="8" fill="#E8F5E9" stroke="#43A047" stroke-width="1.6"/>
+  <text x="299" y="214" text-anchor="middle" font-size="12" fill="#1B5E20">prepare 🔒</text>
+  <text x="299" y="232" text-anchor="middle" font-size="9" fill="#2E7D32">建 / 更新任务台账</text>
+  <line x1="366" y1="218" x2="386" y2="218" stroke="#5F6368" stroke-width="1.8" marker-end="url(#a)"/>
 
-  <rect x="855" y="320" width="260" height="100" rx="10" fill="#FFFFFF" stroke="#FB8C00" stroke-width="2.2"/>
-  <text x="985" y="350" text-anchor="middle" font-size="15.5" font-weight="600" fill="#E65100">③ 委派执行</text>
-  <text x="985" y="375" text-anchor="middle" font-size="12" fill="#5F6368">需要专业能力时</text>
-  <text x="985" y="395" text-anchor="middle" font-size="12" fill="#5F6368">交给隔离的执行器</text>
-  <text x="985" y="412" text-anchor="middle" font-size="11.5" font-weight="600" fill="#C62828">建 Task</text>
+  <rect x="388" y="190" width="130" height="56" rx="8" fill="#FFF8F0" stroke="#FB8C00" stroke-width="2" stroke-dasharray="7 4"/>
+  <text x="453" y="214" text-anchor="middle" font-size="12" font-weight="600" fill="#E65100">主 agent 🧠</text>
+  <text x="453" y="232" text-anchor="middle" font-size="9" fill="#8D6E63">三条出路自己选</text>
+  <line x1="520" y1="218" x2="540" y2="218" stroke="#5F6368" stroke-width="1.8" marker-end="url(#a)"/>
 
-  <line x1="985" y1="420" x2="985" y2="456" stroke="#5F6368" stroke-width="1.8" marker-end="url(#a)"/>
+  <rect x="542" y="190" width="130" height="56" rx="8" fill="#F1F8E9" stroke="#7CB342" stroke-width="1.8"/>
+  <text x="607" y="214" text-anchor="middle" font-size="12" fill="#33691E">delegate 🔒</text>
+  <text x="607" y="232" text-anchor="middle" font-size="9" fill="#33691E">试答 → 建 Task → 派发</text>
+  <line x1="674" y1="218" x2="694" y2="218" stroke="#5F6368" stroke-width="1.8" marker-end="url(#a)"/>
 
-  <!-- ══════════ delegate 内部 ══════════ -->
-  <rect x="330" y="460" width="790" height="480" rx="14" fill="#F1F8E9" stroke="#7CB342" stroke-width="2" stroke-dasharray="7 4"/>
-  <text x="356" y="490" font-size="16.5" font-weight="700" fill="#33691E">delegate 内部 —— 平台保证的几步（Agent 想跳过也跳不过）</text>
+  <rect x="696" y="190" width="390" height="56" rx="8" fill="#E8F5E9" stroke="#43A047" stroke-width="2"/>
+  <text x="891" y="208" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1B5E20">执行器：干活 → 判定三态 🧠（最多 3 轮）</text>
+  <text x="891" y="226" text-anchor="middle" font-size="10" fill="#2E7D32">每次收到交接书〔任务＋用户原话＋上次进度/缺失项＋历次答复＋产物清单〕</text>
+  <text x="891" y="241" text-anchor="middle" font-size="10" fill="#2E7D32">判 incomplete → 推回去〔进度＋缺失项〕，不要从头再来</text>
+  <line x1="1088" y1="218" x2="1108" y2="218" stroke="#5F6368" stroke-width="1.8" marker-end="url(#a)"/>
 
-  <!-- (1) 取代旧的 -->
-  <rect x="740" y="504" width="340" height="48" rx="8" fill="#FFFFFF" stroke="#AED581" stroke-width="1.4"/>
-  <text x="910" y="525" text-anchor="middle" font-size="13" font-weight="600" fill="#33691E">(1) 取代同技能旧的未了结 Task</text>
-  <text x="910" y="543" text-anchor="middle" font-size="11" fill="#5F6368">标记为 superseded，台账里不再挂着它</text>
-  <line x1="910" y1="552" x2="910" y2="572" stroke="#5F6368" stroke-width="1.6" marker-end="url(#a)"/>
+  <rect x="1110" y="190" width="120" height="56" rx="8" fill="#E8F5E9" stroke="#43A047" stroke-width="1.6"/>
+  <text x="1170" y="214" text-anchor="middle" font-size="12" fill="#1B5E20">finalize 🔒</text>
+  <text x="1170" y="232" text-anchor="middle" font-size="9" fill="#2E7D32">决定回给用户什么</text>
+  <line x1="1232" y1="218" x2="1252" y2="218" stroke="#5F6368" stroke-width="1.8" marker-end="url(#a)"/>
 
-  <!-- (2) 执行器 -->
-  <rect x="740" y="576" width="340" height="48" rx="8" fill="#E8F5E9" stroke="#43A047" stroke-width="1.6"/>
-  <text x="910" y="597" text-anchor="middle" font-size="13" font-weight="600" fill="#1B5E20">(2) 执行器干活（独立上下文）</text>
-  <text x="910" y="615" text-anchor="middle" font-size="11" fill="#2E7D32">读 skill 指令 · 跑工具 · 产出成品</text>
-  <line x1="910" y1="624" x2="910" y2="646" stroke="#5F6368" stroke-width="1.6" marker-end="url(#a)"/>
+  <rect x="1254" y="190" width="70" height="56" rx="8" fill="#F3E5F5" stroke="#8E24AA" stroke-width="1.6"/>
+  <text x="1289" y="223" text-anchor="middle" font-size="12" fill="#4A148C">END</text>
 
-  <!-- (3) 判定 -->
-  <rect x="740" y="650" width="340" height="56" rx="8" fill="#FFFDE7" stroke="#FBC02D" stroke-width="1.8"/>
-  <text x="910" y="672" text-anchor="middle" font-size="13.5" font-weight="600" fill="#F57F17">(3) 判定：任务完成了吗？（三态）</text>
-  <text x="910" y="692" text-anchor="middle" font-size="11" fill="#5F6368">依据：skill 指令 + 已给的信息 + 产出 + 产物数量</text>
+  <!-- 三态分派（执行器的扇出，紧贴其下） -->
+  <!-- 汇流线：三态各自上行 → 汇成一条总线 → 从 delegate 的工具返回口回到主 agent -->
+  <path d="M 607 268 L 1080 268" fill="none" stroke="#5F6368" stroke-width="1.6" stroke-dasharray="6 4"/>
+  <path d="M 607 268 L 607 250" fill="none" stroke="#5F6368" stroke-width="1.6" marker-end="url(#a)"/>
+  <path d="M 720 286 L 720 268" fill="none" stroke="#5F6368" stroke-width="1.6" stroke-dasharray="6 4"/>
+  <path d="M 900 286 L 900 268" fill="none" stroke="#5F6368" stroke-width="1.6" stroke-dasharray="6 4"/>
+  <path d="M 1080 286 L 1080 268" fill="none" stroke="#5F6368" stroke-width="1.6" stroke-dasharray="6 4"/>
+  <text x="80" y="272" font-size="10.5" fill="#616161">执行器判定三态后 —— 三态各自包成一条 <tspan font-weight="600">ToolMessage</tspan>，从 delegate 的工具返回口<tspan font-weight="600">回到主 agent</tspan>：</text>
 
-  <!-- 出口 A：completed → 交付 -->
-  <line x1="740" y1="678" x2="618" y2="678" stroke="#43A047" stroke-width="1.8" marker-end="url(#aG)"/>
-  <text x="679" y="671" text-anchor="middle" font-size="10" font-weight="600" fill="#43A047">completed</text>
-  <rect x="358" y="650" width="250" height="56" rx="8" fill="#E8F5E9" stroke="#43A047" stroke-width="1.8"/>
-  <text x="483" y="672" text-anchor="middle" font-size="13.5" font-weight="600" fill="#1B5E20">✅ 交付</text>
-  <text x="483" y="692" text-anchor="middle" font-size="11" fill="#2E7D32">主 Agent 只拿到编号 + 摘要</text>
+  <rect x="640" y="290" width="160" height="38" rx="7" fill="#E8F5E9" stroke="#43A047" stroke-width="1.5"/>
+  <text x="720" y="308" text-anchor="middle" font-size="11.5" font-weight="600" fill="#1B5E20">completed</text>
+  <text x="720" y="322" text-anchor="middle" font-size="9.5" fill="#2E7D32">→ 已交付 art_00X ＋ 路径</text>
 
-  <!-- 出口 B：waiting_for_input → (4) 试答 → (5) 待答 -->
-  <line x1="910" y1="706" x2="910" y2="740" stroke="#FB8C00" stroke-width="1.8" marker-end="url(#aO)"/>
-  <text x="922" y="727" font-size="10" font-weight="600" fill="#FB8C00">waiting_for_input</text>
+  <rect x="820" y="290" width="160" height="38" rx="7" fill="#FFFDE7" stroke="#FBC02D" stroke-width="1.8"/>
+  <text x="900" y="308" text-anchor="middle" font-size="11.5" font-weight="600" fill="#F57F17">waiting_for_input</text>
+  <text x="900" y="322" text-anchor="middle" font-size="9.5" fill="#5F6368">→ 平台登记待答 ＋ ① 进下排</text>
 
-  <rect x="740" y="744" width="340" height="52" rx="8" fill="#FFF8F0" stroke="#FB8C00" stroke-width="1.8"/>
-  <text x="910" y="766" text-anchor="middle" font-size="13" font-weight="600" fill="#E65100">(4) 平台强制：先让主 Agent 试答</text>
-  <text x="910" y="785" text-anchor="middle" font-size="10" fill="#8D6E63">用它的完整上下文 + 进度 + 缺失项　·　答得上就带补充重试</text>
+  <rect x="1000" y="290" width="160" height="38" rx="7" fill="#FFEBEE" stroke="#E53935" stroke-width="1.5"/>
+  <text x="1080" y="308" text-anchor="middle" font-size="11.5" font-weight="600" fill="#B71C1C">incomplete ×3</text>
+  <text x="1080" y="322" text-anchor="middle" font-size="9.5" fill="#5F6368">→ failed（跑了 N 轮仍没完成）</text>
 
-  <line x1="910" y1="796" x2="910" y2="822" stroke="#C62828" stroke-width="1.8" marker-end="url(#aR)"/>
-  <text x="922" y="813" font-size="10" font-weight="600" fill="#C62828">答不上</text>
+  <text x="80" y="358" font-size="10.5" fill="#757575">三条出路里的「直接答 / 自己产出」不建 Task，跳过 delegate 直达 finalize（本图只画委派那条）</text>
 
-  <rect x="740" y="826" width="340" height="52" rx="8" fill="#FFEBEE" stroke="#E53935" stroke-width="1.8"/>
-  <text x="910" y="848" text-anchor="middle" font-size="13" font-weight="600" fill="#B71C1C">(5) 登记待答 → 主 Agent 问用户</text>
-  <text x="910" y="867" text-anchor="middle" font-size="10" fill="#5F6368">平台兜底：没问出去就补上，保证不丢</text>
+  <!-- ═══════════ 三条连接线，各走各的道 ═══════════ -->
+  <!-- ① 去程：waiting → 下排试答（走中段通道） -->
+  <path d="M 900 328 L 900 410 L 200 410 L 200 498" fill="none" stroke="#EF6C00" stroke-width="2.2" marker-end="url(#aO)"/>
+  <text x="550" y="402" text-anchor="middle" font-size="11" font-weight="600" fill="#EF6C00">① 执行器缺信息 → 问题交给平台去处理（主 agent 不再参与）</text>
 
-  <!-- 出口 C：incomplete → (6) 推回去 -->
-  <path d="M 756 706 L 756 734 L 668 734 L 668 788 L 610 788"
-        fill="none" stroke="#C62828" stroke-width="1.8" marker-end="url(#aR)"/>
-  <text x="704" y="766" text-anchor="middle" font-size="10" font-weight="600" fill="#C62828">incomplete</text>
+  <!-- ② 回程：试答答得上 → 执行器（走左边距 + 上沿通道） -->
+  <path d="M 70 526 L 36 526 L 36 158 L 780 158 L 780 188" fill="none" stroke="#2E7D32" stroke-width="2.2" marker-end="url(#aG)"/>
+  <text x="408" y="176" text-anchor="middle" font-size="11" font-weight="600" fill="#2E7D32">② 试答答得上 → 〔主 agent 补充〕标来源后写进交接书，执行器重跑</text>
 
-  <rect x="358" y="744" width="250" height="150" rx="8" fill="#FFEBEE" stroke="#C62828" stroke-width="1.8"/>
-  <text x="483" y="770" text-anchor="middle" font-size="13" font-weight="700" fill="#B71C1C">(6) incomplete —— 不许它停</text>
-  <line x1="380" y1="780" x2="586" y2="780" stroke="#EF9A9A" stroke-width="1"/>
-  <text x="483" y="802" text-anchor="middle" font-size="11" fill="#5F6368">判定给出 progress / missing</text>
-  <text x="483" y="822" text-anchor="middle" font-size="11" fill="#5F6368">带回给它，让它「接着做」</text>
-  <text x="483" y="842" text-anchor="middle" font-size="11" fill="#5F6368">而不是从头再来</text>
-  <text x="483" y="870" text-anchor="middle" font-size="11" font-weight="600" fill="#B71C1C">最多 3 轮</text>
-  <text x="483" y="888" text-anchor="middle" font-size="10.5" fill="#5F6368">推满仍不行 → 交给主 Agent</text>
+  <!-- ③ 回程：答复投递 → 执行器（走右边距 + 上沿通道，绕开 END 框） -->
+  <path d="M 1332 526 L 1360 526 L 1360 176 L 1000 176 L 1000 188" fill="none" stroke="#1565C0" stroke-width="2.4" marker-end="url(#aB)"/>
+  <text x="1180" y="166" text-anchor="middle" font-size="11" font-weight="600" fill="#1565C0">③ 答复直接投回执行器（不经主 agent）</text>
 
-  <!-- 回环：(6) → (2) -->
-  <path d="M 483 894 L 483 924 L 342 924 L 342 600 L 736 600"
-        fill="none" stroke="#8E24AA" stroke-width="1.8" marker-end="url(#aP)"/>
-  <text x="354" y="590" font-size="10.5" font-weight="600" fill="#8E24AA">回到 (2) 重新执行</text>
+  <!-- ═══════════ 下排：「待答」的一生 ═══════════ -->
+  <rect x="60" y="460" width="1280" height="160" rx="12" fill="#FFFDF5" stroke="#FBC02D" stroke-width="1.4"/>
+  <text x="70" y="482" font-size="12.5" font-weight="700" fill="#F57F17">「待答」的一生</text>
 
-  <!-- 左侧：设计决策 -->
-  <rect x="40" y="460" width="266" height="480" rx="12" fill="#FAFAFA" stroke="#BDBDBD" stroke-width="1.4"/>
-  <text x="173" y="490" text-anchor="middle" font-size="16" font-weight="700" fill="#424242">四条设计原则</text>
-  <line x1="66" y1="506" x2="280" y2="506" stroke="#E0E0E0" stroke-width="1"/>
+  <rect x="70" y="500" width="180" height="52" rx="8" fill="#FFF8F0" stroke="#FB8C00" stroke-width="2" stroke-dasharray="7 4"/>
+  <text x="160" y="518" text-anchor="middle" font-size="11.5" font-weight="700" fill="#E65100">(4) 强制试答 🧠</text>
+  <text x="160" y="534" text-anchor="middle" font-size="9" fill="#8D6E63">〔能力名＋任务＋执行器原话</text>
+  <text x="160" y="546" text-anchor="middle" font-size="9" fill="#8D6E63">＋进度/缺失项＋最近 10 条消息〕</text>
 
-  <text x="62" y="538" font-size="12.5" font-weight="600" fill="#1565C0">① 理解要柔性，状态要硬</text>
-  <text x="62" y="558" font-size="10.5" fill="#5F6368">不解析参数，原话转给执行器</text>
-  <text x="62" y="578" font-size="10.5" fill="#5F6368">但状态由代码写，不由模型写</text>
+  <line x1="252" y1="526" x2="270" y2="526" stroke="#5F6368" stroke-width="1.6" marker-end="url(#a)"/>
+  <text x="261" y="493" text-anchor="middle" font-size="9.5" font-weight="600" fill="#C62828">答不上</text>
+  <rect x="272" y="500" width="170" height="52" rx="8" fill="#FFFDE7" stroke="#FBC02D" stroke-width="1.8"/>
+  <text x="357" y="520" text-anchor="middle" font-size="11.5" font-weight="600" fill="#F57F17">登记待答</text>
+  <text x="357" y="538" text-anchor="middle" font-size="9" fill="#5F6368">Task.stage =</text>
+  <text x="357" y="549" text-anchor="middle" font-size="9" fill="#5F6368">waiting_for_input</text>
 
-  <text x="62" y="612" font-size="12.5" font-weight="600" fill="#1565C0">② 不发明新协议</text>
-  <text x="62" y="632" font-size="10.5" fill="#5F6368">能用现有事实判断的，不加新字段</text>
-  <text x="62" y="652" font-size="10.5" fill="#5F6368">skill 只有 description + instructions</text>
+  <line x1="444" y1="526" x2="462" y2="526" stroke="#5F6368" stroke-width="1.6" marker-end="url(#a)"/>
+  <rect x="464" y="500" width="190" height="52" rx="8" fill="#E8F5E9" stroke="#43A047" stroke-width="1.6"/>
+  <text x="559" y="520" text-anchor="middle" font-size="11" fill="#1B5E20">finalize 🔒 原样贴出</text>
+  <text x="559" y="538" text-anchor="middle" font-size="9" fill="#5F6368">〔执行器原话〕无条件，不判断</text>
 
-  <text x="62" y="686" font-size="12.5" font-weight="600" fill="#1565C0">③ 平台管机制，skill 管业务</text>
-  <text x="62" y="706" font-size="10.5" fill="#5F6368">"哪些参数必答"写在 skill 里</text>
-  <text x="62" y="726" font-size="10.5" fill="#5F6368">平台不猜，也不让模型猜</text>
+  <line x1="656" y1="526" x2="674" y2="526" stroke="#5F6368" stroke-width="1.6" marker-end="url(#a)"/>
+  <rect x="676" y="500" width="150" height="52" rx="8" fill="#E8F0FE" stroke="#4285F4" stroke-width="1.6"/>
+  <text x="751" y="520" text-anchor="middle" font-size="11.5" font-weight="600" fill="#174EA6">★ 用户看到</text>
+  <text x="751" y="538" text-anchor="middle" font-size="9" fill="#1565C0">执行器说的话</text>
 
-  <text x="62" y="760" font-size="12.5" font-weight="600" fill="#1565C0">④ 信息交接要说细节</text>
-  <text x="62" y="780" font-size="10.5" fill="#5F6368">判定看不到的信息，它就只能猜</text>
-  <text x="62" y="800" font-size="10.5" fill="#5F6368">判定要拿到：指令 + 上下文 + 产出 + 产物</text>
+  <line x1="828" y1="526" x2="846" y2="526" stroke="#5F6368" stroke-width="1.6" marker-end="url(#a)"/>
+  <rect x="848" y="500" width="150" height="52" rx="8" fill="#E8F0FE" stroke="#4285F4" stroke-width="1.6"/>
+  <text x="923" y="520" text-anchor="middle" font-size="11.5" font-weight="600" fill="#174EA6">★ 用户答复</text>
+  <text x="923" y="538" text-anchor="middle" font-size="9" fill="#1565C0">下一次 invoke</text>
 
-  <line x1="66" y1="834" x2="280" y2="834" stroke="#E0E0E0" stroke-width="1"/>
-  <text x="62" y="858" font-size="12.5" font-weight="600" fill="#424242">三条由代码保证</text>
-  <text x="62" y="880" font-size="10.5" fill="#5F6368">· 产物必须真实存在于产物库</text>
-  <text x="62" y="900" font-size="10.5" fill="#5F6368">· 状态由代码写，三态穷举</text>
-  <text x="62" y="920" font-size="10.5" fill="#5F6368">· 待答不丢（平台兜底补问）</text>
+  <line x1="1000" y1="526" x2="1018" y2="526" stroke="#1565C0" stroke-width="2.2" marker-end="url(#aB)"/>
+  <rect x="1020" y="500" width="180" height="52" rx="8" fill="#E8F5E9" stroke="#43A047" stroke-width="1.6"/>
+  <text x="1110" y="520" text-anchor="middle" font-size="11" fill="#1B5E20">prepare 🔒 投递原话</text>
+  <text x="1110" y="538" text-anchor="middle" font-size="9" fill="#5F6368">〔原话 → answers ＋ 交接书〕</text>
+
+  <line x1="1202" y1="526" x2="1220" y2="526" stroke="#1565C0" stroke-width="2.2" marker-end="url(#aB)"/>
+  <rect x="1222" y="500" width="110" height="52" rx="8" fill="#E3F2FD" stroke="#1565C0" stroke-width="2"/>
+  <text x="1277" y="520" text-anchor="middle" font-size="11.5" font-weight="700" fill="#0D47A1">★ 进执行器</text>
+  <text x="1277" y="538" text-anchor="middle" font-size="9" fill="#1565C0">答复不经它转达</text>
+
+  <text x="70" y="582" font-size="10.5" fill="#8D6E63">执行器<tspan font-weight="600">用完即弃</tspan>：每次投递都是一次全新的 run_task —— 平台必须把「这件事的全部已知」重新交给它（下排每个框里的〔〕就是那一次交接的内容），见 message-flow.svg</text>
+
+  <!-- 底注 -->
+  <rect x="60" y="640" width="1280" height="90" rx="10" fill="#F1F8E9" stroke="#7CB342" stroke-width="1.4"/>
+  <text x="80" y="666" font-size="12" font-weight="700" fill="#33691E">🔑 这一圈里有三处是平台代码（🔒）保证的，LLM 跳不过：</text>
+  <text x="80" y="690" font-size="11.5" fill="#558B2F">① <tspan font-weight="600">试答是强制的</tspan> —— 在 delegate 工具内部，主 agent 想跳过也跳不过　② <tspan font-weight="600">待答不丢</tspan> —— finalize 无条件把执行器原话贴出去（原来是 LLM 判断「问出去了没」，已删）</text>
+  <text x="80" y="712" font-size="11.5" fill="#558B2F">③ <tspan font-weight="600">答复直达执行器</tspan> —— 平台投递，不靠主 agent 转达；主 agent 只是从台账里知道「任务状态变了」</text>
 </svg>
