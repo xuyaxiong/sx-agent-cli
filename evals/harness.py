@@ -445,15 +445,6 @@ def dump_artifacts(out_dir: Path, case_id: str, rep: int, result: dict) -> Path:
     return d
 
 
-def _fmt_args(args: object) -> str:
-    """工具参数一行摘要：短值原样（交接的就是它），长值只留字数。"""
-    if not isinstance(args, dict):
-        return str(args)
-    return ", ".join(
-        f"{k}={v!r}" if len(str(v)) <= 300 else f"{k}=<{len(str(v))} 字>" for k, v in args.items()
-    )
-
-
 #: 平台回执的**固定开场白** → （记号, 这是什么）。这些措辞是 `proto/agent.py` 里写死的，
 #: 按它判"这条回执属于哪种出口"，比让读者自己从一大段文字里猜可靠。
 _RECEIPT_KINDS: tuple[tuple[str, str], ...] = (
@@ -476,6 +467,12 @@ _TOOL_SOURCE: dict[str, str] = {
 
 #: 平台回执里的**分段标记** —— 拆开"平台的框架话"与"执行器的原话"。
 #: 标记都是 `proto/agent.py` 里写死的措辞；`label` 是给读日志的人看的。
+#:
+#: 🔴 **加/改这里的标记，必须回 `proto/agent.py` 确认那句话还在** ——
+#: 命不中的标记**不会报错**，只会静默失效。踩过：曾经有一条
+#: `"\n（平台已替你查过"` 是照着**系统提示**（`_MAIN_PROMPT`）那句写的，
+#: 而系统提示永远不会出现在工具返回里 —— 它从加进来那天起就没命中过任何东西
+#: （2026-11-02 删）。**写标记要照着回执的实际措辞抄，不要凭印象。**
 _RECEIPT_SPLIT: tuple[tuple[str, str], ...] = (
     ("执行器说：", "**执行器的原话**（它说了什么、在问什么）"),
     ("\n\n【已做到】", "平台附注 · 已做到什么程度"),
@@ -484,7 +481,6 @@ _RECEIPT_SPLIT: tuple[tuple[str, str], ...] = (
     ("摘要：", "**执行器的一句话摘要**"),
     ("\n（平台已登记为待答", "平台给主 agent 的指示"),
     ("\n（你可以换个说法", "平台给主 agent 的指示"),
-    ("\n（平台已替你查过", "平台给主 agent 的指示"),
 )
 
 

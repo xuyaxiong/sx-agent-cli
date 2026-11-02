@@ -39,8 +39,6 @@ if hasattr(sys.stdout, "reconfigure"):
 from evals.harness import (  # noqa: E402
     DEFAULT_SKILLS_DIR,
     RUNS_DIR,
-    _RECEIPT_KINDS,
-    _split_receipt,
     ctx_warn,
     dump_artifacts,
     dump_run_record,
