@@ -153,6 +153,15 @@ _COLOR = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
 #: 这些行**自带真实时间戳**（`proto.trace` 写的时候就打了），所以直接用它，不要自己补时间。
 _LIVE: tuple[tuple[str, str], ...] = (
     # （主 agent 的工具调用由 dump 里的 `tool_call=` 播 —— 那行更全、带参数）
+    #
+    # 🔴 **切了一刀就得看得见**（交接三问②）。`trace.cut` 是**切的那一方自己报的**记录，
+    # 原来只落在 trace 文件里 —— 终端上读的人只能从两个数字倒推（"材料 5136 字｜
+    # 判定看到 4111 字"），而"截断"这两个字不在。
+    # ⚠️ **标记不必长在切口上**（用户 2026-11-03）：切口那个标记是给**读正文**的人
+    # （判定 / 执行器）的 —— 它读的就是正文，中间断开不标就等于把两段拼成一段；
+    # 而**读日志**的人要的标记，落在**块的头或尾**就够了。这一行正是那个"头"：
+    # 它由切的那一方在切的那一刻写下，时间戳紧挨着它所属的那个块。
+    ("✂️ 截断 · ", "plat"),
     ("delegate · ", "plat"),
     ("取代了 ", "plat"),
     ("run_task · R", "exec"),
@@ -355,6 +364,19 @@ def _emit(role: str, text: str, stamp: str | None = None) -> None:
         _to_file(cont + ln)
 
 
+def _close_block(st: dict) -> None:
+    """把挂着的块**先吐出来**，再播下一行。
+
+    🔴 **整块照打，不截断**：这些块是**平台注入**（交接书 / 台账）和
+    **LLM 决策**（判定 / 试答）—— 用户点名"千万不要截断"的那类。
+    但"整块"只指**内容**，不指**时机**：块没闭合就播下一行，
+    读的人看到的因果就是倒的（见 `_feed` 里那条实测）。
+    """
+    if st["block"] is not None:
+        _emit(st["block"][0], "\n".join(st["block"][1]), stamp=st["block"][2])
+        st["block"] = None
+
+
 def _feed(st: dict, line: str) -> None:
     """把一行 trace 日志喂给状态机，该播的播出去。
 
@@ -369,23 +391,24 @@ def _feed(st: dict, line: str) -> None:
     if m:
         st["ts"] = m.group(1)
         body = m.group(2)
+        # ⚠️ `PROMPT（…）` / `RESPONSE（…）` 这两行**自带新时间戳**，但它们属于**同一个事件**
+        # （`safe_structured` 先 section 再 block，两行都带 [ts]）——
+        # 一律当"新事件"处理的话，块刚开就被冲掉，内容全丢（实测踩过）。
+        if st["block"] is not None and body.startswith(("PROMPT（", "RESPONSE（")):
+            st["block"][1].append(body)
+            return
+        # 🔴 **先关块，再播这一行**（2026-11-03 实测踩到）：流式行原来在这句**之前** `return`，
+        # 于是它插队播出、块继续挂着 —— 执行器那 122 秒里带时间戳的行**只有流式行**，
+        # 注入块（14:39:33）一直挂到执行器说完（14:41:23）才吐出来。
+        # 读的人看到的是"教案都生成完了，平台还在注入任务" —— **时序是反的**，
+        # 而这一跳（平台注入了什么、什么时候注入的）正是要摊开给人看的东西。
+        _close_block(st)
         if body.startswith(trace.STREAM_MARK):
             # 🔴 **模型正在写的那一行**（`trace.stream_agent` 攒到换行就写一行）。
             # 这是"看着它干活"的唯一来源 —— 一次 LLM 调用那几十秒，别的什么都没有。
             who, _, text = body[len(trace.STREAM_MARK) :].partition("⟩ ")
             _emit("say" if who.startswith("执行器") else "agent", text, stamp=st["ts"])
             return
-        if st["block"] is not None:
-            # ⚠️ `PROMPT（…）` / `RESPONSE（…）` 这两行**自带新时间戳**，但它们属于**同一个事件**
-            # （`safe_structured` 先 section 再 block，两行都带 [ts]）——
-            # 一律当"新事件"处理的话，块刚开就被冲掉，内容全丢（实测踩过）。
-            if body.startswith(("PROMPT（", "RESPONSE（")):
-                st["block"][1].append(body)
-                return
-            # 🔴 **整块照打，不截断**：这些块是**平台注入**（交接书 / 台账）和
-            # **LLM 决策**（判定 / 试答）—— 用户点名"千万不要截断"的那类。
-            _emit(st["block"][0], "\n".join(st["block"][1]), stamp=st["block"][2])
-            st["block"] = None
 
         if "消息轨迹" in body:  # 段落头：接下来的续行是谁的 dump
             st["section"] = "exec" if "run_task" in body else "agent"
@@ -536,8 +559,7 @@ def _drain_once(pos: list[int]) -> None:
             pos[0] = fh.tell()
     except OSError:
         pass
-    if st["block"] is not None:  # 收尾时把没闭合的块也吐出来
-        _emit(st["block"][0], "\n".join(st["block"][1]), stamp=st["block"][2])
+    _close_block(st)  # 收尾时把没闭合的块也吐出来
 
 
 def _tail_trace(stop: threading.Event, pos: list[int]) -> None:

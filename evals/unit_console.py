@@ -21,7 +21,12 @@
 **④ 块里不混进装饰** —— `trace.section` 前后那两道 `═══` 不是内容；
    `_LIVE` 行超 400 字要**带截断标记**（交接三问②：切了不标是最糟的）。
 
+**⑧ 块先关再播** —— 流式行不许插到挂着的块前面（否则读起来时序是反的）。
+
+**⑨ 切了一刀就得看得见** —— `trace.cut` 那行进终端（标记落在**块的头**，不必长在切口上）。
+
 > 有效性自检：把 `_wrap` 里那句 `out.append(lead + cur)` 改回 `out.append(cur)`，① 必须红。
+> ⑧ 把 `_feed` 里的 `_close_block(st)` 挪回流式分支**之后**，必须红。
 """
 
 # ruff: noqa: T201  # 诊断输出即本脚本的产出物
@@ -158,6 +163,43 @@ def main() -> None:
           not got3.splitlines()[1].startswith('"') and not got3.rstrip().endswith('"'),
           repr(got3[:60]))
     check("`\\n` 还原成了真换行", "\n" in got3 and "【交付】" in got3.splitlines()[1])
+
+    print("\n⑧ 块**先关再播** —— 流式行不许插队（2026-11-03 实测踩到）")
+    # 真实形状：注入块开着（14:39:33），执行器开始流式输出（14:39:43）。
+    # 流式行原来在"关块"检查**之前** return —— 它插队播出，块继续挂着；
+    # 而执行器那 122 秒里带时间戳的行**只有流式行**，于是注入块一直挂到
+    # 执行器说完（14:41:23）才吐出来。读的人看到的是
+    # **"教案都生成完了，平台还在注入任务"** —— 时序整个是反的。
+    seen5: list[tuple[str, str]] = []
+    chat._emit = lambda role, text, stamp=None: seen5.append((role, text))  # type: ignore[assignment]
+    try:
+        st5 = {"section": "", "kind": "", "ts": "t", "calls": {}, "block": None}
+        chat._feed(st5, "[2026-11-03 14:39:33.006] 发给执行器的内容（能力指令按名引用）:")
+        chat._feed(st5, "  【已知信息】")
+        chat._feed(st5, "[2026-11-03 14:39:43.112] ⟨生成·执行器·lesson-prep⟩ 好的，信息齐全")
+    finally:
+        chat._emit = real_emit  # type: ignore[assignment]
+    check("注入块**在执行器开口之前**就播了（块先关）",
+          len(seen5) == 2 and seen5[0][0] == "inject" and "【已知信息】" in seen5[0][1],
+          repr([(r, t[:14]) for r, t in seen5]))
+    check("流式行照播（没被块吞掉、也没丢）",
+          seen5[-1] == ("say", "好的，信息齐全"), repr(seen5[-1]))
+
+    print("\n⑨ 切了一刀就得看得见 —— `✂️ 截断` 进终端（交接三问②）")
+    # ⚠️ **标记不必长在切口上**（用户 2026-11-03）：切口那个标记是给**读正文**的人
+    # （判定 / 执行器）的；**读日志**的人要的标记落在**块的头或尾**就够了。
+    # `trace.cut` 那一行正是那个"头" —— 原来只落 trace 文件，终端上只能从
+    # "材料 5136 字｜判定看到 4111 字"两个数字**倒推**，"截断"两个字不在。
+    seen6: list[tuple[str, str]] = []
+    chat._emit = lambda role, text, stamp=None: seen6.append((role, text))  # type: ignore[assignment]
+    try:
+        chat._feed({"section": "", "kind": "", "ts": "t", "calls": {}, "block": None},
+                   "[2026-11-03 14:41:23.312] ✂️ 截断 · 判定输入·材料：保留 4000 字 / 原文 5136 字")
+    finally:
+        chat._emit = real_emit  # type: ignore[assignment]
+    check("`✂️ 截断` 行进终端、且归机制层（plat）",
+          len(seen6) == 1 and seen6[0][0] == "plat" and seen6[0][1].startswith("✂️ 截断"),
+          repr(seen6))
 
     print("\n" + "═" * 78)
     print(f"{'全部通过' if not FAIL else '有失败'}：{len(PASS)}/{len(PASS) + len(FAIL)}")
