@@ -61,7 +61,7 @@
 | H19 | 快照 → 运行全记录 | `harness` → `_run.md` | markdown | ✅ 回执**不截**（按对象渲染）· ⚠️ 未知类型 800 字（**带标记**，2026-11-03 修）· 📋 读产物/读技能正文不入日志 | 磁盘 |
 | H20 | 原始 trace 附录 | `run.py` → `_run.md` | markdown | ✅ 不截 | 磁盘 |
 | H21 | 评分材料 | `judge` → 评分模型 | 结构化调用 prompt | ✅ `_clip_report` 800 字（**保头 60% ＋ 保尾 40% ＋ 显式标注**，2026-11-03 修）· ⚠️ `_clip_head` 2500/1500（带标记） | 一次性调用 |
-| H22 | 日志 / 播报 | `trace` / `chat` | 日志文件 + 终端 | ⚠️ 工具返回 250 字（带标记） · ⚠️ `_LIVE` 行 400 字（**带标记**，2026-11-03 修） | 磁盘 / 屏幕 |
+| H22 | 日志 / 播报 | `trace` / `chat` | 日志文件 + 终端 | 📋 读全文的工具返回**一个字都不贴**（只报字数 + 出处） · ⚠️ `_LIVE` 行 400 字（**带标记**，2026-11-03 修） · ✂️ 截断行进终端（2026-11-03 修） | 磁盘 / 屏幕 |
 | H23 | 断言 detail | `checks` / `report` | 报告 markdown | ⚠️ 80/200/300/1200/1500（多为无标记） | 报告文件 |
 
 > 🔴 **一句话总账**：**LLM 之间**的交接（H4/H8/H10/H11/H12）**要么不截、要么截了带标记**，
@@ -70,6 +70,12 @@
 > H22 `_LIVE` 行 400 → 带标记 · H19 未知消息类型 800 → 带标记。
 > ⚠️ 剩下的 ⚠️（带标记的那些）**不是"没问题了"**：标记只保证读的人**知道**自己被切了，
 > 不保证切掉的不重要 —— 真要紧的信息落在被切的那段里，还是得去翻原始 trace 附录。
+>
+> 📌 **同日又补了三处播报层的口径**（都不是"截了多少"的问题，是"读起来对不对"）：
+> ① 读全文的工具返回**一个字都不贴**（只报字数＋出处，`evals/chat.py:520`）·
+> ② 注入块**先关再播** —— 时序不再倒挂（`evals/chat.py:405`）·
+> ③ `✂️ 截断` 那行**进终端** —— 切了就得看得见（`evals/chat.py:164`）。
+> 详见 H22。
 
 ---
 
@@ -79,7 +85,7 @@
 
 | | |
 |---|---|
-| 代码 | `evals/chat.py:650` / `evals/_child.py:66`：`graph.invoke({"messages": [HumanMessage(text)]})` |
+| 代码 | `evals/chat.py:749` / `evals/_child.py:77`：`graph.invoke({"messages": [HumanMessage(text)]})` |
 | 交接了什么 | 用户原话，**不加工、不解析、不判断**（"答非所问就答非所问呗"） |
 | 截断 | ✅ 不截 |
 | 落点 | `state["messages"]`，**永久常驻**；且被 `_user_turns` 快照进每一个 Task |
@@ -89,22 +95,22 @@
 
 | | |
 |---|---|
-| 代码 | `proto/agent.py:733` `build_agent()`；`_MAIN_PROMPT` 在 `proto/agent.py:44` |
+| 代码 | `proto/agent.py:530` `build_agent()`；`_MAIN_PROMPT` 在 `proto/agent.py:49` |
 | 交接了什么 | 平台约定（两种做法 / 委派纪律 / 产出范围 / 前序产物怎么传 / 点名依据 / 回复硬要求）＋ **每个能力的 `name` + `description`** |
 | 截断 | ✅ 不截 —— 但**内容本身只有"名 + 一句话"**（渐进式披露第一层），全文走 `read_skill`（H16） |
 | 落点 | **不在 `state["messages"]` 里**（`create_agent(system_prompt=...)` 不落 state），**每次 LLM 调用重发一遍** |
 | 实测开销 | `_MAIN_PROMPT` 2149 字 + 能力清单 174 字 = **2331 字固定开销**（4 个内置技能时） |
-| ⚠️ 计量缺口 | `harness._sys_prompt_chars()`（`evals/harness.py:342`）**没算 `_MODE_NOTE`** —— `exec_path=delegate/inline` 时低估 82 字（`proto/agent.py:721`） |
+| ⚠️ 计量缺口 | `harness._sys_prompt_chars()`（`evals/harness.py:342`）**没算 `_MODE_NOTE`** —— `exec_path=delegate/inline` 时低估 82 字（`proto/agent.py:518`） |
 
 ### H3 · 派发参数（主 agent → 平台）
 
 | | |
 |---|---|
-| 代码 | `proto/agent.py:522` `delegate(skill_name, task, artifacts, based_on_turns)` |
+| 代码 | `proto/agent.py:313` `delegate(skill_name, task, artifacts, based_on_turns)` |
 | 交接了什么 | `task`（**LLM 写的自由文本**）、`artifacts[]`（产物 ID）、`based_on_turns[]`（点名轮次） |
 | 历史消息给到哪 | `based_on_turns` **不搬历史**，只搬"点名"这个动作；真正的搬运在 H4 由平台做 |
 | 截断 | ✅ 不截（平台不加工 LLM 给的参数） |
-| 校验 | 轮次 / 产物 ID 不存在 → **当场拒绝派发**并给出真实清单（`proto/agent.py:560`/`:572`）——防"静默降级" |
+| 校验 | 轮次 / 产物 ID 不存在 → **当场拒绝派发**并给出真实清单（`proto/agent.py:358`/`:369`）——防"静默降级"。⚠️ 轮次那份清单**带原话**（`turn_lines`，与交接书**同一份**渲染）—— 只回 `1、2、3、4` 四个数字时，模型刚因"数不清轮次"栽过一次，再让它对着数字数一遍等于没有恢复路径（2026-11-03 实测） |
 | 落点 | `state["messages"]` 的 `AIMessage.tool_calls`，**永久常驻**（写多长就背多久） |
 
 ### H4 · 交接书（平台 → 执行器）★ 所有重入路径的唯一入口
@@ -126,8 +132,8 @@
 
 | | |
 |---|---|
-| **历史消息的范围** | `Task.user_turns` 是**派发那一刻的快照**（`proto/agent.py:241`）：**全部** `HumanMessage` 的顺序编号 ＋ 每轮紧邻的前一条 `AIMessage`。派发**之后**用户说的话不进 `user_turns`，进 `qa`（H14）—— 两者时间上不重叠，天然去重 |
-| **逃生口** | `read_user_turn(n)`（`proto/executor.py:372`，**闭包造**，并行 delegate 不互相覆盖）返回**整轮**：原话全文 ＋ 它回答的那句全文 |
+| **历史消息的范围** | `Task.user_turns` 是**派发那一刻的快照**（`proto/agent.py:261`）：**全部** `HumanMessage` 的顺序编号 ＋ 每轮紧邻的前一条 `AIMessage`。派发**之后**用户说的话不进 `user_turns`，进 `qa`（H14）—— 两者时间上不重叠，天然去重 |
+| **逃生口** | `read_user_turn(n)`（`proto/executor.py:187`，**闭包造**，并行 delegate 不互相覆盖）返回**整轮**：原话全文 ＋ 它回答的那句全文 |
 | **落点** | 执行器上下文（`HumanMessage(task_text)`），**用完即弃** —— 不常驻、不累积 |
 | 隐患 | ① 每轮 40 字是**位置信息**，执行器不主动读就只看到开头（设计如此，已带指路）；② `_index()`（`proto/handoff/briefing.py`）对**不在产物库里的 ID 静默跳过**（无标记）—— 跨 run 清库后旧 Task 的产物行会无声消失 |
 
@@ -135,19 +141,19 @@
 
 | | |
 |---|---|
-| 代码 | `proto/executor.py:455` `task_text = 【能力指令】{skill.instructions}{refs}\n\n【已知信息】{briefing}` |
+| 代码 | `proto/executor.py:274` `task_text = 【能力指令】{skill.instructions}{refs}\n\n【已知信息】{briefing}` |
 | 交接了什么 | ① `skill.instructions` **全文**；② 技能自带文件**清单**（相对路径 + 字数）；③ 整份交接书（H4） |
 | 截断 | ✅ instructions 不截；📋 文件正文不进来 |
-| 逃生口 | `read_skill_file(skill_name, path)` —— 清单里**必须写明 `skill_name`**，否则执行器只能猜技能名（实测试了 4 个变体、卡了 121 秒后放弃，`proto/executor.py:442`） |
+| 逃生口 | `read_skill_file(skill_name, path)` —— 清单里**必须写明 `skill_name`**，否则执行器只能猜技能名（实测试了 4 个变体、卡了 121 秒后放弃，`proto/executor.py:263`） |
 | 落点 | 执行器上下文；每次重入**重新发一遍**（`skill.instructions` 重复 N 次不累积，因为执行器用完即弃） |
 
 ### H6 · 产出落库（执行器 → 产物库）★ 隔离的落点
 
 | | |
 |---|---|
-| 代码 | `proto/artifacts.py:99` `store_artifact()` / `:129` `write_artifact()` |
+| 代码 | `proto/artifacts.py:99` `store_artifact()` / `:128` `make_write_artifact()`（闭包里的 `write_artifact` 在 `:144`） |
 | 交接了什么 | `title` / `summary` / `file_type` / `content`（**全文**）→ 内存 `ARTIFACTS` ＋ 当场落盘 |
-| 回给调用方的 | **只有**：`已写入产物 art_001（N 字，md）\n文件：<真实路径>`（`proto/artifacts.py:144`） |
+| 回给调用方的 | **只有**：`已写入产物 art_001（N 字，md）\n文件：<真实路径>`（`proto/artifacts.py:161`） |
 | 截断 | ✅ 不截（正文全文落库；**回执极短**） |
 | 落点 | 内存库 + 磁盘。**主 agent 的上下文里没有正文** —— 这正是整个架构的核心收益 |
 | ⚠️ 注意 | 执行器自己的上下文里**仍然有**它刚写的正文（是它生成的）—— 隔离省的是**主 agent**，不是执行器 |
@@ -156,11 +162,11 @@
 
 | | |
 |---|---|
-| 代码 | `proto/executor.py:518`：`messages = list(resp["messages"]) + [HumanMessage(nudge)]`；`nudge_text` 在 `proto/handoff/nudge.py` |
+| 代码 | `proto/executor.py:353`：`messages = list(resp["messages"]) + [HumanMessage(nudge)]`；`nudge_text` 在 `proto/handoff/nudge.py` |
 | 交接了什么 | `progress`（"你已经完成了"）＋ `missing`（逐条）＋ 固定两句（接着做 / 别用"已完成"收尾），**全文字段** |
 | **历史消息的范围** | 🔴 **累积**：`resp["messages"]` 是**上一轮执行器子图的全部消息**（含它自己写的正文、工具返回、读来的产物全文），原样再发一遍 ＋ 新 nudge |
 | 截断 | ✅ 不截（`unit_handoff.py` ⑧ 有断言） |
-| 落点 | 执行器上下文，**上限 `MAX_REACT_ROUNDS = 3`**（`proto/executor.py:65`）→ 最坏情况第 3 轮的输入 ≈ 前两轮全部内容 × 2 |
+| 落点 | 执行器上下文，**上限 `MAX_REACT_ROUNDS = 3`**（`proto/executor.py:71`）→ 最坏情况第 3 轮的输入 ≈ 前两轮全部内容 × 2 |
 | 隐患 | 产物越长、执行器自己吐的正文越多，**推回去越贵**。但它是"出口限制"的代价，方向正确（不让用户承担执行器没干完的后果） |
 
 ### H8 · 判定输入（平台 → 判定）★ 唯一带"保头保尾"的交接
@@ -263,7 +269,7 @@
 
 | | |
 |---|---|
-| 代码 | `delegate` 建 Task：`proto/agent.py:586`；`absorb_outcome`：`:506`；投递追加 `qa`：`proto/graph.py:180` |
+| 代码 | `delegate` 建 Task：`proto/agent.py:378`；`absorb_outcome` 调用：`:429`；投递追加 `qa`：`proto/graph.py:135` |
 | 交接了什么 | `task` / `user_turns`（**全部用户原话 + after 的全文快照**）/ `based_on` / `refs` / `artifacts` / `report` / `progress` / `missing` / `qa`（累积） |
 | 截断 | ✅ 不截 |
 | 落点 | `state["tasks"]`，随图状态**常驻**；**每次重入全量重放**进交接书（H4/H14） |
@@ -288,7 +294,7 @@
 
 | | |
 |---|---|
-| 代码 | `evals/harness.py:563` `_render_messages()` → `:675` `dump_run_record()` |
+| 代码 | `evals/harness.py:580` `_render_messages()` → `:721` `dump_run_record()` |
 | 交接了什么 | 逐轮：用户输入 / 主 agent 输出 / **工具调用（参数全文）** / 工具返回 / 平台注入的台账 / Task 台账（含产出与输入引用）/ 执行器原话 |
 | 读产物、读技能 | 📋 **正文不进日志**，只写一行"主 agent 读了 `art_001` 的全文（5162 字，原文见同目录 `art_*`）"—— 另有出处才省 |
 | 截断 | ✅ 回执**不截**（2026-11-03 起：按**对象**渲染，`_receipt_sections(handoff)`）· ⚠️ 未知消息类型：800 字（**带标记**，2026-11-03 修 —— 这是审计里最后一处静默截断） |
@@ -308,7 +314,7 @@
 
 | | |
 |---|---|
-| 代码 | `evals/judge.py`：`_history`（`:52`）/ `_reports`（`:57`）/ `_clip_head`（`:107`） |
+| 代码 | `evals/judge.py`：`_history`（`:52`）/ `_reports`（`:86`）/ `_clip_head`（`:137`） |
 | 交接了什么 | ① 到该轮为止的**用户原话全文**（`_history`）；② 助手最后给用户的回复（全文）；③ 派出去的工作**在索要什么**（`_reports`）；④ 产物正文（`rubric_artifact_derives_from_source`） |
 | 截断 | ✅ **已修（2026-11-03）**：`_reports` 改走 `_clip_report`（预算 800，**保头 60% ＋ 保尾 40% ＋ 显式标注**）—— 原来是 `report[:300]`，**无标记、且是切尾**；⚠️ `_clip_head` 2500 / 1500（**带标记**："……（后面还有 N 字未展示）"） |
 | 🔴 后果 | `rubric_no_repeat_question` 问的是"**助手有没有向用户索要**这些字段"—— 而执行器的**问句通常写在 report 的末尾**（`evals/chat.py:311` 的注释自己写着"提问往往在正文末尾，截太狠就看不到了"）。切尾 300 字 → 问句被切掉 → 评分判"没有索要" → **软断言假绿** |
@@ -318,9 +324,11 @@
 
 | | |
 |---|---|
-| 代码 | `proto/trace.py:206` `render_message()` / `:88` `brief_args()`；`evals/chat.py:316` `_feed()` |
+| 代码 | `proto/trace.py:206` `render_message()` / `:88` `brief_args()`；`evals/chat.py:380` `_feed()` / `:367` `_close_block()` |
 | 交接了什么 | 消息全文（**AI 的话只写头部**，正文已由 `stream_agent` 逐行流过）、工具调用参数、平台注入的块 |
-| 截断 | ✅ `render_message` **不截**（契约：日志是原始记录）；`brief_args` **只压 `content` 这一个参数**（`BODY_ARGS`，`proto/trace.py:85`），`delegate(task=…)` **照原样给全**；⚠️ 播报层：`read_skill`/`read_artifact` 返回切 250 字（**带标记**）；⚠️ `_LIVE` 命中的行 `body[:400]`（**带标记**，2026-11-03 修 —— 原来是**一声不吭**的一刀，读的人分不清"它就说到这儿"和"被切了"） |
+| 截断 | ✅ `render_message` **不截**（契约：日志是原始记录）；`brief_args` **只压 `content` 这一个参数**（`BODY_ARGS`，`proto/trace.py:85`），`delegate(task=…)` **照原样给全**；📋 播报层：`read_skill`/`read_skill_file`/`read_artifact` 的返回**一个字都不贴**（只报"读了全文 N 字、原文在哪"，2026-11-03 修 —— 原来是切 250 字，既不是全文又不是摘要）；⚠️ `_LIVE` 命中的行 `cap = 400`（**带标记**，2026-11-03 修 —— 原来是**一声不吭**的一刀，读的人分不清"它就说到这儿"和"被切了"） |
+| 时序 | 🔴 **块先关再播**（2026-11-03 修）：流式行原来在"关块"检查**之前** `return`，插队播出 —— 注入块（14:39:33）一直挂到执行器说完（14:41:23）才吐，读起来像"教案都生成完了，平台还在注入任务"。现在 `_feed` 先 `_close_block()` 再播（`evals/chat.py:405`），断言在 `evals/unit_console.py` ⑧ |
+| 截断的标记 | ⚠️ **标记不必长在切口上**（用户 2026-11-03）：切口那个标记是给**读正文**的人（判定 / 执行器）的；**读日志**的人要的标记落在**块的头或尾**就够了。`trace.cut` 那行（`✂️ 截断 · …`）正是那个"头"，2026-11-03 起进 `_LIVE`（`evals/chat.py:164`）—— 在此之前它只落 trace 文件，终端上只能从"材料 5136 字｜判定看到 4111 字"两个数字**倒推** |
 | 落点 | `logs/proto-<时间戳>.log`（磁盘）＋ 终端 |
 | 备注 | ~~`evals/chat.py` 的 `_live()` 是死代码~~ —— **2026-11-03 已删**。⚠️ 它当时**咬到过人**：给 `_LIVE` 补截断标记时先改到了它头上（它长得就像那个函数），改完才发现没人调它。留着就是陷阱 |
 
@@ -371,7 +379,7 @@ report2（661 字）在主 agent 消息里出现 2 次：ToolMessage(890 字) + 
 
 - `harness.CTX_WARN_CHARS = 12000`（`evals/harness.py:312`）：超线**只告警不判红**（读产物是合法能力）
 - `harness.snapshot()` 的 `main_ctx_chars`（**不含 system prompt**）＋ `sys_prompt_chars`；真实上下文 = 两者相加
-- CLI 每轮打一行：`主上下文 N 字（消息 X + system Y）｜产物库正文 Z 字`（`evals/chat.py:507`）
+- CLI 每轮打一行：`主上下文 N 字（消息 X + system Y）｜产物库正文 Z 字`（`evals/chat.py:608`）
 - 参照读数（历史跑批）：单技能隔离场景 517–1109 字；多技能长产物场景 7890–14832 字
 
 **不进主上下文的三条路**（隔离之所以成立）：
@@ -382,7 +390,7 @@ report2（661 字）在主 agent 消息里出现 2 次：ToolMessage(890 字) + 
 
 ---
 
-## 五、隐患清单（本次审计发现，**均未修**）
+## 五、隐患清单（本次审计发现 —— **逐条的修没修，标在条目末尾**）
 
 > 排序按"会不会造成错误结论"：会让人**误以为没问题**的排前面。
 >
@@ -392,7 +400,7 @@ report2（661 字）在主 agent 消息里出现 2 次：ToolMessage(890 字) + 
 
 ### 1. 🔴 评测层的回执分段标记**全部失配** → `_run.md` 里回执被静默降级成 1200 字截断
 
-- **现象**：`_RECEIPT_KINDS`（`evals/harness.py:459`）和 `_RECEIPT_SPLIT`（`:485`）里的标记，
+- **现象**：`_RECEIPT_KINDS`（`evals/harness.py:469`）和 `_RECEIPT_SPLIT`（**已删**，下面第 2 步）里的标记，
   是照**旧回执**（"已交付…"/"⚠️ 这次没完成，它在请求信息"/"执行器说："/"\n\n【已做到】"）写的；
   2026-11-02 `render_receipt` 形式化之后，回执变成了「【交付】…」「【执行器说】（**它说的**…）」
   「【下一步】…」—— **没有一条标记还命中**。
@@ -425,11 +433,13 @@ report2（661 字）在主 agent 消息里出现 2 次：ToolMessage(890 字) + 
 
 ### 2. 🔴 评分材料 `report[:300]` 无标记且切尾 → 软断言可能**假绿**
 
-- **代码**：`evals/judge.py:62`：`f"[{t['id']} {t['skill']} {t['stage']}] 执行器说：{t.get('report', '')[:300]}"`
+- **代码**（当时的）：`f"[{t['id']} {t['skill']} {t['stage']}] 执行器说：{t.get('report', '')[:300]}"` —— 这一行**已删**，现在是 `evals/judge.py:61` 的 `_clip_report`
 - **后果**：`rubric_no_repeat_question` 判的是"助手有没有向用户索要某字段"，
-  而**执行器的问句通常在 report 末尾** —— 切尾正好把要判的东西切掉，
+  而**执行器的问句通常在 report 末尾**（这句原来写在 `evals/chat.py` 的注释里，
+  2026-11-03 随旧播报层一起删了 —— 事实本身仍成立，现在由 `evals/judge.py:64`
+  的 `_clip_report` docstring 承载）—— 切尾正好把要判的东西切掉，
   评分看到"没在问" → 返回 `asked=[]` → **判通过**。这是**假绿**，比判红糟得多。
-- **对照**：同文件的 `_clip_head`（`:107`）**做对了**（显式标注"后面还有 N 字未展示"）——
+- **对照**：同文件的 `_clip_head`（`:137`）**做对了**（显式标注"后面还有 N 字未展示"）——
   说明规矩是知道的，只是这一处漏了。
 - **实测坐实（2026-11-03，`handoff-verify`）**：评分材料里 3 条 report，**2 条正好 300 字**
   （切在句中 `…→ 长方形挑战折 ¼ `），**都没有任何截断标记**。
@@ -468,16 +478,19 @@ report2（661 字）在主 agent 消息里出现 2 次：ToolMessage(890 字) + 
 ### 6. 🟡 `_sys_prompt_chars()` 少算 `_MODE_NOTE`
 
 - `evals/harness.py:342` 只算 `_MAIN_PROMPT` + 能力清单；`exec_path=delegate/inline` 时
-  系统提示还多 82 字（`proto/agent.py:721`）。**计量口径偏小**，不影响行为。
+  系统提示还多 82 字（`proto/agent.py:518`）。**计量口径偏小**，不影响行为。
 
 ### 7. 🟡 `_render_messages` 对未知消息类型 `content[:800]` 无标记
 
-- `evals/harness.py:671`。当前消息类型只有四种（Human/AI/Tool/System），走不到；
+- `evals/harness.py:714`。当前消息类型只有四种（Human/AI/Tool/System），走不到；
   但**将来加一种就会静默切**。
+- **✅ 已修（2026-11-03）**：切了带标记（`…（**平台截断：还有 N 字未显示**）`），见 H19 总账那行。
 
 ### 8. 🟡 播报层 `_LIVE` 行 `body[:400]` 无标记；`_live()` 是死代码
 
-- `evals/chat.py:388` / `:306`。只影响终端观感，不影响 LLM。
+- `evals/chat.py:458`（`_LIVE` 循环）。只影响终端观感，不影响 LLM。
+- **✅ 已修（2026-11-03）**：`cap = 400` 超了**带标记**（`（**平台截断：还有 N 字未显示**）`）；
+  `_live()` **已删**（见 H22 备注）。
 
 ### 9. 🟡 `architecture-diagram.md` §3.2.5 与代码不符（且与同文档 §3.1 自相矛盾）
 
@@ -519,7 +532,7 @@ report2（661 字）在主 agent 消息里出现 2 次：ToolMessage(890 字) + 
 |---|---|---|
 | ~~`_recover_artifacts` 并行窗口~~ | ~~`proto/executor.py`~~ | **✅ 已消（2026-11-03）**：改成**按 run 记账**（`artifacts.make_write_artifact(created)`，闭包）—— 这个窗口**结构上不存在**了，不是"难触发" |
 | 判定 4000 字预算：产物再长仍会截，那时判定的"完成"是**推测** | `proto/executor.py:83` | 完整性最终靠**产物落盘 + 人工审计**；预算是可调阈值 |
-| 台账**全量注入**（不按活跃度过滤） | `proto/graph.py:215` | 用户确认；变长到撑上下文时再改 |
+| 台账**全量注入**（不按活跃度过滤） | `proto/graph.py:188` | 用户确认；变长到撑上下文时再改 |
 | **「正文交付」是反模式** —— 平台不保证、也不为它造机制 | `solution.md` §0.7 | 用户 2026-11-03 定：*"我们平台根本就不保证正文交付这条路径，参考的几个优秀开源 agent 项目也都不保证……**因为正文交付就是反模式**"*。真技能**都已改成落产物**；`r1`/`r2` case 与 `courseware-config` 技能**已删**（前提不成立） |
 
 ---
@@ -711,13 +724,13 @@ uv run python -m evals.unit_handoff_matrix
 
 #### 新 1 🔴 台账注入**在 trace 日志里根本没有记录**
 
-- **机制**：`node_agent` 用 `prev_n = len(state["messages"])` 当基线（`proto/graph.py:331`），
+- **机制**：`node_agent` 用 `prev_n = len(state["messages"])` 当基线（`proto/graph.py:283`），
   而注入的 `SystemMessage` 在它进入**之前**就已经在 state 里了 → **永远落在基线之前，不会被 dump**。
 - **证据**：本次 trace 日志 86259 字，`【平台提示】` **0 次**、`SystemMessage` **0 次**；
   全仓 **731 份** trace 日志里 `SystemMessage(` **0 份**，仅 4 份出现台账，且全部是
   **试答 prompt 的副产物**（`_ask_prompt` 把全部消息渲染进去时偶然带上的）。
 - **后果**：① 号称"原始记录"的 trace 里查不到"平台注入了什么"；
-  ② `evals/chat.py:431` 那个 `kind == "SystemMessage"` → `📥 INJECT` 的分支**从未触发过**
+  ② `evals/chat.py:531` 那个 `kind == "SystemMessage"` → `📥 INJECT` 的分支**从未触发过**
   （和 `_live()` 一样是死代码）—— 而"平台注入的系统提示词 注入了什么内容 什么时候注入的"
   正是用户点名要看的。
 - **唯一能看到它的地方**：`_run.md`（快照按 `state["messages"]` 增量取，抓得到）。
@@ -740,7 +753,7 @@ uv run python -m evals.unit_handoff_matrix
 
 #### 新 3 🟠 跑批模式下**产物回执没有路径**，而系统提示断言"路径已经给到你了"
 
-- **机制**：`ARTIFACT_DIR` 只在 `evals/chat.py:584` 用 `use_dir()` 设过（**交互式入口**）；
+- **机制**：`ARTIFACT_DIR` 只在 `evals/chat.py:683` 用 `use_dir()` 设过（**交互式入口**）；
   `evals/_child.py`（跑批）从不设 → `store_artifact` 不写盘、`rec["path"]` 不存在
   → 回执【产出的产物】里**没有 `文件：` 行**。
 - **证据**：本次 `_run.md` 全文 `文件：` **0 次**；而交互式 run
@@ -752,7 +765,7 @@ uv run python -m evals.unit_handoff_matrix
 
 #### 新 4 🟠 工具归属在记录层会错配（`_take` 兜底）
 
-- `evals/harness.py:576` 的 `_take`：`tool_call_id` 配不上时 `pending.pop(0)` 按顺序猜。
+- `evals/harness.py:593` 的 `_take`（在 `_render_messages` 里）：`tool_call_id` 配不上时 `pending.pop(0)` 按顺序猜。
 - 实测：`interactive-skills-1102-163025/_console.log` 里一条 `write_artifact` 的返回被标成
   `read_skill_file 的返回`；`_run.md` 里也有 `list_artifacts` 被标成 8388 字（那不可能）。
 - **后果**：读记录的人会把"谁写的、谁读的"搞反 —— 正是记录层要防的事。
