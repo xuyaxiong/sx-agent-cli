@@ -55,7 +55,7 @@ class Receipt(TypedDict, total=False):
     这样"渲染出来的段"和"记录层显示的段"**结构上必然一致**。
     """
 
-    kind: str  # 出口分类：DELIVERY 的键 + rejected_skill / rejected_turns / rejected_artifact
+    kind: str  # 出口分类：DELIVERY 的键 + rejected_skill / rejected_artifact
     sections: dict[str, str]  # 段名 key → 该段的**内容原文**（不含段名、不含来源标注）
 
 
@@ -149,8 +149,8 @@ def build_receipt(outcome: Any, *, agent_answer: str = "", note: str = "") -> Re
 def build_rejection(kind: str, detail: str, available: str) -> Receipt:
     """**派发被拒**（不建 Task）→ 回执对象。
 
-    `kind` ∈ `rejected_skill` / `rejected_turns` / `rejected_artifact`；
-    `available` 是平台列出来的"现在有什么"（能力 / 轮次 / 产物）。
+    `kind` ∈ `rejected_skill` / `rejected_artifact`；
+    `available` 是平台列出来的"现在有什么"（能力 / 产物）。
     """
     return {
         "kind": kind,
@@ -159,9 +159,11 @@ def build_rejection(kind: str, detail: str, available: str) -> Receipt:
 
 
 #: 拒绝口 → 它列出的"现在有什么"那一段的段名 key
+#:
+#: ⚠️ ~~`rejected_turns`~~ **2026-11-03 删**：轮次不再由主 agent 点名（见
+#: `briefing.turn_lines` 的分层说明），"点了不存在的轮次"这件事**结构上不可能**了。
 _REJECTED_AVAILABLE: dict[str, str] = {
     "rejected_skill": "available_skills",
-    "rejected_turns": "available_turns",
     "rejected_artifact": "available_artifacts",
 }
 

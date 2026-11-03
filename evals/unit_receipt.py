@@ -189,10 +189,11 @@ def main() -> None:
     bare = ExecOutcome(status="completed", artifacts=[], report="成果在这里", rounds=1)
     check("正文交付 → `kind` 分得对", build_receipt(bare)["kind"] == "completed_in_reply")
 
-    # ④ 派发被拒那三个口：对象 → 文本 → 记录层，三边一致
+    # ④ 派发被拒那几个口：对象 → 文本 → 记录层，三边一致
+    # ⚠️ ~~`rejected_turns`~~ **2026-11-03 删**：轮次不再由主 agent 点名
+    # （见 `briefing.turn_lines` 的分层说明），"点了不存在的轮次"结构上不可能了。
     rejected = {
         "rejected_skill": build_rejection("rejected_skill", "❌ 没有能力「x」", "a、b"),
-        "rejected_turns": build_rejection("rejected_turns", "❌ 轮次 9 不存在", "（无）"),
         "rejected_artifact": build_rejection("rejected_artifact", "❌ 产物 art_9 不存在", "（无）"),
     }
     for kind, r in rejected.items():
@@ -209,7 +210,6 @@ def main() -> None:
 
     real = {
         "rejected_skill": A.delegate.func(skill_name="nope", task="x", runtime=_R()),
-        "rejected_turns": A.delegate.func(skill_name="quiz", task="x", based_on_turns=[9], runtime=_R()),
         "rejected_artifact": A.delegate.func(skill_name="quiz", task="x", artifacts=["art_9"], runtime=_R()),
     }
     for kind, cmd in real.items():
@@ -217,6 +217,7 @@ def main() -> None:
         obj = (msg.additional_kwargs or {}).get("handoff")
         check(f"真 `delegate` 把对象挂在消息上：{kind}", bool(obj) and obj["kind"] == kind)
         check(f"对象切得开：{kind}", bool(obj) and len(_receipt_sections(obj)) == 2)
+
 
     # ⑥ 对象**不会漏给模型** —— 这是它敢挂在消息上的前提（实测 `_convert_message_to_dict`
     #    只取 content / role / tool_call_id）

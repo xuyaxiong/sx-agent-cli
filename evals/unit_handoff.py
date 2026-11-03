@@ -49,7 +49,6 @@ SLICE = re.compile(r'\[\s*:\s*\d+\s*\]|\[\s*-\s*\d+\s*:\s*\]')
 ALLOWED: dict[str, list[tuple[str, str]]] = {
     'proto/agent.py': [
         (r'tool_call_id', 'ID 派生（取尾部 8 位）—— 不是交接内容'),
-        (r'based_on_turns=\[1, 3\]', '文档字符串里的示例'),
     ],
     # ⚠️ **`proto/handoff/` 是包，`glob('proto/*.py')` 扫不到它** ——
     # 2026-11-03 把交接的 schema 与模板搬进包里时差点让它掉出守卫的覆盖面。
@@ -133,21 +132,28 @@ def main() -> None:
     # ── ④ 交接书（平台 → 执行器）──
     ARTIFACTS.clear()
     aid = store_artifact("超长产物", "梗概" * 40, "md", "正文" * 900)
+    # ⚠️ 用户原话用**另一个**长串：`qa` 的「答」是**全文**渲染的（那是执行器自己问来的），
+    # 若两处共用 `LONG`，"正文没进上下文"这条断言会被 qa 那一份顶成**假绿**。
+    TURN = "这一轮用户说了很长的一段话：" + "原话细节。" * 100
     task = {
         "id": "t1", "skill": "s", "task": "超长任务描述：" + "细节。" * 200,
         "stage": "waiting_for_input", "artifacts": [aid], "refs": [aid],
         "report": LONG, "progress": LONG, "missing": [LONG],
         "qa": [{"by": "用户", "q": LONG, "a": LONG}],
-        "user_turns": [{"n": 1, "text": LONG, "after": LONG}],
-        "based_on": [1],
+        "user_turns": [{"n": 1, "text": TURN, "after": LONG}],
     }
     brief = render_briefing(task)
     check("④ 交接书 · 任务全文在", task["task"] in brief)
     check("④ 交接书 · 执行器上次说的全文在", LONG in brief)
     check("④ 交接书 · 判定给的进度全文在", task["progress"] in brief)
     check("④ 交接书 · 缺什么全文在", task["missing"][0] in brief)
-    check("④ 交接书 · 用户原话全文在（点名的那轮）", task["user_turns"][0]["text"] in brief)
-    check("④ 交接书 · 它在回答的上一句全文在", task["user_turns"][0]["after"] in brief)
+    # 🔴 **用户原话走的是「清单 + 按需」**（不是"不截"）：索引行在、正文按需 ——
+    # 见 `briefing.turn_lines` 的分层。超长输入下**常驻层不许跟着涨**。
+    check("④ 交接书 · 用户原话**索引行**在（序号 + 字数 + 开头）",
+          f"第 1 轮（{len(TURN)} 字）" in brief and " ".join(TURN.split())[:40] in brief)
+    check("④ 交接书 · 超一行的原话**正文没进上下文**（按需 `read_user_turn`）",
+          TURN not in brief and "read_user_turn" in brief)
+    check("④ 交接书 · 「它在回答的上一句」索引行在", "它在回答的上一句" in brief)
     check("④ 交接书 · 问答对全文在", task["qa"][0]["a"] in brief)
 
     # ── ⑧ 推回去（平台 → 执行器）──

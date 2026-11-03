@@ -472,7 +472,6 @@ _RECEIPT_KINDS: dict[str, str] = {
     "waiting": "❓ **执行器在提问**（待答：平台会把这段转达给用户）",
     "failed": "⚠️ **执行器没做成**（既没完成、也没说缺什么）",
     "rejected_skill": "⛔ **被平台拒绝**：没有这个能力",
-    "rejected_turns": "⛔ **被平台拒绝**：轮次不存在",
     "rejected_artifact": "⛔ **被平台拒绝**：产物 ID 不存在",
 }
 
@@ -498,7 +497,6 @@ _RECEIPT_LABEL: dict[str, str] = {
     "next": "平台给主 agent 的指示",
     "not_dispatched": "平台的框架话 · 这次**没有派发**",
     "available_skills": "平台列出的可用能力",
-    "available_turns": "平台列出的用户原话",
     "available_artifacts": "平台列出的现有产物",
 }
 

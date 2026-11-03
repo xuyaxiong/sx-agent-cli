@@ -62,7 +62,7 @@ def main() -> None:  # noqa: C901
         "task": "生成导学单",
         "user_turns": [{"n": 1, "text": "帮我备课" * 30, "after": "好的"},
                        {"n": 2, "text": "这一轮很长" * 40, "after": "上一句也很长" * 20}],
-        "based_on": [1], "progress": "已完成目标", "missing": ["课时"],
+        "progress": "已完成目标", "missing": ["课时"],
         "report": "请问课时？", "qa": [{"by": "用户", "q": "用在哪？", "a": "预习"}],
         "artifacts": [aid], "refs": [aid],
     })

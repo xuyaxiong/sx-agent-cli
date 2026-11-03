@@ -87,34 +87,75 @@ class Task(TypedDict, total=False):
     missing: list[str]  # 判定说：还缺什么
     qa: list[QA]
     user_turns: list[Turn]  # 派发那一刻的快照
-    based_on: list[int]  # 主 agent 点名的轮次（那几轮给全文）
     agent_tried: bool  # 平台强制试答过没有
 
 
 # ──────────────────────────── 渲染：注入前那一瞬才拼 ────────────────────────────
 
 
-#: 清单里每轮露出的开头字数（`_one_line` 的默认 limit）—— 报"切了多少"时要用同一个数
+#: **索引行**里每轮露出的开头字数（`_one_line` 的默认 limit）。
+#:
+#: ⚠️ 它不是"切到多少"，是"**一行有多长**" —— 见 `turn_lines` 的分层说明。
 _one_line_limit = 40
 
 
 def _flat(text: object) -> str:
-    """`_one_line` **压成一行**之后的样子 —— 判"切没切"必须用**同一个口径**。
+    """`_one_line` **压成一行**之后的样子 —— 压平与比长度必须用**同一个口径**。
 
-    ⚠️ 分开写是有原因的：`render_briefing` 报"切了几轮"时要**先按这个口径压平再比长度**，
-    否则换行多的短消息会被误判成"超长"。
+    否则换行多的短消息会被误判成"超长"（`_one_line` 先压平再判长度）。
     """
     return " ".join(str(text or "").split())
 
 
 def _one_line(text: str, limit: int = _one_line_limit) -> str:
-    """压成一行 + 截到 limit 字 —— 清单里**一行一轮**，不能让它撑成多行。
+    """压成一行 + 截到 limit 字 —— 索引里**一行一轮**，不能让它撑成多行。
 
-    ⚠️ 这里**不逐条记日志**（一轮两处、5 轮就 10 行，太吵）——
-    由 `render_briefing` 报一次合计（见那里的 `trace.cut`）。
+    🔴 **这不是"截断"，是"索引"**（见 `turn_lines`）：短到一行装得下的，
+    这一行**就是全文**；装不下的，全文走 `read_user_turn(轮次)` 按需取。
+    所以这里既不报 `trace.cut`，也不需要"切了"的标记 —— `（X 字）` 和 `…`
+    已经把"这轮多大、你只看到开头"说清楚了（审计的四种截断状态里，
+    这是 📋「清单 + 按需」，不是 ⚠️「显式截断」）。
     """
     flat = _flat(text)
     return flat if len(flat) <= limit else flat[:limit] + "…"
+
+
+def turn_lines(turns: list[dict]) -> list[str]:
+    """**用户原话索引** —— 一行一轮：序号 · 字数 · 开头 · 它在回答什么。
+
+    ## 分层（渐进式披露）
+
+    | 层 | 内容 | 成本 |
+    |---|---|---|
+    | **常驻（本函数）** | 每轮**一行** | **∝ 轮次数**，与文本量**无关** |
+    | **按需** | `read_user_turn(n)` 取那一轮全文 ＋ 它回答的那句全文 | 读的人自己触发 |
+
+    🔴 **关键性质：短到一行装得下的轮次，这一行就是全文**（实测 226 份会话里
+    **91% 的用户消息 ≤40 字**、中位 5 字）—— 所以"索引"和"全文"在绝大多数情况下
+    是同一个东西；真正的长正文一律走按需。**用户粘 5 万字，这一层也只涨一行。**
+
+    ## 为什么不再"点名"（2026-11-03，用户定）
+
+    原来由主 agent 用 `based_on_turns=[1,3]` 点哪几轮给全文 —— 它错在**时点**：
+    "哪几轮相关"是**读任务的时候**才成立的关系（同一条原话，对"出导学单"无关、
+    对"改这份教案"就是核心），让**写任务的人**预先声明，等于让他替读的人做阅读理解。
+    接口上它也只能靠编号表达，而编号只活在平台内部 —— 实测就数错了（4 轮报成 5 轮）。
+
+    **正解不是让模型点得更准，是把"挑"这个动作删掉**：平台只保证两件确定的事 ——
+    ① 原话**一字不改**地搬进索引；② **每一轮都在索引里**。至于哪几轮要读全文，
+    由**读的人**按需取。**准确不来自"猜得准"，来自"没有猜测环节"。**
+    """
+    out: list[str] = []
+    for t in turns:
+        n, text = t.get("n"), str(t.get("text") or "")
+        out.append(f"{BODY}- 第 {n} 轮（{len(text)} 字）：{_one_line(text)}")
+        after = str(t.get("after") or "").strip()
+        if after:
+            # 🔴 **短应答必须带上它在回答什么**（用户 2026-11-02）：光一个「A」，
+            # 执行器既解读不了、也核对不了主 agent 的转述 —— 而这一段存在的
+            # 全部理由就是**对冲转述失真**。见 `agent._user_turns` 的 docstring。
+            out.append(f"{BODY}  ↳ **它在回答的上一句**：「{_one_line(after)}」")
+    return out
 
 
 def render_briefing(task: dict) -> str:
@@ -142,49 +183,19 @@ def render_briefing(task: dict) -> str:
     # ── ② 用户原话（平台硬搬，未经转述）—— 渐进式披露：清单常驻、全文按需 ──
     turns = task.get("user_turns") or []
     if turns:
-        picked = set(task.get("based_on") or [])
-        block = section_head("user_turns")
-        for t in turns:
-            n, text = t.get("n"), str(t.get("text") or "")
-            # 🔴 **短应答必须带上它在回答什么**（用户 2026-11-02）：光一个「A」，
-            # 执行器既解读不了、也核对不了主 agent 的转述 —— 而这一段存在的
-            # 全部理由就是**对冲转述失真**。见 `agent._user_turns` 的 docstring。
-            after = str(t.get("after") or "").strip()
-            if n in picked:
-                # 主 agent **点名**的那几轮 → 直接给全文（点名本身就是一次"按需取"）
-                block.append(f"{BODY}- **第 {n} 轮（{len(text)} 字）—— 本次工作依据的就是它**：")
-                # ⚠️ 原文**整块缩进**（原来顶在 0 列，跟它上面那个 `-` 对不齐）
-                block += body_lines(text, BODY * 2)
-            else:
-                block.append(f"{BODY}- 第 {n} 轮（{len(text)} 字）：{_one_line(text)}")
-            if after:
-                # `↳` 对齐到**文字**（`- ` 之后），所以点名轮和清单轮看起来是同一个东西
-                block.append(f"{BODY}  ↳ **它在回答的上一句**：「{_one_line(after)}」")
+        # 索引的**形状**在 `turn_lines`（分层与"为什么不再点名"都在那里）；
+        # 这里只负责加段名、来源标注和块尾那句逃生口。
+        block = section_head("user_turns") + turn_lines(turns)
         block.append(
             f"{BODY}（**这是事实来源**；【任务】是这次的要求，两者冲突时**以原话为准**。"
             "要看哪一轮的**完整上下文**（它回答的上一句 ＋ 原话）就用 `read_user_turn(轮次)` 读，"
             "不要凭那几十个字猜。）"
         )
         blocks.append("\n".join(block))
-        # 🔴 **切了几轮就报几轮**（判据②）。逐轮报太吵（一轮两处、5 轮就 10 行），
-        # 所以这里报**一次合计** —— 数字由产出方自己算，**不靠事后解析事后文本**。
-        #
-        # ⚠️ **只算真的被切了的**：短于 40 字的轮次是**整段给出**的（`_one_line` 原样返回），
-        # 把它算进去就会报出"保留 40 字 / 原文 13 字"这种**自相矛盾**的数
-        # （2026-11-03 实测踩到，`handoff-verify-7` 的日志里）。
-        unpicked = [t for t in turns if t.get("n") not in picked]
-        cut_src = [_flat(t.get("text")) for t in unpicked]
-        cut_src += [_flat(t.get("after")) for t in turns if t.get("after")]
-        cut = [x for x in cut_src if len(x) > _one_line_limit]
-        if cut:
-            from proto import trace
-
-            trace.cut(
-                "交接书·用户原话清单（含「它在回答的上一句」）",
-                _one_line_limit * len(cut),
-                sum(len(x) for x in cut),
-                see="`read_user_turn(轮次)`（执行器自己读，含「它在回答的上一句」）",
-            )
+        # ⚠️ 这里**不再报 `trace.cut`**（原来报的是"点名轮之外的被切了几轮"）：
+        # 索引行**不是"被切掉的正文"**，是这一层**本来就只放一行** ——
+        # 审计的四种截断状态里它属于 📋「清单 + 按需」（正文按需取），不是 ⚠️「显式截断」。
+        # "这轮多大、你只看到开头"由 `（X 字）` ＋ `…` ＋ 块尾那句逃生口说清楚。
 
     # ── ③ 问答经过：**一条时间序**（历次问→答，末尾接上"它最后说的那句"）──
     #

@@ -23,7 +23,7 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 from proto.handoff import BODY, SECTION
-from proto.handoff.briefing import _flat, render_briefing
+from proto.handoff.briefing import _flat, _one_line_limit, render_briefing
 from proto.artifacts import ARTIFACTS, store_artifact
 
 #: **显式排除名单** —— 这些字段不进交接书，每一条都要有理由。
@@ -37,9 +37,8 @@ EXCLUDED: dict[str, str] = {
 
 #: 通用循环**查不了**的字段 —— 由下面的专门分块断言（不是排除，是换一种查法）
 SPECIAL: dict[str, str] = {
-    "user_turns": "嵌套结构（每轮 {n, text}）；而且**只有开头几十个字该进交接书**（渐进式披露），"
-                  "通用循环要求「值全文出现」，对它是反的 —— 见 ⑤",
-    "based_on": "数字列表；通用循环里 `str(1) in text` 恒真，查了等于没查 —— 见 ⑤",
+    "user_turns": "嵌套结构（每轮 {n, text}）；而且**索引里只放一行开头**（正文按需取），"
+                  "通用循环要求「值全文出现」，对它是反的 —— 见 ④",
     "qa": "嵌套结构（每对 {by, q, a}）；而且**要断的是「问和答成对出现」**，"
           "不是「每个字段值都出现」—— 见 ⑦",
 }
@@ -74,9 +73,9 @@ def _full_task() -> dict:
              "a": "填空补白"},
         ],
         "agent_tried": True,
-        # 第 1 轮**点名**了（主 agent 说"这次工作依据的就是它"）→ 交接书里给**全文**
-        # 第 2/3 轮没点名 → 只给**开头几十个字**（全文按需 `read_user_turn`）
-        # ⚠️ 没点名的这两轮必须**长于 40 字**，否则"开头"就是全文，⑤ 的负向断言就测不出东西
+        # 🔴 平台**不挑**哪几轮给全文（2026-11-03）：每一轮都只进**索引**一行
+        # （序号 · 字数 · 开头），全文按需 `read_user_turn`。
+        # ⚠️ 这三轮都**长于 40 字** —— 否则"开头"就是全文，④ 的负向断言测不出东西。
         "user_turns": [
             # 第 1 轮前面没有 AI 消息 → after 为空（渲染时那一行不该出现）
             {"n": 1, "text": "帮我给三年级语文《荷花》备一节课，出教案。人教版三年级下册，"
@@ -90,7 +89,6 @@ def _full_task() -> dict:
                              "常见卡点是比喻句的理解，需要搭支架。",
              "after": "收到，我这就按你说的调整。"},
         ],
-        "based_on": [1],
     }
 
 
@@ -119,23 +117,28 @@ def main() -> None:
     check("说了冲突以后面的为准", "以后面的为准" in text)
     check("说了在已有产物上补全", "在它基础上补全" in text)
 
-    print("\n④ 用户原话：清单逐轮出现、点名的给全文、**没点名的不给全文**")
-    picked = set(task["based_on"])
+    print("\n④ 用户原话：**每一轮都在索引里**（一行），正文**一律按需**")
+    # 🔴 用户 2026-11-03：不再由主 agent 点名（"哪几轮相关"是**读的时候**才成立的关系，
+    # 而编号只活在平台内部 —— 实测就数错了）。平台只保证两件确定的事：
+    # ① 每一轮都在索引里；② 索引那一行**一字不改**地搬原话的开头。
+    # 常驻成本 ∝ **轮次数**，与文本量无关 —— 用户粘 5 万字，这一层也只涨一行。
     for t in task["user_turns"]:
-        head = " ".join(t["text"].split())[:40]
-        listed = f"第 {t['n']} 轮" in text and head in text
+        head = " ".join(t["text"].split())[:_one_line_limit]
+        listed = f"第 {t['n']} 轮（{len(t['text'])} 字）" in text and head in text
         check(
-            f"第 {t['n']} 轮在清单里（轮次 + 开头）",
+            f"第 {t['n']} 轮在索引里（序号 + 字数 + 开头）",
             listed,
             "" if listed else f"没找到：第 {t['n']} 轮 / {head!r}",
         )
-        if t["n"] in picked:
-            check(f"第 {t['n']} 轮**点名了 → 给了全文**", t["text"] in text)
-        else:
-            # 🔴 这条是**渐进式披露的正向保证**：没点名的轮次，全文**不该**进交接书
-            check(f"第 {t['n']} 轮没点名 → **没给全文**", t["text"] not in text)
+        # 🔴 **正向保证**：超出一行的正文**不该**进交接书（它是按需那一层的事）
+        if len(" ".join(t["text"].split())) > _one_line_limit:
+            check(f"第 {t['n']} 轮超一行的部分**没进上下文**", t["text"] not in text)
     check("说了这是事实来源、冲突以原话为准", "以原话为准" in text)
     check("说了要看全文用 read_user_turn", "read_user_turn" in text)
+    # 索引层的成本**只跟轮次数走**：短轮次（一行装得下）就是全文，一个字都不丢
+    short = {"n": 9, "text": "讲解示范", "after": ""}
+    t2 = render_briefing({**task, "user_turns": [short]})
+    check("短轮次（一行装得下）→ 索引行**就是全文**", "第 9 轮（4 字）：讲解示范" in t2)
 
     print("\n⑤ 来源标注：**哪句是用户说的、哪句是模型说的**，一眼分得清")
     check("【任务】标明是主 agent 交代的", "主 agent 交代的" in text)
@@ -216,7 +219,7 @@ def main() -> None:
     #    所以"最后一问 == report"在**每一次重入渲染时恒成立**（实测 R07：白贴 275 字）。
     base = {
         "task": "生成导学单", "stage": "waiting_for_input",
-        "user_turns": [], "based_on": [], "progress": "", "missing": [],
+        "user_turns": [], "progress": "", "missing": [],
         "artifacts": [], "refs": [],
     }
     # 多行的问（真实形状：执行器的整条 report，前面还有一句交代）
@@ -252,9 +255,10 @@ def main() -> None:
         stray = [ln for ln in render_briefing(t).splitlines()
                  if ln.startswith("【") and ln.strip() not in SECTION.values()]
         check(f"{label}：段名独占一行（后面不跟内容）", not stray, f"越界的行：{stray[:2]}")
-    # 🔴 这条是**结构性**的：它一次盖住实测那三种破法 ——
-    #   ① 多行的「答」续行掉到 0 列；② 「答」和「问」的续行同缩进（靠 ③ 的编号区分）；
-    #   ③ 点名轮的原文顶在 0 列。任何一种复发，这里当场红。
+    # 🔴 这条是**结构性**的：它一次盖住实测那两种破法 ——
+    #   ① 多行的「答」续行掉到 0 列；② 「答」和「问」的续行同缩进（靠编号区分）。
+    #   （原来还有 ③ 点名轮的原文顶在 0 列 —— 已随"点名"一起消失，2026-11-03。）
+    #   任何一种复发，这里当场红。
     # ⚠️ 断言对象是**渲染结果**，不是源码写法 —— 换实现也照样管用。
     for label, t in (("满字段的 Task", task), ("重入（含折叠）", dup), ("兜底那条路", diff)):
         bad = [ln for ln in render_briefing(t).splitlines()

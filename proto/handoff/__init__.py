@@ -62,7 +62,6 @@ SECTION: dict[str, str] = {
     # ── 派发被拒（平台 → 主 agent，**不建 Task**）──
     "not_dispatched": "【这次没有派发】",
     "available_skills": "【可用的能力】",
-    "available_turns": "【本会话的用户原话】",
     "available_artifacts": "【本会话现有产物】",
 }
 
@@ -124,7 +123,9 @@ def section_head(key: str) -> list[str]:
 #:
 #:   ① 多行的「答」**续行掉到 0 列**，整块脱出所在段落（只给「问」缩了，没给「答」缩）；
 #:   ② 「答」那一行和「问」的续行**同一个缩进** → 答看起来像问的一部分；
-#:   ③ 点名轮的原文在 0 列，跟它上面那个 `-` 对不齐。
+#:   ③ 被点名那几轮的原文在 0 列，跟它上面那个 `-` 对不齐
+#:      （⚠️ 这条**已随"点名"一起消失**，2026-11-03 —— 用户原话现在只有**索引**一种形状，
+#:      见 `briefing.turn_lines`。规矩不变，只是再也没有"第二种形状"可对不齐）。
 #:
 #: 一条规矩治三种：**段名 0 列 · 段体 2 列 · 每层 +2**。
 #:
@@ -203,6 +204,6 @@ HOPS: dict[str, tuple[str, ...]] = {
         "deliver", "produced", "report", "progress", "missing", "agent_answer", "next",
     ),
     "receipt_rejected": (
-        "not_dispatched", "available_skills", "available_turns", "available_artifacts",
+        "not_dispatched", "available_skills", "available_artifacts",
     ),
 }
