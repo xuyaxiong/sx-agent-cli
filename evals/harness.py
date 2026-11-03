@@ -703,7 +703,18 @@ def _render_messages(turn: dict) -> list[str]:
             ]
             continue
         n += 1
-        out += [f"**{n}. {kind}**", "", "```", content[:800], "```", ""]
+        # ⚠️ 兜底分支（未知消息类型）—— 切了**必须标**（交接三问②，用户 2026-11-02）：
+        # 一声不吭的一刀，读的人分不清"它就这么多"和"被切了"，而这两种情况该做的决定不同。
+        # （`docs/handoff-audit.md` H19 记的就是这一处 —— 它是审计里**最后一处**静默截断。）
+        out += [
+            f"**{n}. {kind}**",
+            "",
+            "```",
+            content if len(content) <= 800
+            else content[:800] + f"\n…（**平台截断：还有 {len(content) - 800} 字未显示**）",
+            "```",
+            "",
+        ]
     return out
 
 
