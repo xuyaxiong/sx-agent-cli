@@ -27,11 +27,9 @@ import shutil
 import sys
 import time
 import unicodedata
-import threading
 from pathlib import Path
 
-import yaml
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import HumanMessage
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -138,7 +136,6 @@ _STYLE: dict[str, tuple[str, str]] = {
     "ret":    ("🔙 RETURN",   "\033[90m"),   # 灰
     "inject": ("📥 INJECT",   "\033[35m"),   # 紫
     "decide": ("🧭 DECIDE",   "\033[95m"),   # 亮紫
-    "judge":  ("🧭 DECIDE",   "\033[95m"),   # 旧角色名，同 DECIDE
     "exec":   ("🚀 RUN",      "\033[94m"),   # 亮蓝
     "ask":    ("💬 ASK",      "\033[91m"),   # 亮红
     "plat":   ("📮 PLATFORM", "\033[90m"),   # 灰
@@ -149,29 +146,8 @@ _STYLE: dict[str, tuple[str, str]] = {
 
 _COLOR = sys.stdout.isatty() and not os.environ.get("NO_COLOR")
 
-#: 实时播报：trace 日志里**值得推到终端**的行。左边是判据（子串），右边是角色。
-#: 这些行**自带真实时间戳**（`proto.trace` 写的时候就打了），所以直接用它，不要自己补时间。
-_LIVE: tuple[tuple[str, str], ...] = (
-    # （主 agent 的工具调用由 dump 里的 `tool_call=` 播 —— 那行更全、带参数）
-    #
-    # 🔴 **切了一刀就得看得见**（交接三问②）。`trace.cut` 是**切的那一方自己报的**记录，
-    # 原来只落在 trace 文件里 —— 终端上读的人只能从两个数字倒推（"材料 5136 字｜
-    # 判定看到 4111 字"），而"截断"这两个字不在。
-    # ⚠️ **标记不必长在切口上**（用户 2026-11-03）：切口那个标记是给**读正文**的人
-    # （判定 / 执行器）的 —— 它读的就是正文，中间断开不标就等于把两段拼成一段；
-    # 而**读日志**的人要的标记，落在**块的头或尾**就够了。这一行正是那个"头"：
-    # 它由切的那一方在切的那一刻写下，时间戳紧挨着它所属的那个块。
-    ("✂️ 截断 · ", "plat"),
-    ("delegate · ", "plat"),
-    ("取代了 ", "plat"),
-    ("run_task · R", "exec"),
-    ("run_task 结束", "exec"),
-    ("prepare · 投递用户原话", "plat"),
-    ("prepare: 待答", "plat"),
-    ("prepare: ✅", "done"),
-    ("prepare: ⏳", "ask"),
-    ("prepare: ❌", "ask"),
-)
+# （旧 `_LIVE` 子串匹配表已删 —— 2026-11-03 起角色归属改由事件的 `kind` 语义标签决定，
+#   见下面的 `_ROLE_BY_KIND`。按子串认行的失配风险（措辞一改就静默丢块）随之作废。）
 
 
 def _dw(s: str) -> int:
@@ -213,15 +189,6 @@ def _dw(s: str) -> int:
 #: *"那个缩进还是不缩进了 对齐吧 反正颜色不一样能区分"*。
 _LABEL_W = 12   # gutter 里标签的宽度（按显示列算；最长的 EXECUTOR/PLATFORM 是 11 列）
 _TS = "[00:00:00.000] "   # gutter 宽度占位（显示只到时间，日期省掉）
-
-#: 播报里已经打过的"执行器的话"（归一化前 60 字）—— 去重用。
-#: 不去重的话，同一段话会以 🗣 EXECUTOR（实时）和 🧠 AGENT（小结）出现两次。
-_SHOWN_EXEC: set[str] = set()
-
-
-def _norm(s: str) -> str:
-    return " ".join(s.split())[:60]
-
 
 #: **读全文的工具** —— 它们的返回**一个字都不贴**，只报"读了多大一份、原文在哪"。
 #:
@@ -337,12 +304,29 @@ def _wrap(s: str, width: int) -> list[str]:
     return out
 
 
-def _emit(role: str, text: str, stamp: str | None = None) -> None:
+def _cap_line(text: str) -> str:
+    """机制层摘要行的截断 —— **切了必须标**（交接三问②）。
+
+    🔴 单独成函数是为了**只有一个来源**：`_emit` 用它，单测的捕获器也用它。
+    原来是内联在 `_emit` 里，测试的 stub 重写了一遍 `_emit` 就把这段丢了 ——
+    于是「超长行带截断标记」那条断言测的是 stub 自己，**永远是红的**（2026-11-03 发现）。
+    """
+    if len(text) <= _LIVE_CAP:
+        return text
+    return text[:_LIVE_CAP] + f"（**平台截断：还有 {len(text) - _LIVE_CAP} 字未显示**）"
+
+
+def _emit(role: str, text: str, stamp: str | None = None, *, cap: bool = False) -> None:
     """按统一版式打一条：`[时间] 标签 ┃ 内容`，续行对齐到 `┃`。
 
     🔴 **两层靠颜色分，不靠缩进**（用户 2026-10-30：*"那个缩进还是不缩进了 对齐吧
     反正颜色不一样能区分"*）：正文层亮色、机制层暗灰，**左边一律对齐**。
+
+    `cap=True`：机制层摘要行超过 `_LIVE_CAP` 带**标记**截断（切了不标是最糟的）；
+    决策块 / 注入块**永不截**（那是观察窗口）。
     """
+    if cap:
+        text = _cap_line(text)
     icon, color = _STYLE[role]
     stamp = _short_ts(stamp or trace.stamp())
     pad = " " * max(0, _LABEL_W - _dw(icon))
@@ -364,230 +348,237 @@ def _emit(role: str, text: str, stamp: str | None = None) -> None:
         _to_file(cont + ln)
 
 
-def _close_block(st: dict) -> None:
-    """把挂着的块**先吐出来**，再播下一行。
+# ──────────────────────────── 事件订阅：展示层只认结构化事件 ────────────────────────────
+#
+# 🔴 **契约是事件，不是文本**（2026-11-03 架构定）：本层**订阅** `proto.trace` 的事件总线，
+# 拿到的是结构化事件（谁 → 谁、字段是什么、消息对象本身）——**不再 tail 日志文件、
+# 不再按字符串前缀认行、不再做 repr 反转义**。前缀 / 缩进 / gutter 是本层的排版决策，
+# 记录层不知道它们存在。
+# （旧做法等于展示层对记录层的输出做**反结构化**——正是 `proto/handoff` 那条铁律禁止的事；
+#  2026-11-02 harness 手抄段名失配的事故，结构上就是它。旧的三条 hack 随之作废：
+#  repr 反转义、跨段 FIFO 配对工具名、按子串认块——`tool_call_id` 在消息对象里本来就有。）
+
+#: 业务语义标签 → 显示角色。记录层只发"发生了什么"（`kind`），**角色归属是本层的决定**。
+_ROLE_BY_KIND: dict[str, str] = {
+    "dispatch": "plat",         # delegate 委派
+    "supersede": "plat",        # 取代旧 Task
+    "delegate_failed": "plat",  # 委派以 failed 收场
+    "run_begin": "exec",        # run_task 开始（section）
+    "run_end": "exec",          # run_task 结束
+    "feed": "plat",             # 平台把用户原话投给待答任务（section）
+}
+
+#: 有**专门渲染分支**的 kind（不走上表那条"摘要行"的路）。
+_SPECIAL_KINDS = frozenset({
+    "ask_main",            # 试答：开一个挂着的块，PROMPT/RESPONSE 归并进来
+    "executor_briefing",   # 平台注入执行器的整份交接书（block）
+    "waiting",             # 主 agent 答不上 → 登记待答（note）
+    "relay",               # 待答透传（note）
+    "llm_io",              # 那次 LLM 调用的 PROMPT/RESPONSE/失败提示
+})
+
+#: **故意不上屏**的 kind —— 只进日志文件。写在这里 = 一个**表态**（不是漏了）。
+_LOG_ONLY_KINDS = frozenset({
+    "nudge",   # 推执行器继续的提示词（正文已由 `handoff("推回去")` 记档）
+    "judge",   # 判定那次调用的 section（结论在 `decision` 事件里，已经是人话）
+})
+
+# 🔴 三个集合的**并集必须覆盖 `trace.KINDS`**（`unit_console` ⑪ 守着）：
+#    新加的 kind 必须在**这一层**当场表态 —— 上屏 / 有专门分支 / 只进日志。
+#    漏表态的后果是那一行**静默消失**（2026-11-03 审核 F3）。
+
+#: 挂着的块：`[role, lines, ts]` —— 只用于把同一次 LLM 调用的 PROMPT/RESPONSE 归并成一块。
+_PENDING: list | None = None
+
+#: 播报行的长度上限（超了带标记截断）—— 只对机制层摘要行生效，决策块 / 注入块不截。
+_LIVE_CAP = 400
+
+
+def _close_pending() -> None:
+    """把挂着的块先吐出来，再播下一条事件。
 
     🔴 **整块照打，不截断**：这些块是**平台注入**（交接书 / 台账）和
     **LLM 决策**（判定 / 试答）—— 用户点名"千万不要截断"的那类。
-    但"整块"只指**内容**，不指**时机**：块没闭合就播下一行，
-    读的人看到的因果就是倒的（见 `_feed` 里那条实测）。
+    但"整块"只指**内容**，不指**时机**：块没闭合就播下一条，
+    读的人看到的因果就是倒的（2026-11-03 实测踩过：执行器都交付完了，
+    "平台在注入任务"才姗姗播出）。
     """
-    if st["block"] is not None:
-        _emit(st["block"][0], "\n".join(st["block"][1]), stamp=st["block"][2])
-        st["block"] = None
+    global _PENDING
+    if _PENDING is not None:
+        _emit(_PENDING[0], "\n".join(_PENDING[1]), stamp=_PENDING[2])
+        _PENDING = None
 
 
-def _feed(st: dict, line: str) -> None:
-    """把一行 trace 日志喂给状态机，该播的播出去。
+def _render_decision(ev: dict) -> str:
+    """决策**事件** → 显示文本。排版是本层的（记录层文件里那份缩进与本层无关）。
 
-    用户要的细节（2026-10-29）：*"工具调用 谁调用的 调用了什么工具 参数是什么 返回结果是什么…
-    柔性的流程关键分支决策，一般都是调用 llm 实现，谁决策的，决策结果是什么，走了什么分支…
-    平台注入的系统提示词 注入了什么内容 什么时候注入的 什么阶段（步骤）注入的"* ——
-    所以这里不是"播报进度"，是把**因果链**摊开：
-
-        谁（主 agent / 执行器 / 平台 / 判定）× 做了什么 × 参数或内容 × 结果
+    🔴 **段名与顺序从 `trace.DECISION` 取**，不在这里再抄一份：抄一份的后果是
+    记录层加了一段、终端**静默少一段**（2026-11-03 审核 F2 实测）。
+    缩进仍归本层 —— 记录层用 4 格，这里 0/2 格。
     """
-    m = re.match(r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\]\s?(.*)", line, re.S)
-    if m:
-        st["ts"] = m.group(1)
-        body = m.group(2)
-        # ⚠️ `PROMPT（…）` / `RESPONSE（…）` 这两行**自带新时间戳**，但它们属于**同一个事件**
-        # （`safe_structured` 先 section 再 block，两行都带 [ts]）——
-        # 一律当"新事件"处理的话，块刚开就被冲掉，内容全丢（实测踩过）。
-        if st["block"] is not None and body.startswith(("PROMPT（", "RESPONSE（")):
-            st["block"][1].append(body)
-            return
-        # 🔴 **先关块，再播这一行**（2026-11-03 实测踩到）：流式行原来在这句**之前** `return`，
-        # 于是它插队播出、块继续挂着 —— 执行器那 122 秒里带时间戳的行**只有流式行**，
-        # 注入块（14:39:33）一直挂到执行器说完（14:41:23）才吐出来。
-        # 读的人看到的是"教案都生成完了，平台还在注入任务" —— **时序是反的**，
-        # 而这一跳（平台注入了什么、什么时候注入的）正是要摊开给人看的东西。
-        _close_block(st)
-        if body.startswith(trace.STREAM_MARK):
-            # 🔴 **模型正在写的那一行**（`trace.stream_agent` 攒到换行就写一行）。
-            # 这是"看着它干活"的唯一来源 —— 一次 LLM 调用那几十秒，别的什么都没有。
-            who, _, text = body[len(trace.STREAM_MARK) :].partition("⟩ ")
-            _emit("say" if who.startswith("执行器") else "agent", text, stamp=st["ts"])
-            return
-
-        if "消息轨迹" in body:  # 段落头：接下来的续行是谁的 dump
-            st["section"] = "exec" if "run_task" in body else "agent"
-            return
-        if body.startswith("发给执行器的内容"):
-            # 平台注入给执行器的**整份交接书**（任务 / 上次做到哪 / 历次答复 / 可读产物）
-            st["block"] = ("inject", ["平台 → 执行器：本次交接的全部已知"], st["ts"])
-            return
-        if body.startswith(trace.DECISION_HEAD):
-            # 🔴 **一次 LLM 决策 = 一块**：前提 → 问题 → 结果 → 下一步（用户 2026-11-03）。
-            # ⚠️ 认块的依据是 `trace.DECISION_HEAD` —— 记录层和这里**同一张表**；
-            # **不是** `"轮判定：status="` 那种内容特征：措辞一改就**静默失配**，
-            # 块认不出来 → 整块当噪音丢掉，而丢的正是"平台为什么这么决定"。
-            # 首行去掉 `🧭 决策` —— 左边 gutter 上已经有一个 🧭 DECIDE 了。
-            st["block"] = (
-                "decide",
-                [body[len(trace.DECISION_HEAD) :].lstrip(" ·")],
-                st["ts"],
-            )
-            return
-        if "平台强制让主 agent 试答" in body:
-            # 🔴 提问链路的关键一环：执行器问了 → **平台强制**让主 agent 先用自己的上下文试答。
-            # 这一块收的是**参与决策的全部信息**（能力 / 任务 / 执行器的话 / 已做到 / 还缺 /
-            # 主 agent 全部上下文，全文不截）—— 用户点名要看这个。
-            # ⚠️ 结论（can_answer）**不在这里**：它在下面那条「决策记录」里，排在**这份证据之后**
-            # —— 前提 → 证据 → 结论，读起来是顺的；也不会同一件事两副面孔。
-            st["section"] = "ask_main"
-            st["block"] = (
-                "decide",
-                ["【试答 · LLM 决策】平台强制的一步（在 `delegate` 内部）",
-                 "参与决策的全部信息（发给 LLM 的全文）↓"],
-                st["ts"],
-            )
-            return
-        if "登记待答" in body:
-            _emit("decide", "分支：主 agent 答不上 → " + body, stamp=st["ts"])
-            return
-        if body.startswith("finalize: 透传"):
-            _emit(
-                "ask",
-                "平台 → 用户：" + body[len("finalize: ") :]
-                + "\n（把上面那条**执行器的原话原样**转达 —— 代码保证不丢；主 agent 若也复述了一遍，那是提示词层面的礼貌，不是平台重复）",
-                stamp=st["ts"],
-            )
-            return
-        # （试答的 RESPONSE 由上面那个块一起收 —— 不单独再打一条，重复）
-        for needle, role in _LIVE:
-            if needle in body:
-                # 🔴 **切了必须标**（交接三问②，用户 2026-11-02）：原来是一刀切下去
-                # **一声不吭** —— 读的人分不清"它就说到这儿"和"被切了"，
-                # 而这两种情况该做的决定**完全不同**。
-                # （`docs/handoff-audit.md` H22 记的就是这一处 🔴 静默截断。）
-                cap = 400
-                if len(body) > cap:
-                    body = body[:cap] + f"（**平台截断：还有 {len(body) - cap} 字未显示**）"
-                _emit(role, body, stamp=st["ts"])
-                return
-        return
-
-    # ── 续行：要么在多行块里，要么在某个 dump 里（trace 日志里没有时间戳前缀的行）──
-    s = line.strip()
-    # ⚠️ **段分隔线不是内容**（`trace.section` 前后那两道 `═══`）：块已经开了的时候
-    # 它会当成续行收进去，于是块中间横着一行 `═══════…`（2026-11-03 实测看到）。
-    if s and set(s) == {"═"}:
-        return
-    if st["block"] is not None:
-        st["block"][1].append(line[2:] if line.startswith("  ") else line)
-        return
-    if st["section"] not in ("exec", "agent"):
-        return
-    if re.match(r"\[\d+\] \w+\(", s):  # `[1] AIMessage(556字)`
-        st["kind"] = s.split("] ", 1)[1].split("(", 1)[0]
-        return
-    if s.startswith("tool_call="):  # 谁调用了什么工具 + 参数
-        rest = s[len("tool_call=") :]
-        name = rest.split(" ", 1)[0]
-        args = rest.split("args=", 1)[1] if "args=" in rest else ""
-        # 🔴 **按段各排各的队**（2026-11-03 实测踩到）：原来是一条**全局** FIFO ——
-        # 主 agent 的 `delegate` 先入队，中间执行器那条链路又入了 `write_artifact`，
-        # 于是执行器的返回弹出来的是 `delegate`，**两个标签整好对调**（用户日志里：
-        # `执行器 → write_artifact` 下面写着「delegate 的返回」，而真正的回执
-        # 又标成了「write_artifact 的返回」）。
-        # 记录层没有 `tool_call_id` 可对（`trace.render_message` 只写 name/args），
-        # 所以按**段**分队 —— 同一段里 dump 是按消息顺序走的，队列天然对得上。
-        st["calls"].setdefault(st["section"], []).append(name)
-        who = "执行器" if st["section"] == "exec" else "主 agent"
-        # ⚠️ **不截参数**：`delegate(task=...)` 就是交接本身，砍了等于看不到交接了什么
-        # （2026-10-30 用户：*"你怎么把这么关键的上下文交接信息给去掉了？？"*）。
-        # 太长由 `_emit` 自己折行（续行带 gutter），不需要在这里砍。
-        _emit("tool", f"{who} → {name}（{args}）", stamp=st["ts"])
-        return
-    if s.startswith("content="):
-        # 日志里是 Python repr（单行、转义过），这里还原成人看的样子：
-        # `\n` → 换行；`\\` → 单个反斜杠（**Windows 路径全靠这条** —— 不还原的话
-        # 用户看到的是 `C:\\Users\\...`，没法直接拷进资源管理器）。
-        # ⚠️ 顺序不能反：先还原 `\n`，再还原 `\\`；否则 `\\n`（字面反斜杠+n）会被拆错。
-        #
-        # 🔴 **两种引号都要剥**（2026-11-03 实测踩到）：Python 的 repr 默认用单引号，
-        # 但**内容里含单引号时会改用双引号** —— 回执正文里正好有 `read_artifact('art_001')`，
-        # 于是只剥 `'` 的话，**整份回执被一对多余的 `"` 包住**（用户日志里一眼看到）。
-        body = (
-            s[len("content=") :].strip().strip("'\"")
-            .replace(chr(92) + "n", "\n")
-            .replace(chr(92) * 2, chr(92))
-        )
-        if st["kind"] == "ToolMessage":  # 工具**返回了什么**
-            q = st["calls"].get(st["section"]) or []
-            who = q.pop(0) if q else "?"
-            if who in _READ_TOOLS:
-                # 🔴 **读全文的工具：一个字都不贴**（见 `_READ_TOOLS`）。
-                # 只报"读了多大一份、原文在哪" —— 上面那行 `🔧 TOOL` 已经写了读的是哪一份。
-                _emit(
-                    "ret",
-                    f"{who} 的返回：（**读了全文，{len(body)} 字** —— "
-                    f"原文在{_READ_TOOLS[who]}里，**不在这里复述**）",
-                    stamp=st["ts"],
-                )
-            else:
-                _emit("ret", f"{who} 的返回：\n{body}", stamp=st["ts"])
-        elif st["kind"] == "SystemMessage":  # 平台注入的台账
-            # 🔴 **不截断**：平台注入是"优化 agent 表现"的观察窗口
-            # （用户 2026-10-30：*"如果没有这些东西观察不到"*）
-            _emit("inject", f"平台 → 主 agent（每轮注入的任务台账）：\n{body}", stamp=st["ts"])
-        elif st["kind"] == "AIMessage":
-            # 执行器的话 → 机制层（🗣）；主 agent 的话 → **正文层**（🧠）。
-            # ⚠️ 都从 dump 实时播：等轮末再打的话，主 agent 的话会跑到机制日志**前面**，
-            # 时序就反了（用户 2026-10-30 指出："包括时序这些"）。
-            if st["section"] == "exec":
-                _SHOWN_EXEC.add(_norm(body))
-                _emit("say", body, stamp=st["ts"])
-            else:
-                _emit("agent", body, stamp=st["ts"])
-
-
-def _drain_once(pos: list[int]) -> None:
-    """把日志里**还没读的**行读完（收尾用）。
-
-    为什么需要：主 agent 的消息轨迹是这一轮最后写进日志的；tailer 在 `graph.invoke`
-    返回后立刻停，最后那批行就漏了 —— 表现为"主 agent 的话只在回合小结里出现、顺序还错"。
-    """
-    path = Path(trace.LOG_FILE)
-    st: dict = {"section": "", "kind": "", "ts": "", "calls": {}, "block": None}
-    try:
-        with path.open(encoding="utf-8", errors="replace") as fh:
-            fh.seek(pos[0])
-            for raw in fh:
-                _feed(st, raw.rstrip("\n"))
-            pos[0] = fh.tell()
-    except OSError:
-        pass
-    _close_block(st)  # 收尾时把没闭合的块也吐出来
-
-
-def _tail_trace(stop: threading.Event, pos: list[int]) -> None:
-    """**边跑边播**：跟着 trace 日志读，把值得看的行实时推出来。
-
-    为什么绕这一圈：`graph.invoke` 是阻塞的，一轮 2–3 分钟、中途一个字都没有 ——
-    用户看到的就是"敲完回车，终端死了"（2026-10-29 实测反馈）。
-    而 trace 日志是**实时**写的，且每行自带真实时间戳 —— 所以时间是事件真实发生的时刻。
-    """
-    path = Path(trace.LOG_FILE)
-    st: dict = {"section": "", "kind": "", "ts": "", "calls": {}, "block": None}
-    while not stop.wait(0.8):
-        if not path.exists():
+    lines = [str(ev["who"])]
+    for key, label in trace.DECISION.items():
+        val = ev.get(key)
+        items = [str(x) for x in val] if isinstance(val, (list, tuple)) else [str(val or "")]
+        items = [x for x in items if x.strip()]
+        if not items:
             continue
-        try:
-            with path.open(encoding="utf-8", errors="replace") as fh:
-                fh.seek(pos[0])
-                for raw in fh:
-                    _feed(st, raw.rstrip("\n"))
-                pos[0] = fh.tell()
-        except OSError:
-            pass
+        if len(items) == 1 and not isinstance(val, (list, tuple)):
+            sub = items[0].splitlines()
+            lines.append(f"{label}：{sub[0]}")
+            lines += [f"  {ln}" for ln in sub[1:]]
+        else:
+            lines.append(f"{label}：")
+            for it in items:
+                ls = it.splitlines() or [""]
+                lines.append(f"  - {ls[0]}")
+                lines += [f"    {ln}" for ln in ls[1:]]
+    return "\n".join(lines)
+
+
+#: 已经吼过的未知角色的值 —— 同一个错误只吼一次，别把屏幕刷了
+_WARNED_ROLE: set[str] = set()
+
+#: 同上：已经吼过的"没表过态的 kind"
+_WARNED_KIND: set[str] = set()
+
+#: 角色 → 屏幕上怎么称呼它。**角色是逻辑（枚举），这里是文案** —— 两回事。
+_ROLE_LABEL = {trace.AGENT: "主 agent", trace.EXECUTOR: "执行器"}
+
+
+def _role_of(ev: dict) -> str:
+    """事件里的角色 —— **只认枚举值**（`trace.AGENT` / `trace.EXECUTOR`）。
+
+    🔴 2026-11-03 e2e 实测暴露的最后一处耦合：原来这两处是靠
+    `"执行器" in str(ev["who"])` / `"run_task" in str(ev["tag"])` 认角色的 ——
+    而那是**措辞**。改个显示名（"执行器"→"执行者"）就**静默降级成主 agent 的角色**，
+    没有报错、没有提示，只是颜色和前缀悄悄错了。
+
+    现在 `role` 是事件里单独的字段。取不到 / 值不合法就**当场吼一声**（同一个值只吼一次），
+    按"未知"上屏 —— 不猜、也不假装没发生。
+    """
+    role = ev.get("role")
+    if role in trace.ROLES:
+        return role
+    key = repr(role)
+    if key not in _WARNED_ROLE:
+        _WARNED_ROLE.add(key)
+        _emit("plat", f"⚠️ 收到未知角色的事件：role={role!r}（type={ev.get('type')}）"
+                      f" —— 按「未知」上屏。合法值：{sorted(trace.ROLES)}",
+              stamp=ev.get("ts"))
+    return "unknown"
+
+
+#: `tool_call_id → 工具名`，**跨事件累积**（不是每个事件重置）。
+#:
+#: 🔴 2026-11-03 修的一个真回归：`dump` 是**按 super-step 分批**发的 ——
+#: 主 agent 的 `tool_call` 落在第 1 步的 dump 里，它的 `ToolMessage`
+#: 却落在第 **2** 步的 dump 里。原来 `by_id` 是 `_on_dump` 的**局部变量**，
+#: 每个事件重建一次，于是跨事件那一半配不上，屏幕上是 `? 的返回：`。
+#: 旧文本契约时代靠"跨段 FIFO 队列"猜着补，删掉它时没做等价替换（漏了）。
+#: id 本身全局唯一，所以这张表全局共享反而是**对的**（并行执行器交错也配得上）。
+_TOOL_NAMES: dict[str, str] = {}
+
+
+def _on_dump(ev: dict) -> None:
+    """消息轨迹事件 —— **消息对象本身就在事件里**。
+
+    工具配对用 `tool_call_id`（结构），不再"按段分队列"猜；
+    文本就是消息对象的 `content`（真字符串），不再反转义 Python repr；
+    说话的是谁按 `ev["role"]` 取，**不从 `tag` 的措辞里认**。
+    """
+    who = _ROLE_LABEL.get(_role_of(ev), "未知角色")
+    for m in ev["messages"]:
+        for c in getattr(m, "tool_calls", None) or []:
+            if c.get("id"):
+                _TOOL_NAMES[c["id"]] = str(c.get("name"))
+            # ⚠️ **不截参数**：`delegate(task=...)` 就是交接本身，砍了等于看不到交接了什么。
+            _emit("tool", f"{who} → {c.get('name')}（{trace.brief_args(c.get('args') or {})}）",
+                  stamp=ev["ts"])
+        kind = type(m).__name__
+        if kind == "AIMessage":
+            continue  # 它说的话已由流式实时播过（同旧契约：dump 不重复播 AI 正文）
+        content = str(m.content)
+        if kind == "ToolMessage":
+            name = _TOOL_NAMES.get(getattr(m, "tool_call_id", "") or "", "?")
+            if name in _READ_TOOLS:
+                # 🔴 **读全文的工具：一个字都不贴**（见 `_READ_TOOLS`）。
+                _emit("ret", f"{name} 的返回：（**读了全文，{len(content)} 字** —— "
+                             f"原文在{_READ_TOOLS[name]}里，**不在这里复述**）", stamp=ev["ts"])
+            else:
+                _emit("ret", f"{name} 的返回：\n{content}", stamp=ev["ts"])
+        elif kind == "SystemMessage":
+            # 🔴 **不截断**：平台注入是"优化 agent 表现"的观察窗口
+            _emit("inject", f"平台 → 主 agent（每轮注入的任务台账）：\n{content}", stamp=ev["ts"])
+
+
+def _on_event(ev: dict) -> None:
+    """事件总线的订阅入口 —— 展示层从这里拿**结构化**事实，自己排版上屏。"""
+    global _PENDING
+    t, k = ev.get("type"), ev.get("kind") or ""
+    # llm_io 的 PROMPT/RESPONSE 归并进挂着的试答块（同一次 LLM 调用 = 同一块）；
+    # 其余任何事件到来都先关块 —— 时序不许倒。
+    if not (t == "block" and k == "llm_io" and _PENDING is not None):
+        _close_pending()
+
+    if t == "stream":
+        # 谁说的 → 按 `role` 枚举取，**不从 `who` 的措辞里猜**（见 `_role_of`）
+        _emit({trace.EXECUTOR: "say", trace.AGENT: "agent"}.get(_role_of(ev), "plat"),
+              str(ev["text"]), stamp=ev["ts"])
+    elif t == "dump":
+        _on_dump(ev)
+    elif t == "section":
+        if k == "ask_main":
+            _PENDING = ["decide", ["【试答 · LLM 决策】平台强制的一步（在 `delegate` 内部）",
+                                   "参与决策的全部信息（发给 LLM 的全文）↓"], ev["ts"]]
+        elif k in _ROLE_BY_KIND:
+            _emit(_ROLE_BY_KIND[k], str(ev["title"]), stamp=ev["ts"], cap=True)
+    elif t == "block":
+        if k == "llm_io" and _PENDING is not None:
+            _PENDING[1].append(str(ev["label"]))
+            _PENDING[1] += str(ev["text"]).splitlines() or [""]
+        elif k == "executor_briefing":
+            # 平台注入给执行器的**整份交接书**（任务 / 上次做到哪 / 历次答复 / 可读产物）
+            _emit("inject", "平台 → 执行器：本次交接的全部已知\n" + str(ev["text"]),
+                  stamp=ev["ts"])
+    elif t == "decision":
+        _emit("decide", _render_decision(ev), stamp=ev["ts"])
+    elif t == "note":
+        if k == "waiting":
+            _emit("decide", "分支：主 agent 答不上 → " + str(ev["text"]), stamp=ev["ts"])
+        elif k == "relay":
+            # 🔴 **原样上屏**：`finalize: ` 那个前缀是**日志文件格式**，归记录层
+            # （`trace._NOTE_HEAD`）—— 这里曾经按**位置**切它（`[len("finalize: "):]`），
+            # 文案措辞一改就静默吃掉 10 个字（2026-11-03 审核 F1 实测）。
+            _emit("ask", "平台 → 用户：" + str(ev["text"])
+                  + "\n（把上面那条**执行器的原话原样**转达 —— 代码保证不丢；主 agent 若也复述了一遍，"
+                    "那是提示词层面的礼貌，不是平台重复）",
+                  stamp=ev["ts"])
+        elif k in _ROLE_BY_KIND:
+            _emit(_ROLE_BY_KIND[k], str(ev["text"]), stamp=ev["ts"], cap=True)
+    elif t == "cut":
+        # 🔴 **切了一刀就得看得见**（交接三问②）：标记落在**块的头**，不必长在切口上。
+        _emit("plat", f"✂️ 截断 · {ev['where']}：保留 {ev['kept']} 字 / 原文 {ev['total']} 字"
+                      + (f"｜全文：{ev['see']}" if ev.get("see") else ""),
+              stamp=ev["ts"], cap=True)
+    # `handoff` 与未打 kind 的 note / section：只进日志文件，不上屏（同旧契约）。
+
+    # 🔴 收尾自检：kind 既没归角色、也没有专门分支、又不在"只进日志"名单里 ——
+    # 说明这一层**没对它表过态**，它就这么静默消失了（2026-11-03 审核 F3）。
+    # 测试里 `unit_console` ⑪ 会先红；这是运行时那道网，防的是"测试没跑到"的路径。
+    if t in ("note", "section", "block") and k and k not in _ROLE_BY_KIND \
+            and k not in _SPECIAL_KINDS and k not in _LOG_ONLY_KINDS:
+        if k not in _WARNED_KIND:
+            _WARNED_KIND.add(k)
+            _emit("plat", f"⚠️ 收到**没表过态**的 kind={k!r}（type={t}）—— 这一条没上屏。"
+                          "去 `chat._ROLE_BY_KIND` / `_SPECIAL_KINDS` / `_LOG_ONLY_KINDS` 里表态。",
+                  stamp=ev.get("ts"))
 
 
 def _turn_summary(snap: dict, elapsed: float) -> None:
     """回合小结：**台账 + 主上下文读数**。
 
-    人和主 agent 的话、工具调用、判定、投递……全都已在**实时播报**（`_tail_trace`）里
+    人和主 agent 的话、工具调用、判定、投递……全都已在**实时播报**（事件订阅 `_on_event`）里
     按真实时序打过了 —— 这里再打一遍就会重复，而且顺序是错的
     （小结在整轮跑完之后才执行）。用户 2026-10-30 指出："包括时序这些"。
 
@@ -707,7 +698,10 @@ def main() -> None:
 
     turns: list[dict] = []
     seen_len = 0
-    trace_pos = [Path(trace.LOG_FILE).stat().st_size if Path(trace.LOG_FILE).exists() else 0]
+    # 🔴 **展示层订阅事件总线**（2026-11-03 架构定）：`graph.invoke` 跑在主线程，
+    # 业务代码每发一个事件，`_on_event` 就**同步**收到 —— 实时上屏，
+    # 不再需要"另起线程 tail 日志文件 + 收尾 `_drain_once` 补漏"那整套机制。
+    trace.subscribe(_on_event)
     t0 = time.time()
     error = None
     try:
@@ -740,19 +734,9 @@ def main() -> None:
             if text.lower() in _EXIT_WORDS:
                 break
             t1 = time.time()
-            # 🔴 `graph.invoke` 是**阻塞**的（一轮 2–3 分钟），所以另起一个线程
-            # **实时 tail trace 日志**把过程推出来 —— 见 `_tail_trace` 的注释。
-            stop = threading.Event()
-            tailer = threading.Thread(target=_tail_trace, args=(stop, trace_pos), daemon=True)
-            tailer.start()
-            try:
-                state = graph.invoke({"messages": [HumanMessage(text)], "log": []}, config)
-            finally:
-                stop.set()
-                tailer.join(timeout=2)
-                # 🔴 **收尾再读一遍**：主 agent 的消息轨迹是这一轮**最后**写进日志的，
-                # 不补这一下，它就被漏掉（表现为"主 agent 的话只在回合小结里出现、且顺序错"）。
-                _drain_once(trace_pos)
+            # `graph.invoke` 是**阻塞**的（一轮 2–3 分钟），但过程**不会**黑屏：
+            # 业务代码发的事件同步到达 `_on_event`，实时上屏（事件订阅，非 tail 日志）。
+            state = graph.invoke({"messages": [HumanMessage(text)], "log": []}, config)
             snap = snapshot(state, text, seen_len, len(turns) + 1, round(time.time() - t1, 1))
             snap["input_source"] = "human"  # 这句是用户当场打的，不是脚本预置
             turns.append(snap)

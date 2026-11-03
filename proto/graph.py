@@ -134,7 +134,7 @@ def _feed_waiting(state: State) -> tuple[list[dict], list[str]]:
         # 原样截下**（此刻的 `report` 就是它问的那句），平台搬，不靠 LLM 转述。
         rec = {**t, "qa": [*(t.get("qa") or []),
                            {"by": "用户", "q": t.get("report") or "", "a": user}]}
-        trace.section(f"prepare · 投递用户原话 → {t['id']} · {t['skill']}")
+        trace.section(f"prepare · 投递用户原话 → {t['id']} · {t['skill']}", kind="feed")
         trace.block("投过去的原话", user)
         trace.note(f"累计问答 {len(rec['qa'])} 对（历次一起带上，否则执行器会重问）")
         # 交接关键日志：投递这一跳（交接书正文由 `run_task` 那边记）
@@ -227,7 +227,10 @@ def node_finalize(state: State) -> dict:
         return {}
 
     block = "\n\n".join(t["report"] for t in waiting)
-    trace.note(f"finalize: 透传 {len(waiting)} 条待答（平台直接贴，不判断主 agent 问没问）")
+    # ⚠️ **只发内容**：`finalize: ` 那个前缀是**日志文件格式**的一部分，归记录器
+    # （`trace._NOTE_HEAD`）—— 业务侧带上它，展示层就得按位置切回来（审核 F1）。
+    trace.note(f"透传 {len(waiting)} 条待答（平台直接贴，不判断主 agent 问没问）",
+               kind="relay")
     # 🔴 **已知膨胀点（判据③）**：这段和**回执的【执行器说】**是**同一段话** ——
     # 一轮之内它会进主 agent 的上下文**两次**（回执一次、这里一次）。
     # 实测（2026-11-03）：两条 report 合计 936 字，各出现 2 次。
@@ -285,7 +288,8 @@ def build():
         step = 0
         # `stream_agent` 顺带把**每个字**也写进日志（攒到换行写一行）——
         # 一次 LLM 调用那几十秒不再是黑屏。
-        for chunk in trace.stream_agent(main_agent, state, config, "主 agent"):
+        for chunk in trace.stream_agent(main_agent, state, config, "主 agent",
+                                        role=trace.AGENT):
             out = chunk
             msgs = chunk.get("messages") or []
             new = msgs[prev_n:]
@@ -293,7 +297,7 @@ def build():
                 continue  # 第一个 chunk 是输入 state 本身，没有新消息
             prev_n = len(msgs)
             step += 1
-            trace.dump_trace(f"主 agent 第 {step} 步", new)
+            trace.dump_trace(f"主 agent 第 {step} 步", new, role=trace.AGENT)
             # 同一批调用**也进 state 的 log** —— 逐轮审计文件（`_run.md`）读的是它，
             # 只写 trace 文件的话，审计时还得两个文件对着看。
             for name, args in trace.tool_calls_of(new):

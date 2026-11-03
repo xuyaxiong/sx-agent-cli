@@ -63,7 +63,7 @@ def _run(script: list[tuple[str, str]]) -> str:
     old_fh = trace._fh
     trace._fh = buf
     try:
-        for _ in trace.stream_agent(_FakeGraph(script), {}, {}, "测试"):
+        for _ in trace.stream_agent(_FakeGraph(script), {}, {}, "测试", role=trace.AGENT):
             pass
     finally:
         trace._fh = old_fh

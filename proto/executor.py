@@ -144,6 +144,7 @@ def _judge(skill: Skill, arts: list[str], material: str, briefing: str = "") -> 
         # 两次都失败时保守当作「没完成、也不问用户」→ 会让它再 react 一轮
         _Judgement(status="incomplete", reason="判定调用失败，保守处理"),
         tag="run_task → 判定任务状态",
+        kind="judge",
         # 🔴 判定 prompt 里嵌着**产物正文**（`_judge_material` 喂的）和**技能原文**
         # （【任务要求】那段）—— 两样都另有出处（产物落盘 / `evals/skills/`），
         # 日志只记上一行"判定输入"的构成，不逐字复述（用户要求）。
@@ -274,7 +275,8 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
     task_text = f"【能力指令】\n{skill.instructions}{refs}\n\n【已知信息】\n{briefing_text}"
 
     run_id = f"R{next(_RUN_SEQ):02d}"
-    trace.section(f"run_task · {run_id} · skill={skill.name}（通用执行器，隔离上下文）")
+    trace.section(f"run_task · {run_id} · skill={skill.name}（通用执行器，隔离上下文）",
+                  kind="run_begin")
     # 🔴 **能力指令按名引用，不逐字复述**（用户要求：读了 skill 只写"读了啥、谁读的"）——
     # 技能原文是静态资产、另有落盘文件；日志里真正要留的是**这次的交接内容**。
     # 交接关键日志：这一跳交了多少、有没有结构化对象（正文在下面那个 block 里）
@@ -284,6 +286,7 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
         f"【能力指令】{skill.name}"
         f"（instructions {len(skill.instructions)} 字，原文见该技能包的 SKILL.md）\n\n"
         f"【已知信息】\n{briefing_text}",
+        kind="executor_briefing",
     )
     t0 = time.time()
 
@@ -293,10 +296,13 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
         # 不传 config —— 传了执行器会变成独立根图。
         # `stream_agent` 边跑边录（每个字都写进日志）—— 一次 LLM 调用那几十秒不再黑屏。
         # ⚠️ `who` 带上技能名：多个执行器**并行**时，流式行会交错，得能分辨是谁。
+        # `role` 是**逻辑**（展示层按它归版式），`who` 只是给人看的名字 —— 两者别混。
         resp = {}
-        for chunk in trace.stream_agent(agent, {"messages": messages}, None, f"执行器·{skill.name}"):
+        for chunk in trace.stream_agent(agent, {"messages": messages}, None,
+                                        f"执行器·{skill.name}", role=trace.EXECUTOR):
             resp = chunk
-        trace.dump_trace(f"run_task 第 {round_i + 1} 轮", resp["messages"])
+        trace.dump_trace(f"run_task 第 {round_i + 1} 轮", resp["messages"],
+                         role=trace.EXECUTOR)
 
         outcome.artifacts = list(created)  # 记账，不扫文本
         outcome.report = _last_ai_text(resp)
@@ -347,7 +353,8 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
         #    判定给了 `missing` 就**精确告诉它缺什么**，比笼统一句"你还没做完"有效。
         if round_i + 1 < MAX_REACT_ROUNDS:
             nudge = nudge_text(j)
-            trace.note(f"⚠️ 第 {round_i + 1} 轮 incomplete → 推它继续（提示词见下）")
+            trace.note(f"⚠️ 第 {round_i + 1} 轮 incomplete → 推它继续（提示词见下）",
+                       kind="nudge")
             trace.handoff("推回去", "平台", "执行器", nudge,
                           structured=f"_Judgement(status=incomplete) → nudge_text", full=True)
             messages = list(resp["messages"]) + [HumanMessage(nudge)]
@@ -359,7 +366,8 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
         f"run_task 结束 · {run_id} · skill={skill.name}：status={outcome.status} "
         f"轮次={outcome.rounds} 产物={outcome.artifacts or '（无）'}"
         f"{'　（多轮）' if outcome.rounds > 1 else ''}"
-        f"（{time.time() - t0:.1f}s）"
+        f"（{time.time() - t0:.1f}s）",
+        kind="run_end",
     )
     return outcome
 

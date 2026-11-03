@@ -157,6 +157,7 @@ def _ask_main(runtime: ToolRuntime, skill_name: str, task: str, outcome: Any) ->
     r = safe_structured(
         _AgentAnswer, prompt, _AgentAnswer(can_answer=False),
         tag="delegate → 平台强制让主 agent 试答",
+        kind="ask_main",
         # ⚠️ 返回**不原样再记一遍**：下面那条决策记录里已经有排好版的「结果」——
         # 再来一条 `can_answer=True answer='课型：…\n学生基础：…'`（转义 repr）
         # 就是同一件事两副面孔（用户 2026-11-03：**不要搞两套**）。
@@ -378,9 +379,11 @@ def delegate(
         #    `answers` 是"派发**之后**用户答的"，时间上不重叠
         "user_turns": turns,
     }
-    trace.section(f"delegate · {skill_name} · {tid}")
+    # kind：语义标签，展示层（订阅事件的那层）按它归角色 —— 不靠子串认行
+    trace.section(f"delegate · {skill_name} · {tid}", kind="dispatch")
     if superseded:
-        trace.note(f"取代了 {len(superseded)} 个同技能的未了结 Task：{[t['id'] for t in superseded]}")
+        trace.note(f"取代了 {len(superseded)} 个同技能的未了结 Task：{[t['id'] for t in superseded]}",
+                   kind="supersede")
 
     def _out(rec: dict, outcome: Any, *, agent_answer: str = "", note: str = "") -> Command:
         """统一的返回口 —— **总是带上被取代的旧 Task**。
@@ -439,7 +442,8 @@ def delegate(
             rec.update(stage="waiting_for_input", report=outcome.report,
                        agent_tried=rec["agent_tried"],
                        progress=outcome.progress, missing=list(outcome.missing))
-            trace.note(f"delegate · {tid} 登记待答（平台负责转达，不由主 agent 代问）")
+            trace.note(f"delegate · {tid} 登记待答（平台负责转达，不由主 agent 代问）",
+                       kind="waiting")
             return _out(
                 rec, outcome,
                 note="平台已登记为待答，**并会负责把这个问题转达给用户**，"
@@ -453,7 +457,8 @@ def delegate(
     #    ⚠️ 附注必须带上 —— 主 agent 要知道"做到什么程度、还缺什么"才能决定下一步。
     rec.update(stage="failed", report=outcome.report,
                progress=outcome.progress, missing=list(outcome.missing))
-    trace.note(f"delegate · {tid} status=incomplete（推了 {outcome.rounds} 轮）→ failed")
+    trace.note(f"delegate · {tid} status=incomplete（推了 {outcome.rounds} 轮）→ failed",
+               kind="delegate_failed")
     return _out(
         rec, outcome,
         note="你可以**换个说法再 delegate 一次**；或者向用户说明这次没做成。",
