@@ -67,6 +67,6 @@ def safe_structured(
             trace.block(f"RESPONSE（{time.time() - t0:.1f}s）", str(r))
             return r
         except Exception as e:  # noqa: BLE001
-            trace.note(f"⚠️ 结构化输出失败（第 {attempt}/2 次）：{type(e).__name__}: {str(e)[:120]}")
+            trace.note(f"⚠️ 结构化输出失败（第 {attempt}/2 次）：{type(e).__name__}: {e}")
     trace.note(f"⚠️ 两次都失败 → 退化到保守默认值 {default}")
     return default

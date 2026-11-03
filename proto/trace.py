@@ -139,6 +139,7 @@ def stream_agent(graph, state, config, who: str):
     流出来是裸 JSON，既不可读、又和已解开的展示重复，见下面的注释。
     """
     buf = ""
+    cur_id: str | None = None      # 当前这条 AI 消息的 id —— 换了消息就把 buf 落盘
 
     def flush_line(line: str) -> None:
         if line.strip():
@@ -159,6 +160,24 @@ def stream_agent(graph, state, config, who: str):
             # 已经是人话，这里再流一遍只是噪音。
             if meta.get("langgraph_node") != "model":
                 continue
+            # 🔴 **换了消息就先把缓冲区落盘**（2026-11-02 实测踩到）。
+            #
+            # 模型调工具前会先说一句、工具跑完再接着说，**两段之间没有换行符** ——
+            # 攒在同一个 `buf` 里就被黏成一句。实测现象（`interactive-skills-1102-174302`）：
+            #
+            #   好的，信息齐了，我来生成导学单已生成，以下是交付情况：
+            #   └─ 调 delegate 前说的 ──────┘└─ 工具返回后说的 ──┘
+            #
+            # 中间隔着 **85 秒**（执行器在干活），日志上却是连着的一句话。
+            # 判据用 `chunk.id`：同一条 AI 消息的流式 chunk 共享 id，换一次模型调用就换 id。
+            # ⚠️ 有些 provider 不给 id（`None`）—— 那时**保持原行为**，不要瞎猜边界。
+            cid = getattr(chunk, "id", None)
+            if cid and cur_id and cid != cur_id:
+                flush_line(buf)
+                buf = ""
+            if cid:
+                cur_id = cid
+
             text = _chunk_text(chunk)
             if not text:
                 continue

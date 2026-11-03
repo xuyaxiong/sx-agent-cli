@@ -43,7 +43,7 @@ def _print_new_messages(result: dict, seen: list[int]) -> None:
             if str(m.content).strip():
                 print(f"\n🤖 {m.content}\n")
         elif kind == "SystemMessage":
-            print(f"   │ 📌 {str(m.content)[:80]}…")
+            print(f"   │ 📌 {m.content}")
     seen[0] = len(msgs)
 
 
@@ -65,7 +65,7 @@ def _dump(result: dict) -> None:
             f"产物={t['artifacts'] or '（无）'}"
         )
         if t.get("agent_tried"):
-            print(f"   │     主 agent 试答过；执行器说={t['report'][:60]!r}")
+            print(f"   │     主 agent 试答过；执行器说={t['report']!r}")
     ctx = _ctx_chars(result.get("messages") or [])
     body = sum(len(v["content"]) for v in ARTIFACTS.values())
     print(f"   │ ★ 主 agent 上下文 = {ctx} 字 ｜ 产物库正文 = {body} 字")
@@ -98,7 +98,7 @@ def main() -> None:
                 waiting = [t for t in (result.get("tasks") or []) if t.get("stage") == "waiting_for_input"]
                 if not waiting:
                     break
-                print(f"\n❓ 执行器说：{waiting[0]['report'][:100]}")
+                print(f"\n❓ 执行器说：{waiting[0]['report']}")
                 print(f"   自动答复：{args.answer}")
                 result = graph.invoke(
                     {"messages": [HumanMessage(args.answer)], "log": []}, config

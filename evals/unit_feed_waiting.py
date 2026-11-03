@@ -78,8 +78,9 @@ def main() -> None:
                 "stage": "waiting_for_input",
                 "artifacts": [],
                 "refs": [],
-                "answers": ["课前预习"],
-                "agent_answer": "",
+                # 🔴 问答**成对**存（用户 2026-11-02）：`report` 是覆盖写的，
+                # 只存答案的话第二次投递后旧答案就没有指涉了 —— 见 `Task.qa`
+                "qa": [{"by": "用户", "q": "这份导学单用在哪？", "a": "课前预习"}],
             }
         ],
     }
@@ -91,10 +92,14 @@ def main() -> None:
 
     print("\n② 主 agent 之前补的信息也要带上（同类问题：用完即弃会被冲掉）")
     seen = _capture()
-    state["tasks"][0]["agent_answer"] = "用户之前说过是三年级"
+    state["tasks"][0]["qa"] = [
+        *state["tasks"][0]["qa"],
+        {"by": "主 agent", "q": "这份导学单用在哪？", "a": "用户之前说过是三年级"},
+    ]
     graph._feed_waiting(state)
     prompt = seen[0][0] if seen else ""
-    check("带上 agent_answer", "用户之前说过是三年级" in prompt, prompt[-240:] if prompt else "")
+    check("带上主 agent 补的那条", "用户之前说过是三年级" in prompt, prompt[-240:] if prompt else "")
+    check("**两条都在**（历次累积，不覆盖）", "课前预习" in prompt, prompt[-240:] if prompt else "")
 
     print("\n③ 可读产物清单照旧要带上（否则续跑时执行器看不见前序产物）")
     from proto.artifacts import ARTIFACTS, store_artifact
@@ -120,7 +125,14 @@ def main() -> None:
     )
     graph._feed_waiting(state)
     prompt = seen[0][0] if seen else ""
-    expect = render_briefing({**state["tasks"][0], "answers": ["课前预习", "篇幅一页"]})
+    # 期望值**独立地**拼一遍（不抄 `_feed_waiting` 内部那个表达式），
+    # 断的是"投递确实走的是 render_briefing"这条不变量
+    delivered = {**state["tasks"][0]}
+    delivered["qa"] = [
+        *delivered["qa"],
+        {"by": "用户", "q": delivered.get("report") or "", "a": "篇幅一页"},
+    ]
+    expect = render_briefing(delivered)
     check("提示词 == render_briefing(投递后的 Task)", prompt == expect, f"实际：\n{prompt[:400]}")
     check("上一轮的进度也带上了", "已完成学习目标" in prompt)
     check("它上次问过什么也带上了", "请问用在哪" in prompt)

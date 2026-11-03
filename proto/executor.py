@@ -375,18 +375,31 @@ def _user_turn_reader(user_turns: list[dict]):
     ⚠️ **用闭包，不用模块级全局**：并行 delegate 时两个执行器会互相覆盖 ——
     `ARTIFACT_DIR` 那种全局状态在这儿就是坑（同源教训见 `graph._merge_tasks`）。
     """
-    by_n = {int(t["n"]): str(t["text"]) for t in user_turns}
+    by_n = {int(t["n"]): t for t in user_turns}
 
     @tool
     def read_user_turn(turn: int) -> str:
-        """读某一轮**用户原话的全文**（交接书里的清单只有开头几十个字）。
+        """读某一轮**用户原话的完整上下文**：原话全文 ＋ **它在回答的那一句**。
 
         交接书【用户原话】那一段列了每一轮的开头；**确定这一轮确实用得上再读** ——
         别把每一轮都拉进上下文。
+
+        ⚠️ 像「A」这种**短应答**，脱离它回答的问题就没有意义（选项列表在那一句里）——
+        所以这里给的是**整轮**，不只是那几十个字。
         """
         if turn not in by_n:
             return f"没有第 {turn} 轮。现有：{'、'.join(str(n) for n in sorted(by_n))}"
-        return f"【用户原话 · 第 {turn} 轮】\n{by_n[turn]}"
+        t = by_n[turn]
+        out = [f"【用户原话 · 第 {turn} 轮】", str(t.get("text") or "")]
+        after = str(t.get("after") or "").strip()
+        if after:
+            out += [
+                "",
+                "—— **它在回答的上一句**（可能是主 agent 说的，也可能是平台把执行器"
+                "自己的提问透传给用户的那条）：",
+                after,
+            ]
+        return "\n".join(out)
 
     return read_user_turn
 
@@ -484,8 +497,10 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
             f"{run_id} 第 {round_i + 1} 轮判定：status={j.status}　·　"
             f"判定看到：{material.count('【产出')} 段产出 + {len(outcome.artifacts)} 个产物"
             f"（{len(material)} 字）\n"
-            f"          理由：{j.reason[:160]}\n"
-            f"          进度：{j.progress[:160] or '（无）'}\n"
+            # ⚠️ **日志不截断**（`trace.render_message` 那条契约）：判定理由**只写日志**，
+            # 它要是被切了，事后复盘误判就没得看了。
+            f"          理由：{j.reason or '（无）'}\n"
+            f"          进度：{j.progress or '（无）'}\n"
             f"          还缺：{j.missing or '（无）'}"
         )
 

@@ -111,6 +111,29 @@ def _last_human(state: State) -> str:
     return ""
 
 
+def _brief(text: str, limit: int) -> str:
+    """台账里的长文本 —— **要短就得说清"这是短的"**（用户 2026-11-02 的「交接三问」）。
+
+    > "一定要注意交接的地方：① 交接了什么内容 ② **内容是否被截断了**
+    >  ③ **过长的交接内容是否考虑了渐进式披露**。"
+
+    这里选**显式截断**而不是渐进式披露，理由是**出处**：台账是**每轮重复注入**的索引，
+    而全文另有出处 —— 那次的**回执**（`delegate` 的返回）就在对话历史里，
+    主 agent 想看随时看得到。渐进式披露要配一个"按需取"的工具，这里不需要新造。
+
+    🔴 **切了不标，是这两种做法里更糟的一种**：读的人分不清
+    "它就说这么多"还是"被切了" —— 而这两种情况该做的决定**完全不同**
+    （前者该换个说法重派，后者该去翻回执）。
+
+    ⚠️ 顺手把换行压成空格：台账是**一行一条**的列表，多行值会把缩进结构撑坏。
+    这不算内容损失（只动了空白），但**别在这里做别的加工**。
+    """
+    text = " ".join(str(text or "").split())
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit]}……【平台截断：还有 {len(text) - limit} 字，全文见那次的回执】……"
+
+
 def _feed_waiting(state: State) -> tuple[list[dict], list[str]]:
     """把用户这条消息**原话**投给所有还挂着的待答任务。
 
@@ -150,10 +173,15 @@ def _feed_waiting(state: State) -> tuple[list[dict], list[str]]:
         # 用户被同一个问题问两次（`_feed_waiting` 的 R03/R04/R05 三次投递，每次都只带当轮）。
         # 脚本化跑批测不出来：预置答复是一句话把两问都答了。
         # 答复**累积在 Task 上**，整份交接书一起喂 —— 见 `agent.render_briefing`
-        rec = {**t, "answers": [*(t.get("answers") or []), user]}
+        # 🔴 **一问一答成对存**（用户 2026-11-02）：`report` 是**覆盖**写的
+        # （`absorb_outcome`），只存答案的话，第二次投递之后旧答案就没有指涉了 ——
+        # 用户看到的是"答：A"，却看不到 A 在回答什么。**问题在这一刻从 Task 上
+        # 原样截下**（此刻的 `report` 就是它问的那句），平台搬，不靠 LLM 转述。
+        rec = {**t, "qa": [*(t.get("qa") or []),
+                           {"by": "用户", "q": t.get("report") or "", "a": user}]}
         trace.section(f"prepare · 投递用户原话 → {t['id']} · {t['skill']}")
         trace.block("投过去的原话", user)
-        trace.note(f"累计答复 {len(rec['answers'])} 条（历次一起带上，否则执行器会重问）")
+        trace.note(f"累计问答 {len(rec['qa'])} 对（历次一起带上，否则执行器会重问）")
         # ⚠️ `refs` 要一起带上：不重建可读产物清单，执行器在续跑时就"看不见"前序产物了
         # 用户原话也一起带上（快照在 Task 上，所以这条重入路径**自动**有它）
         outcome = run_task(skill, render_briefing(rec), rec.get("user_turns"))
@@ -206,10 +234,10 @@ def node_prepare(state: State) -> dict:
         #    只说"没完成"，主 agent 没法决定是换个说法重派、还是向用户说明。
         if t.get("stage") in _NEEDS_DETAIL:
             if t.get("progress"):
-                lines.append(f"      已做到：{t['progress'][:150]}")
+                lines.append(f"      已做到：{_brief(t['progress'], 150)}")
             if t.get("missing"):
-                lines.append(f"      还缺：{'；'.join(t['missing'])[:200]}")
-            lines.append(f"      执行器说：{t['report'][:150]}")
+                lines.append(f"      还缺：{_brief('；'.join(t['missing']), 200)}")
+            lines.append(f"      执行器说：{_brief(t['report'], 150)}")
 
     waiting = [t for t in tasks if t.get("stage") == "waiting_for_input"]
     # ⚠️ 这里**不再**叫主 agent 去重新委派 —— 待答的投递和转达都由平台做（见 `_feed_waiting`
@@ -255,7 +283,7 @@ def node_finalize(state: State) -> dict:
       —— 它照做了就没有重复；没照做也只是重复一句，**不影响不丢**
 
     ⚠️ **产物路径不在这里贴** —— 那条信息顺着 `delegate` 的返回走
-    （见 `agent._files_note`）：路径是 `write_artifact` 的返回里就有的，
+    （见 `agent.render_receipt` 的【产出的产物】）：路径是 `write_artifact` 的返回里就有的，
     平台把它**顺着原路带上去**就够了，不需要另起一套注入。
     """
     waiting = [t for t in (state.get("tasks") or []) if t.get("stage") == "waiting_for_input"]

@@ -16,7 +16,7 @@
 
   <rect width="1560" height="1250" fill="#FFFFFF"/>
   <text x="780" y="38" text-anchor="middle" font-size="24" font-weight="700" fill="#202124">消息传递 —— 谁把什么交给谁（13 跳，逐跳列出交接内容）</text>
-  <text x="780" y="63" text-anchor="middle" font-size="12.5" fill="#5F6368">一次 graph.invoke ＝ 一轮；不是网络调用，是同进程里的函数调用与状态更新　｜　每跳下面那张卡 ＝ 这一跳实际交接的内容</text>
+  <text x="780" y="63" text-anchor="middle" font-size="12.5" fill="#5F6368">一次 graph.invoke ＝ 一轮；不是网络调用，是同进程里的函数调用与状态更新　｜　每跳下面那张卡 ＝ 这一跳实际交接的内容（<tspan font-weight="600">不截断</tspan>；长了走渐进式披露或显式截断）</text>
 
   <!-- 阶段图例 -->
   <rect x="60" y="80" width="1420" height="28" rx="6" fill="#FAFAFA" stroke="#E0E0E0"/>
@@ -91,8 +91,8 @@
   <line x1="760" y1="456" x2="1086" y2="456" stroke="#5F6368" stroke-width="2.2" marker-end="url(#m)"/>
   <text x="923" y="448" text-anchor="middle" font-size="11"><tspan font-weight="700" fill="#5F6368">④ 交接书</tspan><tspan fill="#9AA0A6"> · HumanMessage · 平台 → 执行器（所有重入路径的唯一入口）</tspan></text>
   <rect x="480" y="464" width="610" height="47" rx="5" fill="#F8F9FA" stroke="#E0E0E0"/>
-  <text x="490" y="479" font-size="9.5" fill="#616161">【任务】（<tspan font-weight="600">主 agent 交代的</tspan>）・【用户原话】（<tspan font-weight="600">用户说的</tspan>・平台硬搬：清单常驻、全文按需）</text>
-  <text x="490" y="491" font-size="9.5" fill="#616161">【你上次说到哪】（判定说已做到/还缺 ・ 你上次说）・【已经答复过的信息】（用户：… ／ 主 agent 补充：…）</text>
+  <text x="490" y="479" font-size="9.5" fill="#616161">【任务】（<tspan font-weight="600">主 agent 交代的</tspan>）・【用户原话】（<tspan font-weight="600">用户说的</tspan>・平台硬搬・每轮带「它在回答的上一句」）</text>
+  <text x="490" y="491" font-size="9.5" fill="#616161">【你上次说到哪】（判定说已做到/还缺 ・ 你上次说）・【已经答复过的信息】（<tspan font-weight="600">一问一答成对</tspan>：执行器问／用户答／主 agent 答）</text>
   <text x="490" y="503" font-size="9.5" fill="#616161">【已经产出的产物】・【可读产物】・【续跑提示】　—— 7 段按条件出现，<tspan font-weight="600">每段都标来源</tspan></text>
 
   <!-- ═══════════ ⑤ ═══════════ -->
@@ -136,8 +136,8 @@
   <line x1="760" y1="936" x2="404" y2="936" stroke="#2E7D32" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#mG)"/>
   <text x="580" y="928" text-anchor="middle" font-size="11"><tspan font-weight="700" fill="#2E7D32">⑩ 工具返回</tspan><tspan fill="#9AA0A6"> · ToolMessage · 七个可达出口</tspan></text>
   <rect x="400" y="944" width="360" height="35" rx="5" fill="#F1F8E9" stroke="#C5E1A5"/>
-  <text x="410" y="959" font-size="9.5" fill="#33691E">①技能不存在 ②产物 ID 不存在（不建 Task）③已交付＋<tspan font-weight="600">⑬附注</tspan></text>
-  <text x="410" y="971" font-size="9.5" fill="#33691E">art_001 → &lt;真实路径&gt;　④成果在回复里 ⑤试答后完成 ⑥还在等 ⑦failed</text>
+  <text x="410" y="959" font-size="9.5" fill="#33691E">七个出口都走 <tspan font-weight="600">render_receipt</tspan>（形式化 · <tspan font-weight="600">不截断</tspan>）</text>
+  <text x="410" y="971" font-size="9.5" fill="#33691E">【交付】＋【产出的产物】(带路径)＋【执行器说】全文＋【已做到】【还缺】</text>
 
   <!-- ═══════════ ⑪ ═══════════ -->
   <line x1="760" y1="1016" x2="134" y2="1016" stroke="#2E7D32" stroke-width="2.2" marker-end="url(#mG)"/>
@@ -155,7 +155,7 @@
   <text x="923" y="1096" text-anchor="middle" font-size="11"><tspan font-weight="700" fill="#1565C0">⑫ 答复投递</tspan><tspan fill="#9AA0A6"> · HumanMessage · 下一次 invoke 的 prepare</tspan></text>
   <rect x="760" y="1112" width="330" height="35" rx="5" fill="#E3F2FD" stroke="#90CAF9"/>
   <text x="770" y="1127" font-size="9.5" fill="#0D47A1">原话投给<tspan font-weight="600">所有</tspan> stage=waiting_for_input 的 Task</text>
-  <text x="770" y="1139" font-size="9.5" fill="#0D47A1">answers 累积不覆盖；不判断「是不是在回答」→ 交接书重放</text>
+  <text x="770" y="1139" font-size="9.5" fill="#0D47A1">qa <tspan font-weight="600">成对</tspan>累积不覆盖；不判断「是不是在回答」→ 交接书重放</text>
 
   <!-- 底注 -->
   <rect x="60" y="1176" width="1420" height="56" rx="10" fill="#F1F8E9" stroke="#7CB342" stroke-width="1.4"/>

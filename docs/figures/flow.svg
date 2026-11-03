@@ -56,7 +56,7 @@
 
   <rect x="696" y="190" width="390" height="56" rx="8" fill="#E8F5E9" stroke="#43A047" stroke-width="2"/>
   <text x="891" y="208" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1B5E20">执行器：干活 → 判定三态 🧠（最多 3 轮）</text>
-  <text x="891" y="226" text-anchor="middle" font-size="10" fill="#2E7D32">每次收到交接书〔任务＋用户原话＋上次进度/缺失项＋历次答复＋产物清单〕</text>
+  <text x="891" y="226" text-anchor="middle" font-size="10" fill="#2E7D32">每次收到交接书〔任务＋用户原话＋上次进度/缺失项＋历次问答＋产物清单〕</text>
   <text x="891" y="241" text-anchor="middle" font-size="10" fill="#2E7D32">判 incomplete → 推回去〔进度＋缺失项〕，不要从头再来</text>
   <line x1="1088" y1="218" x2="1108" y2="218" stroke="#5F6368" stroke-width="1.8" marker-end="url(#a)"/>
 
@@ -138,7 +138,7 @@
   <line x1="1000" y1="526" x2="1018" y2="526" stroke="#1565C0" stroke-width="2.2" marker-end="url(#aB)"/>
   <rect x="1020" y="500" width="180" height="52" rx="8" fill="#E8F5E9" stroke="#43A047" stroke-width="1.6"/>
   <text x="1110" y="520" text-anchor="middle" font-size="11" fill="#1B5E20">prepare 🔒 投递原话</text>
-  <text x="1110" y="538" text-anchor="middle" font-size="9" fill="#5F6368">〔原话 → answers ＋ 交接书〕</text>
+  <text x="1110" y="538" text-anchor="middle" font-size="9" fill="#5F6368">〔原话 ＋ 它问的那句 → 交接书〕</text>
 
   <line x1="1202" y1="526" x2="1220" y2="526" stroke="#1565C0" stroke-width="2.2" marker-end="url(#aB)"/>
   <rect x="1222" y="500" width="110" height="52" rx="8" fill="#E3F2FD" stroke="#1565C0" stroke-width="2"/>
