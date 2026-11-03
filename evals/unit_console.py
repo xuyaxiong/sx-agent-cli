@@ -126,7 +126,23 @@ def main() -> None:
     check("主 agent 的返回标的是 `delegate`", len(rets) == 2 and rets[1].startswith("delegate"),
           repr([t.splitlines()[0] for t in rets]))
 
-    print("\n⑥ repr 的**两种引号都要剥**（2026-11-03 实测踩到）")
+    print("\n⑥ 读全文的工具返回：**一个字都不贴**，只报多大一份、原文在哪")
+    # 用户 2026-11-03：*"读取 skill 全文 你全显示没必要"* —— 原文另有出处
+    # （技能包 / 产物落盘文件），贴一段既不是全文、又不是摘要。
+    seen4: list[str] = []
+    chat._emit = lambda role, text, stamp=None: seen4.append(text)  # type: ignore[assignment]
+    try:
+        for tool in ("read_skill", "read_skill_file", "read_artifact"):
+            st4 = {"section": "agent", "kind": "ToolMessage", "ts": "t",
+                   "calls": {"agent": [tool]}, "block": None}
+            chat._feed(st4, "    content='" + "很长的正文。" * 200 + "'")
+            got = seen4[-1]
+            check(f"`{tool}` 的返回**不含正文**", "很长的正文" not in got, repr(got[:70]))
+            check(f"`{tool}` 的返回**报了字数**", "1200 字" in got, repr(got[:80]))
+    finally:
+        chat._emit = real_emit  # type: ignore[assignment]
+
+    print("\n⑦ repr 的**两种引号都要剥**（2026-11-03 实测踩到）")
     # 真实形状：回执正文里含 `read_artifact('art_001')` —— Python 的 repr 见内容里有单引号，
     # **改用双引号**；只剥 `'` 的话整份回执被一对多余的 `"` 包住。
     seen3: list[str] = []

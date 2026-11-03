@@ -214,12 +214,26 @@ def _norm(s: str) -> str:
     return " ".join(s.split())[:60]
 
 
-#: **播报层**里唯二会被截断的工具返回 —— 判据是"**全文另有出处**"：
-#: 技能原文在 `evals/skills/*.md`，产物正文在产物文件里。
-#: 🔴 **其余一律不截**（平台注入 / agent 的话 / 别的工具返回）：
+#: **读全文的工具** —— 它们的返回**一个字都不贴**，只报"读了多大一份、原文在哪"。
+#:
+#: 🔴 用户 2026-11-03：*"读取 skill 全文 你全显示没必要"*。
+#: 判据还是那条老的：**全文另有出处**（技能原文在技能包里，产物正文在产物落盘文件里）——
+#: 而"另有出处"的正文，贴一段（原来是 250 字）**既不是全文、又不是摘要**，纯粹是噪音。
+#: 同 `harness._render_messages` 的做法（"读了 X 的全文（N 字，原文不在这里复述）"）。
+#:
+#: 🔴 **其余一律不贴不行、也不截**（平台注入 / agent 的话 / 别的工具返回）：
 #: 那些是**优化 agent 表现的观察窗口**，截了就观察不到（用户 2026-10-30 定）。
-_CAPPED_TOOLS = ("read_skill", "read_artifact")
-_CAP_TOOL = 250
+#:
+#: ⚠️ **记录层不跟着改**：`logs/proto-*.log` 是**原始记录**，照旧全文
+#: （`trace.render_message` 的契约：*"要少看噪音就在播报层砍，别在记录层砍"*）。
+_READ_TOOLS: dict[str, str] = {
+    "read_skill": "技能包",
+    "read_skill_file": "技能包",   # 渐进式披露第三层：技能自带的 references/ assets/
+    "read_artifact": "产物落盘文件",
+}
+#: ⚠️ **`read_user_turn` 不在此列**：它返回的是**用户原话**（事实来源），
+#: 不是"另有一份文件的大块正文" —— 而且它正是【用户原话】那段的**渐进式披露出口**，
+#: 贴出来才知道执行器到底读到了什么。
 
 _MAIN_ROLES = frozenset({"user", "agent"})
 _MECH_COLOR = "\033[90m"     # 暗灰：机制日志统一压暗，靠标签区分类型
@@ -480,12 +494,17 @@ def _feed(st: dict, line: str) -> None:
         if st["kind"] == "ToolMessage":  # 工具**返回了什么**
             q = st["calls"].get(st["section"]) or []
             who = q.pop(0) if q else "?"
-            # 🔴 **只有这两种工具返回截断**：它们的全文**另有出处**
-            # （技能原文在 `evals/skills/*.md`，产物正文在产物文件里），
-            # 摊在终端里只是噪音。**其余一律不截** —— 见下面两条。
-            if who in _CAPPED_TOOLS and len(body) > _CAP_TOOL:
-                body = body[:_CAP_TOOL] + f"（后面还有 {len(body) - _CAP_TOOL} 字未显示）"
-            _emit("ret", f"{who} 的返回：\n{body}", stamp=st["ts"])
+            if who in _READ_TOOLS:
+                # 🔴 **读全文的工具：一个字都不贴**（见 `_READ_TOOLS`）。
+                # 只报"读了多大一份、原文在哪" —— 上面那行 `🔧 TOOL` 已经写了读的是哪一份。
+                _emit(
+                    "ret",
+                    f"{who} 的返回：（**读了全文，{len(body)} 字** —— "
+                    f"原文在{_READ_TOOLS[who]}里，**不在这里复述**）",
+                    stamp=st["ts"],
+                )
+            else:
+                _emit("ret", f"{who} 的返回：\n{body}", stamp=st["ts"])
         elif st["kind"] == "SystemMessage":  # 平台注入的台账
             # 🔴 **不截断**：平台注入是"优化 agent 表现"的观察窗口
             # （用户 2026-10-30：*"如果没有这些东西观察不到"*）
