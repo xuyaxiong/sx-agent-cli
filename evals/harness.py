@@ -390,6 +390,13 @@ def snapshot(state: dict, user: str, prev_len: int, idx: int, wall_s: float) -> 
                 "kind": type(m).__name__,
                 "content": str(m.content),
                 "tool_call_id": getattr(m, "tool_call_id", None),
+                #: 🔴 **交接对象**（`additional_kwargs`，实测不会漏给模型）——
+                #: 回执的结构化形态。记录层**读它**，不从 `content` 反推
+                #: （用户 2026-11-03：禁止反结构化任何 LLM 正文输出）。
+                "handoff": (getattr(m, "additional_kwargs", None) or {}).get("handoff"),
+                #: **平台注入的标记**（`proto.handoff.INJECTED`）—— 标明这条**不是主 agent 说的**。
+                #: 透传（`finalize`）注入的是 `AIMessage`，不打标记就会被标成"主 agent 输出"。
+                "injected_by": (getattr(m, "additional_kwargs", None) or {}).get("injected_by"),
                 "tool_calls": [
                     {"id": c.get("id"), "name": c.get("name"), "args": c.get("args")}
                     for c in (getattr(m, "tool_calls", None) or [])
@@ -454,15 +461,21 @@ def dump_artifacts(out_dir: Path, case_id: str, rep: int, result: dict) -> Path:
     return d
 
 
-#: 平台回执的**固定开场白** → （记号, 这是什么）。这些措辞是 `proto/agent.py` 里写死的，
-#: 按它判"这条回执属于哪种出口"，比让读者自己从一大段文字里猜可靠。
-_RECEIPT_KINDS: tuple[tuple[str, str], ...] = (
-    ("⚠️ 这次没完成，它在请求信息", "❓ **执行器在提问**（待答：平台会把这段转达给用户）"),
-    ("⚠️ 执行器跑了", "⚠️ **执行器没做成**（既没完成、也没说缺什么）"),
-    ("已交付", "✅ **交付回执**（执行器已写入产物库）"),
-    ("没有能力「", "⛔ **被平台拒绝**：没有这个能力"),
-    ("不存在，**这次没有派发**", "⛔ **被平台拒绝**：产物 ID 不存在"),
-)
+#: 出口分类 → 给读日志的人看的记号。
+#:
+#: 🔴 **判据不在本文件里** —— 从 `proto.handoff`（段名与出口分类的唯一来源）推。
+#: 原来这里手抄了一组开场白做前缀匹配，2026-11-02 回执一改格式就**一条都不中**
+#: （实测：新格式 0/8、旧格式 38/38）—— 而且**不会报错，只会静默失效**。
+_RECEIPT_KINDS: dict[str, str] = {
+    "completed": "✅ **交付回执**（执行器已写入产物库）",
+    "completed_in_reply": "✅ **交付回执**（成果在回复正文里，**不落库**）",
+    "waiting": "❓ **执行器在提问**（待答：平台会把这段转达给用户）",
+    "failed": "⚠️ **执行器没做成**（既没完成、也没说缺什么）",
+    "rejected_skill": "⛔ **被平台拒绝**：没有这个能力",
+    "rejected_turns": "⛔ **被平台拒绝**：轮次不存在",
+    "rejected_artifact": "⛔ **被平台拒绝**：产物 ID 不存在",
+}
+
 
 #: 工具返回的**来源**（读日志的人最需要知道的一条：这段字是谁写的）
 _TOOL_SOURCE: dict[str, str] = {
@@ -474,49 +487,53 @@ _TOOL_SOURCE: dict[str, str] = {
 }
 
 
-#: 平台回执里的**分段标记** —— 拆开"平台的框架话"与"执行器的原话"。
-#: 标记都是 `proto/agent.py` 里写死的措辞；`label` 是给读日志的人看的。
-#:
-#: 🔴 **加/改这里的标记，必须回 `proto/agent.py` 确认那句话还在** ——
-#: 命不中的标记**不会报错**，只会静默失效。踩过：曾经有一条
-#: `"\n（平台已替你查过"` 是照着**系统提示**（`_MAIN_PROMPT`）那句写的，
-#: 而系统提示永远不会出现在工具返回里 —— 它从加进来那天起就没命中过任何东西
-#: （2026-11-02 删）。**写标记要照着回执的实际措辞抄，不要凭印象。**
-_RECEIPT_SPLIT: tuple[tuple[str, str], ...] = (
-    ("执行器说：", "**执行器的原话**（它说了什么、在问什么）"),
-    ("\n\n【已做到】", "平台附注 · 已做到什么程度"),
-    ("\n\n【还缺】", "平台附注 · 还缺什么"),
-    ("\n\n它最后说：", "**执行器的原话**（最后一轮）"),
-    ("摘要：", "**执行器的一句话摘要**"),
-    ("\n（平台已登记为待答", "平台给主 agent 的指示"),
-    ("\n（你可以换个说法", "平台给主 agent 的指示"),
-)
+#: 段的**标签**（给读日志的人看）。**段名本身不在这里** —— 从 `proto.handoff.SECTION` 取。
+_RECEIPT_LABEL: dict[str, str] = {
+    "deliver": "平台的框架话 · 这条回执属于哪种出口",
+    "produced": "平台给的产物清单（**不含正文**）",
+    "report": "**执行器的原话**（它说了什么、在问什么）",
+    "progress": "平台附注 · 已做到什么程度（**判定说**）",
+    "missing": "平台附注 · 还缺什么（**判定说**）",
+    "agent_answer": "**主 agent 补的信息**（它说的）",
+    "next": "平台给主 agent 的指示",
+    "not_dispatched": "平台的框架话 · 这次**没有派发**",
+    "available_skills": "平台列出的可用能力",
+    "available_turns": "平台列出的用户原话",
+    "available_artifacts": "平台列出的现有产物",
+}
 
 
-def _split_receipt(content: str) -> list[tuple[str, str]]:
-    """把平台回执拆成「**谁写的** / 写了什么」若干段 —— 空列表表示没拆出来。
+def _injected_label(tag: str | None) -> str:
+    """平台注入的标记 → 记录层怎么标这条消息。**读标记，不读内容**。
+
+    标记的**声明处**在 `proto.handoff.INJECTED`（和段名、出口分类放一起）——
+    这里只做展示，不另写一份。
+    """
+    if not tag:
+        return ""
+    from proto.handoff import INJECTED
+
+    return "📮 " + INJECTED.get(tag, f"（未知的注入标记：{tag}）")
+
+
+def _receipt_sections(handoff: dict) -> list[tuple[str, str]]:
+    """**回执对象** → 「哪一段 / 写了什么」若干段。
 
     用户要求：*"哪些是提问 来源是哪里"* —— 回执里混着平台的框架话和执行器的原话，
     不拆开就只能靠读者从一大段文字里猜哪句是谁说的。
+
+    🔴 **读对象，不读文本**（用户 2026-11-03：*"禁止你反结构化任何 llm 正文输出"*）。
+    原来这里靠**解析渲染出来的散文**（`_split_receipt` 按段名切），
+    2026-11-02 回执一改措辞就**全部静默失效**（实测：新格式 0/8 命中、旧格式 38/38），
+    后果是回执在 `_run.md` 里既丢了"谁写的"分段、又掉进 1200 字兜底截断
+    （实测一次把 **12560 字切成 1200**）。**那条路已经删掉** ——
+    结构一旦渲染成散文就回不去了，不要试图解析回来。
     """
-    marks: list[tuple[int, str, str]] = []
-    for marker, label in _RECEIPT_SPLIT:
-        i = content.find(marker)
-        if i >= 0:
-            marks.append((i, marker, label))
-    if not marks:
-        return []
-    marks.sort()
-    out: list[tuple[str, str]] = []
-    if marks[0][0] > 0:
-        out.append(("平台的框架话", content[: marks[0][0]].strip()))
-    for j, (i, marker, label) in enumerate(marks):
-        start = i + len(marker) if marker.endswith("：") else i
-        end = marks[j + 1][0] if j + 1 < len(marks) else len(content)
-        text = content[start:end].strip()
-        if text:
-            out.append((label, text))
-    return out
+    from proto.handoff import HOPS
+
+    sections = handoff.get("sections") or {}
+    keys = HOPS["receipt_rejected"] if handoff.get("kind", "").startswith("rejected_") else HOPS["receipt"]
+    return [(_RECEIPT_LABEL.get(k, k), sections[k]) for k in keys if sections.get(k)]
 
 
 def _turn_summary(turns: list[dict], i: int) -> list[str]:
@@ -594,8 +611,12 @@ def _render_messages(turn: dict) -> list[str]:
         if kind == "AIMessage":
             if content.strip():
                 n += 1
+                # 🔴 **按标记判来源，不按"内容像不像"** —— 透传（`finalize`）注入的
+                # AIMessage 里装的是**执行器的原话**，标成"主 agent 输出"就是来源标错。
+                who = _injected_label(m.get("injected_by"))
                 out += [
-                    f"**{n}. 🤖 主 agent 输出**（它自己说的话 —— 决定下一步做什么）",
+                    f"**{n}. {who or '🤖 主 agent 输出'}**"
+                    + ("" if who else "（它自己说的话 —— 决定下一步做什么）"),
                     "",
                     "```",
                     content.strip(),
@@ -622,7 +643,8 @@ def _render_messages(turn: dict) -> list[str]:
         if kind == "ToolMessage":
             n += 1
             tool, target = _take(m.get("tool_call_id"))
-            mark = next((tag for pre, tag in _RECEIPT_KINDS if content.startswith(pre)), "")
+            handoff = m.get("handoff")
+            mark = _RECEIPT_KINDS.get((handoff or {}).get("kind", ""), "")
             out += [
                 f"**{n}. ↩️ 返回给主 agent**（工具 `{tool}`）{mark}",
                 "",
@@ -642,11 +664,24 @@ def _render_messages(turn: dict) -> list[str]:
                     "",
                 ]
                 continue
-            parts = _split_receipt(content) if tool == "delegate" else []
+            # 🔴 `delegate` 的返回**按对象渲染**（不解析文本）——
+            # 平台在 `_cmd` 里把回执对象挂在 `additional_kwargs["handoff"]` 上搭同一趟车。
+            parts = _receipt_sections(handoff) if (tool == "delegate" and handoff) else []
             if parts:
                 for label, text in parts:
                     # label 自带加粗记号，这里不要再包一层
                     out += [f"　{label}：", "", "```", text, "```", ""]
+            elif tool == "delegate":
+                # 走不到：所有 delegate 返回都经 `_cmd` 带上对象。真到了这里说明**机制破了** ——
+                # 如实说出来，**不要**退回解析文本（那正是 2026-11-02 那次事故的做法）。
+                out += [
+                    "⚠️ **这条回执没有结构化对象**（机制破了，不该发生）—— 原文照录，不做解析：",
+                    "",
+                    "```",
+                    content,
+                    "```",
+                    "",
+                ]
             else:
                 out += [
                     "```",

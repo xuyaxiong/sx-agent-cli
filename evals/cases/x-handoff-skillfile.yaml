@@ -1,0 +1,17 @@
+id: x-handoff-skillfile
+family: 交接审计
+why: >
+  `docs/handoff-audit.md` **H5 / H16** 的实证 case：技能包**自带文件**时，
+  平台只给**清单**（相对路径 + 字数），正文由执行器按需 `read_skill_file` 读。
+  `exec_path: delegate` 是**平台造路**（见 `proto/agent.EXEC_PATH`）——
+  主 agent 拿不到"自己干"的工具，只能派出去；否则走哪条路是模型的自由选择，
+  这条链路不保证被压到（2026-11-02 实测：`EXEC_PATH=delegate` 一开，第一次跑就撞上"执行器猜技能名"）。
+realism: 用户 2026-11-02 实测踩过（技能名没写进清单 → 执行器猜了 4 个变体、卡 121 秒）
+tier: audit
+skills_dir: evals/skills
+skills_mode: replace
+exec_path: delegate
+turns:
+  - "帮我设计一节跨学科 PBL 课：三年级数学《分数的初步认识》，主题是「生活中的分数」，两课时，学生基础一般。直接开始，不用再问我。"
+checks:
+  - check: no_exception

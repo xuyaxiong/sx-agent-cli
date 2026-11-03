@@ -54,12 +54,41 @@ def _history(run: dict, turn: dict) -> str:
     return "\n".join(f"用户第 {t['turn']} 轮：{t['user']}" for t in run["turns"][: turn["turn"]])
 
 
+#: 评分材料里每条 `report` 的字符预算（保头保尾）。**这是"保尾"的**，见 `_clip_report`。
+_RUBRIC_REPORT_BUDGET = 800
+
+
+def _clip_report(text: str, budget: int = _RUBRIC_REPORT_BUDGET) -> str:
+    """评分材料里的 `report` —— **保头保尾 ＋ 显式标注**。
+
+    🔴 **原来是 `report[:300]`：只切头、无标记 —— 而执行器的问句通常写在末尾**
+    （`evals/chat.py` 自己就写着"提问往往在正文末尾，截太狠就看不到了"）。
+    于是"助手有没有向用户索要 X"这条 rubric 看不到问句 → 判"没在问" → **软断言假绿**。
+    实测（2026-11-03，`handoff-verify`）：3 条 report 里 **2 条正好 300 字**，
+    切在句中、**没有任何标记**。
+
+    同文件的 `_clip_head` 是"只保头 + 标记"，**这里不能用它** —— 方向是反的。
+    """
+    text = str(text or "").strip()
+    if len(text) <= budget:
+        return text
+    head = int(budget * 0.6)
+    tail = budget - head
+    return (
+        f"{text[:head]}\n"
+        f"……（平台截断：中间 {len(text) - budget} 字未展示给你；**问句常在末尾**，"
+        f"看不到就别据此判「没在问」）……\n"
+        f"{text[-tail:]}"
+    )
+
+
 def _reports(turn: dict) -> str:
     ts = turn.get("tasks") or []
     if not ts:
         return "（无）"
     return "\n".join(
-        f"[{t['id']} {t['skill']} {t['stage']}] 执行器说：{t.get('report', '')[:300]}" for t in ts
+        f"[{t['id']} {t['skill']} {t['stage']}] 执行器说：{_clip_report(t.get('report', ''))}"
+        for t in ts
     )
 
 

@@ -32,7 +32,9 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
 from proto import trace
-from proto.agent import absorb_outcome, build_agent, render_briefing
+from proto.agent import build_agent
+from proto.handoff.briefing import absorb_outcome, render_briefing
+from proto.handoff.ledger import render_ledger
 
 
 def _merge_tasks(old: list[dict] | None, new: list[dict] | None) -> list[dict]:
@@ -79,59 +81,12 @@ class AgentState(TypedDict):
 # ──────────────────────────── prepare：注入待答 ────────────────────────────
 
 
-#: `Task.stage` 的全部取值 —— **与 `_Judgement.status` 前三个同名**。
-#: 唯一的映射是 `incomplete → failed`（判定说"还没做完"，推满轮次后任务记"失败"）。
-#:
-#: ⚠️ **这些是"要管"的状态**；`superseded` 是"不用管了"（同技能被重新委派时自动标记），
-#: 所以台账里**不展开细节**，只列一行。
-#:
-#: 暂未实现的三个（评审人 C1 提过，先记下为什么不做、什么时候该做）：
-#:   - `pending`                —— 建 Task 就立刻派发，没有"创建了还没跑"的窗口。
-#:                                 等做「计划-执行分离」时再加
-#:   - `waiting_for_dependency` —— `delegate` 是**同步**的，依赖在主 agent 循环里天然解决
-#:                                 （它先调 A、拿到产物 ID、再调 B）。等做「异步委派」时再加
-#:   - `cancelled`              —— 用户明确放弃时主动取消。需要给主 agent 新工具，
-#:                                 且该场景尚未实测到。等真遇到再加
-_STAGE_MARK = {
-    "running": "⏳ 进行中",
-    "completed": "✅ 已完成",
-    "waiting_for_input": "⚠️ 等用户答复",
-    "failed": "❌ 失败",
-    "superseded": "🔁 已被新的委派取代（不用管了）",
-}
-
-#: 需要**展开细节**（进度 / 缺失项 / 执行器原话）的状态
-_NEEDS_DETAIL = ("waiting_for_input", "failed")
-
-
 def _last_human(state: State) -> str:
     for m in reversed(state.get("messages") or []):
         if isinstance(m, HumanMessage) and str(m.content).strip():
             return str(m.content)
     return ""
 
-
-def _brief(text: str, limit: int) -> str:
-    """台账里的长文本 —— **要短就得说清"这是短的"**（用户 2026-11-02 的「交接三问」）。
-
-    > "一定要注意交接的地方：① 交接了什么内容 ② **内容是否被截断了**
-    >  ③ **过长的交接内容是否考虑了渐进式披露**。"
-
-    这里选**显式截断**而不是渐进式披露，理由是**出处**：台账是**每轮重复注入**的索引，
-    而全文另有出处 —— 那次的**回执**（`delegate` 的返回）就在对话历史里，
-    主 agent 想看随时看得到。渐进式披露要配一个"按需取"的工具，这里不需要新造。
-
-    🔴 **切了不标，是这两种做法里更糟的一种**：读的人分不清
-    "它就说这么多"还是"被切了" —— 而这两种情况该做的决定**完全不同**
-    （前者该换个说法重派，后者该去翻回执）。
-
-    ⚠️ 顺手把换行压成空格：台账是**一行一条**的列表，多行值会把缩进结构撑坏。
-    这不算内容损失（只动了空白），但**别在这里做别的加工**。
-    """
-    text = " ".join(str(text or "").split())
-    if len(text) <= limit:
-        return text
-    return f"{text[:limit]}……【平台截断：还有 {len(text) - limit} 字，全文见那次的回执】……"
 
 
 def _feed_waiting(state: State) -> tuple[list[dict], list[str]]:
@@ -182,6 +137,9 @@ def _feed_waiting(state: State) -> tuple[list[dict], list[str]]:
         trace.section(f"prepare · 投递用户原话 → {t['id']} · {t['skill']}")
         trace.block("投过去的原话", user)
         trace.note(f"累计问答 {len(rec['qa'])} 对（历次一起带上，否则执行器会重问）")
+        # 交接关键日志：投递这一跳（交接书正文由 `run_task` 那边记）
+        trace.handoff("答复投递", "平台", "执行器", user,
+                      structured=f"Task.qa 追加 1 对（累计 {len(rec['qa'])} 对）")
         # ⚠️ `refs` 要一起带上：不重建可读产物清单，执行器在续跑时就"看不见"前序产物了
         # 用户原话也一起带上（快照在 Task 上，所以这条重入路径**自动**有它）
         outcome = run_task(skill, render_briefing(rec), rec.get("user_turns"))
@@ -225,38 +183,16 @@ def node_prepare(state: State) -> dict:
     if not tasks:
         return {"log": logs} if logs else {}
 
-    lines: list[str] = []
-    for t in tasks:
-        mark = _STAGE_MARK.get(t.get("stage", ""), t.get("stage", "?"))
-        arts = f" → {', '.join(t['artifacts'])}" if t.get("artifacts") else ""
-        lines.append(f"- {t['id']}  「{t['skill']}」  {mark}{arts}")
-        # ⚠️ 没完成的任务，把**进度 / 缺失项**也带上（信息交接原则）——
-        #    只说"没完成"，主 agent 没法决定是换个说法重派、还是向用户说明。
-        if t.get("stage") in _NEEDS_DETAIL:
-            if t.get("progress"):
-                lines.append(f"      已做到：{_brief(t['progress'], 150)}")
-            if t.get("missing"):
-                lines.append(f"      还缺：{_brief('；'.join(t['missing']), 200)}")
-            lines.append(f"      执行器说：{_brief(t['report'], 150)}")
-
+    # 台账怎么渲染在 `proto/handoff/ledger.py`（schema 与模板放一起）
     waiting = [t for t in tasks if t.get("stage") == "waiting_for_input"]
-    # ⚠️ 这里**不再**叫主 agent 去重新委派 —— 待答的投递和转达都由平台做（见 `_feed_waiting`
-    #    和 `node_finalize`）。主 agent 只需要别自己替用户编一个答案。
-    hint = (
-        "\n\n**「等用户答复」的那些，平台已经负责把问题转达给用户、也会把用户的答复投回去** ——"
-        "你**不用**重新委派它们，更不要自己替用户编一个答案。"
-        if waiting
-        else "\n\n（用户补充信息时，**只重跑受影响的任务**，已完成且不受影响的不动。）"
-    )
-
+    text = render_ledger(tasks)
+    # 🔴 **注入什么就记什么**（用户 2026-11-03：*"这些在日志中得完整记录下来便于复盘"*）。
+    # 原来这里只记了"注入 N 项"，**正文一个字都不在日志里** —— 而它是平台每轮塞给
+    # 主 agent 的东西，复盘时最该看到的就是它。见 `trace.handoff`。
+    trace.handoff("台账", "平台", "主 agent", text,
+                  structured=f"Task × {len(tasks)} → render_ledger", full=True)
     return {
-        "messages": [
-            SystemMessage(
-                content=f"【平台提示】你已委派出去的工作（共 {len(tasks)} 项）：\n"
-                + "\n".join(lines)
-                + hint
-            )
-        ],
+        "messages": [SystemMessage(content=text)],
         "tasks": updated,  # reducer 按 id 合并
         "log": logs + [f"prepare: 注入台账（{len(tasks)} 项，其中待答 {len(waiting)} 条）"],
     }
@@ -292,8 +228,24 @@ def node_finalize(state: State) -> dict:
 
     block = "\n\n".join(t["report"] for t in waiting)
     trace.note(f"finalize: 透传 {len(waiting)} 条待答（平台直接贴，不判断主 agent 问没问）")
+    # 🔴 **已知膨胀点（判据③）**：这段和**回执的【执行器说】**是**同一段话** ——
+    # 一轮之内它会进主 agent 的上下文**两次**（回执一次、这里一次）。
+    # 实测（2026-11-03）：两条 report 合计 936 字，各出现 2 次。
+    # **不能靠"去重"解决** —— 那需要判断"主 agent 说没说"，是 LLM 判断（2026-10-29 已否决）。
+    # 要优化的话，方向是**让主 agent 知道自己不必复述**，而不是平台少贴。
+    # 见 `docs/handoff-audit.md` §四 膨胀账。
+    # 🔴 同台账：**注入什么就记什么** —— 这段原来只在 `_run.md` 里有（走快照），
+    # trace 里一个字都没有，复盘时看不到"平台替执行器转达了什么"。
+    trace.handoff("待答透传", "平台", "用户", block,
+                  structured=f"Task.report × {len(waiting)} → AIMessage(injected_by=platform.finalize)",
+                  full=True)
     return {
-        "messages": [AIMessage(content=block)],
+        # 🔴 **打标记**：这条 AIMessage 的内容是**执行器的原话**，不是主 agent 说的 ——
+        # 不打标记的话，记录层会把它标成"🤖 主 agent 输出（它自己说的话）"，
+        # **来源标注在这一跳就断了**（2026-11-03 实测）。
+        # 标记挂在 `additional_kwargs` 上（实测不会漏给模型），记录层读它 ——
+        # 而不是"看内容像不像执行器的话"（那是反结构化，见 `proto/handoff` 的 docstring）。
+        "messages": [AIMessage(content=block, additional_kwargs={"injected_by": "platform.finalize"})],
         "log": [f"finalize: 透传 {len(waiting)} 条待答（原样贴执行器的话，无条件）"],
     }
 

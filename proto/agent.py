@@ -29,6 +29,10 @@ from pydantic import BaseModel, Field
 from proto import trace
 from proto.config import get_model
 from proto.executor import run_task
+from proto.handoff import SECTION  # 交接的**段名**（唯一来源）
+from proto.handoff.ask import build_prompt as ask_prompt  # 试答
+from proto.handoff.briefing import absorb_outcome, render_briefing  # 委托单
+from proto.handoff.receipt import build_receipt, build_rejection, render_receipt  # 回执
 from proto.llm import safe_structured
 from proto.artifacts import (  # 产物领域
     ARTIFACTS,
@@ -131,32 +135,6 @@ class _AgentAnswer(BaseModel):
     answer: str = Field(default="", description="can_answer=true 时给出补充内容，原话照搬不要改写")
 
 
-def _ask_prompt(skill_name: str, task: str, outcome: Any, messages: list) -> str:
-    """试答那一步喂给主 agent 的**全部输入** —— 抽成纯函数是为了**可单测**。
-
-    🔴 **三处都不截断**（用户 2026-11-02 的「交接三问」）：
-    这一步是个**独立的结构化调用**，它**只看得见这个提示词里的东西** ——
-    信息若落在长消息的后半段、或长任务描述里，它就答不上来，只能去打扰用户。
-    而"能不打扰用户就不打扰"正是这一步存在的全部意义。
-
-    ⚠️ **别退回"最近 N 条"**：那是个**无声**的范围限制，比截断更难发现。
-    """
-    msgs = list(messages)
-    history = "\n".join(f"{type(m).__name__}: {str(m.content)}" for m in msgs)
-    note = _outcome_note(outcome)
-    return (
-        f"你委派出去的工作卡住了，它在请求信息。\n\n"
-        f"能力：{skill_name}\n"
-        f"你交给它的任务：{task}\n"
-        f"执行器说：{outcome.report}"
-        f"{note}\n\n"
-        f"你的上下文（**全部 {len(msgs)} 条，全文**）：\n{history}\n\n"
-        "请判断：**你的上下文里有没有它需要的信息？**\n"
-        "- 有（用户之前说过）→ can_answer=true，answer 里给出补充内容，原话照搬\n"
-        "- 没有 → can_answer=false，**不要编造**"
-    )
-
-
 def _ask_main(runtime: ToolRuntime, skill_name: str, task: str, outcome: Any) -> str:
     """**平台强制的一步**：让主 agent 用自己的上下文试着补上缺的信息。
 
@@ -171,7 +149,11 @@ def _ask_main(runtime: ToolRuntime, skill_name: str, task: str, outcome: Any) ->
     # 主 agent 的上下文本来就小（隔离生效），整份给**全文**是便宜的。
     # ⚠️ **别退回"最近 N 条"**：这一步问的就是"**你的上下文里**有没有"，
     # 砍掉前文等于让它答不上来 —— 那是个**无声**的范围限制，比截断更难发现。
-    prompt = _ask_prompt(skill_name, task, outcome, runtime.state.get("messages") or [])
+    msgs = runtime.state.get("messages") or []
+    prompt = ask_prompt(skill_name, task, outcome, msgs)
+    # 交接关键日志：这一步把**主 agent 的全部上下文**又发了一遍（判据③：膨胀代价看得见）
+    trace.handoff("试答", "平台", "主 agent", prompt,
+                  structured=f"ExecOutcome ＋ 全部 {len(msgs)} 条消息（逐字见下）")
     # 调用失败时保守当作「答不上」—— 交给用户，而不是编一个答案
     r = safe_structured(
         _AgentAnswer, prompt, _AgentAnswer(can_answer=False), tag="delegate → 平台强制让主 agent 试答"
@@ -179,31 +161,37 @@ def _ask_main(runtime: ToolRuntime, skill_name: str, task: str, outcome: Any) ->
     return r.answer.strip() if r.can_answer else ""
 
 
-def _outcome_note(outcome: Any) -> str:
-    """把判定给出的**进度 / 缺失项**渲染成附注 —— 所有"没完成"的出口都要带上。
-
-    用户要求：*"尽可能暴露一些有用信息到外部"*。
-    主 agent 看到"做到什么程度、还缺什么"，才能决定是**换个说法重派**还是**向用户说明**。
-    """
-    parts: list[str] = []
-    if outcome.progress:
-        parts.append(f"【已做到】{outcome.progress}")
-    if outcome.missing:
-        parts.append("【还缺】\n" + "\n".join(f"- {x}" for x in outcome.missing))
-    return ("\n\n" + "\n".join(parts)) if parts else ""
-
-
-def _cmd(runtime: ToolRuntime, recs: list[dict] | None, msg: str) -> Command:
+def _cmd(
+    runtime: ToolRuntime, recs: list[dict] | None, msg: str, *, handoff: dict | None = None
+) -> Command:
     """返回**这几条** Task —— 合并交给 state 的 reducer。
 
     并行调用时各写各的，reducer 按 id 合并，不会互相覆盖。
+
+    🔴 `handoff` = **回执对象**，挂在 ToolMessage 的 `additional_kwargs` 上**搭同一趟车**：
+    模型只看 `content`（渲染出来的文本），**记录/审计层读这个对象** ——
+    实测 `additional_kwargs` **不会漏给模型**（`_convert_message_to_dict` 只取
+    content / role / tool_call_id）。这样记录层永远不需要**从文本反推结构**
+    （用户 2026-11-03 定的硬规矩，见 `proto/handoff/receipt.py` 的 docstring）。
     """
     update: dict[str, Any] = {
-        "messages": [ToolMessage(content=msg, tool_call_id=runtime.tool_call_id)]
+        "messages": [
+            ToolMessage(
+                content=msg,
+                tool_call_id=runtime.tool_call_id,
+                additional_kwargs=({"handoff": handoff} if handoff else {}),
+            )
+        ]
     }
     if recs:
         update["tasks"] = recs
     return Command(update=update)
+
+
+def _reject(runtime: ToolRuntime, kind: str, detail: str, available: str) -> Command:
+    """**派发被拒**（不建 Task）→ 回执对象 ＋ 渲染 —— 和正常回执走**同一条**路。"""
+    r = build_rejection(kind, detail, available)
+    return _cmd(runtime, None, render_receipt(r), handoff=r)
 
 
 def _supersede_old(runtime: ToolRuntime, skill_name: str) -> list[dict]:
@@ -286,235 +274,6 @@ def _user_turns(messages: list) -> list[dict]:
     return out
 
 
-def _one_line(text: str, limit: int = 40) -> str:
-    """压成一行 + 截到 limit 字 —— 清单里**一行一轮**，不能让它撑成多行。"""
-    flat = " ".join(text.split())
-    return flat if len(flat) <= limit else flat[:limit] + "…"
-
-
-# ──────────────────────────── 重入交接书 ────────────────────────────
-
-
-def render_briefing(task: dict) -> str:
-    """把 Task 渲染成**执行器的输入** —— 所有重入路径的唯一入口。
-
-    🔴 为什么要有它（2026-10-29，F15）：执行器**用完即弃**，每次投递都是一次全新的
-    `run_task`，所以"这件事到目前为止的全部已知"必须由平台**重新交给它**。
-    原来三条路径（首跑 / 试答后重跑 / 答复投递）各拼各的，**用户历次答复被漏掉** ——
-    用户一次答一个时，答第二个就把第一个冲掉了，于是同一个问题问两遍。
-
-    ⚠️ **Task 的每个字段要么渲染在这里、要么在 `evals/unit_briefing.py` 的排除名单里**
-    —— 那里有断言，以后加字段忘了渲染会红。
-
-    ⚠️ "你上次说到哪"那块是**上一轮**的情况，措辞要写死这一点：判定也会看到这段，
-    别让它把上一轮的"还缺"当成这一轮还没做完。
-    """
-    from proto.artifacts import ARTIFACTS
-
-    lines = [
-        # 🔴 **来源标注**（用户 2026-11-02）：执行器必须能分清"**哪句是用户说的、
-        # 哪句是模型说的**"。平台**不阻止**主 agent 补充信息（那是它的活），
-        # 但**必须让下游知道这是谁的话** —— 否则模型补的东西会被当成用户的事实。
-        # 实测（b3-smoke2）：执行器把主 agent 编的"三年级/四年级"说成了
-        # "**您写的是**三年级/四年级" —— 而用户从来没写过。
-        f"【任务】（**主 agent 交代的** —— 它根据对话写的，可能补了用户没说的东西）\n"
-        f"{task.get('task', '')}"
-    ]
-
-    # ── 用户原话（平台硬搬，未经转述）—— 渐进式披露：清单常驻、全文按需 ──
-    turns = task.get("user_turns") or []
-    if turns:
-        picked = set(task.get("based_on") or [])
-        block = ["【用户原话】（**用户说的** —— 平台直接搬，未经转述）"]
-        for t in turns:
-            n, text = t.get("n"), str(t.get("text") or "")
-            # 🔴 **短应答必须带上它在回答什么**（用户 2026-11-02）：光一个「A」，
-            # 执行器既解读不了、也核对不了主 agent 的转述 —— 而这一段存在的
-            # 全部理由就是**对冲转述失真**。见 `_user_turns` 的 docstring。
-            after = str(t.get("after") or "").strip()
-            ctx = f"\n  ↳ **它在回答的上一句**：「{_one_line(after)}」" if after else ""
-            if n in picked:
-                # 主 agent **点名**的那几轮 → 直接给全文（点名本身就是一次"按需取"）
-                block.append(f"- **第 {n} 轮（{len(text)} 字）—— 本次工作依据的就是它**：\n{text}{ctx}")
-            else:
-                block.append(f"- 第 {n} 轮（{len(text)} 字）：{_one_line(text)}{ctx}")
-        block.append(
-            "（**这是事实来源**；【任务】是这次的要求，两者冲突时**以原话为准**。"
-            "要看哪一轮的**完整上下文**（它回答的上一句 ＋ 原话）就用 `read_user_turn(轮次)` 读，"
-            "不要凭那几十个字猜。）"
-        )
-        lines.append("\n".join(block))
-
-    progress = (task.get("progress") or "").strip()
-    missing = [m for m in (task.get("missing") or []) if m]
-    report = (task.get("report") or "").strip()
-    if progress or missing or report:
-        # 🔴 **子段也要标来源**（用户 2026-11-02）：这一段里混着**两方**的话 ——
-        # 「已做到 / 还缺」是**判定**说的（第三方评审，它可能判错），
-        # 「你上次说」才是**执行器自己**的话。原来笼统写成"你上次说到哪"，
-        # 读的人分不出哪句是谁说的 —— 而这两者的可信度**根本不是一回事**。
-        block = ["【你上次说到哪】（**这是上一轮的情况，不是本轮**）"]
-        if progress:
-            block.append(f"- **判定说**已做到：{progress}")
-        if missing:
-            block.append("- **判定说**还缺：\n" + "\n".join(f"  - {m}" for m in missing))
-        if report:
-            block.append(f"- **你上次说**：\n{report}")
-        lines.append("\n".join(block))
-
-    # 🔴 **一问一答成对**（用户 2026-11-02）：`report` 是**覆盖**写的
-    # （`absorb_outcome` 无条件覆盖），所以只存答案的话，第二次重入之后
-    # 旧答案就成了**没有指涉的孤儿** —— 那正是修过的"答第二个把第一个冲掉"
-    # 的**镜像版**（那次修的是答案，这次是问题）。问题由**平台**在收下答案的
-    # 那一刻从 `report` 原样截下，不靠任何 LLM 转述。
-    qa = [x for x in (task.get("qa") or [])
-          if isinstance(x, dict) and str(x.get("a") or "").strip()]
-    if qa:
-        block = ["【已经答复过的信息】（**一问一答成对** —— 免得「答」脱离了「问」）"]
-        for x in qa:
-            q = str(x.get("q") or "").strip()
-            by = str(x.get("by") or "用户")
-            if q:
-                # `q` 是执行器的**整条 report**（可能多行，前面还有一句交代）——
-                # 续行要缩进对齐，否则"答"和它回答的那句"问"会被冲散（实测踩过）。
-                # ⚠️ **不抽取"哪句才是问题"**：那是语义判断，平台不做（见 §0.7）。
-                q_lines = q.splitlines() or [q]
-                block.append(f"- **执行器问**：{q_lines[0]}")
-                block += [f"  {ln}" if ln.strip() else "  " for ln in q_lines[1:]]
-                block.append(f"  **{by}** 答：{x['a']}")
-            else:
-                block.append(f"- **{by}** 答：{x['a']}")
-        if len(qa) > 1:
-            block.append("（如前后答复冲突，**以后面的为准**）")
-        lines.append("\n".join(block))
-
-    def _index(aids: list[str]) -> list[str]:
-        return [
-            f"- {aid}《{ARTIFACTS[aid]['title']}》（{len(ARTIFACTS[aid]['content'])} 字）"
-            f"—— {ARTIFACTS[aid].get('summary') or '（无梗概）'}"
-            for aid in aids
-            if aid in ARTIFACTS
-        ]
-
-    produced = _index([a for a in (task.get("artifacts") or []) if a])
-    if produced:
-        lines.append(
-            "【已经产出的产物】\n"
-            + "\n".join(produced)
-            + "\n（这次要**在它基础上补全**，提交完整版；不要从零重写。）"
-        )
-
-    refs = _index([a for a in (task.get("refs") or []) if a])
-    if refs:
-        lines.append(
-            "【可读产物】\n"
-            + "\n".join(refs)
-            + "\n（这是清单，不是正文。要用哪一份就用 read_artifact 读全文，不要凭标题猜。）"
-        )
-
-    if progress or missing or report or qa:
-        # 只有**重入**才说这句：首跑说"接着干"会让它以为有前情
-        lines.append("【续跑提示】\n接着已有的工作继续，**不要重复已完成的工作**。")
-    return "\n\n".join(lines)
-
-
-def render_receipt(rec: dict, outcome: Any, *, agent_answer: str = "", note: str = "") -> str:
-    """把执行器的结果渲染成**给主 agent 的回执** —— `render_briefing` 的**镜像**。
-
-    🔴 **为什么要有它**（用户 2026-11-02）：
-
-    > "交付内容跟委托任务交付的东西一样，**得形式化**呀，不要那么随意懂吗。
-    >  而且**不要截断** —— 我很关心 subagent 给主 agent 交付了什么呀，你截断了我怎么看。"
-
-    原来七个返回口各拼各的字符串，还带 `report[:150]` / `[:300]` / `answer[:60]` 的截断 ——
-    于是"执行器到底交代了什么"，在**主 agent 的上下文里**是**残的**：
-    它拿到的是一段被切掉尾巴的话，而那段话正是它写回复、也是人读日志要看的**交付内容**。
-
-    这里和 `render_briefing` **对称**：
-
-    | | 交接书（`render_briefing`） | 回执（`render_receipt`） |
-    |---|---|---|
-    | 方向 | 平台 → 执行器 | 执行器 → 主 agent |
-    | 形状 | **固定段名 · 每段标来源 · 不截断** | 同左 |
-
-    ⚠️ **改这里时想清楚**：段名既给 LLM 读、也给人读日志 —— 和交接书的段名**保持平行**
-    （【产出的产物】↔ 交接书的【已经产出的产物】）。
-    """
-    from proto.artifacts import ARTIFACTS
-
-    lines: list[str] = []
-
-    # ── ① 交付结果：一行说清成没成、交付了几样 ──
-    if outcome.status == "completed":
-        head = (
-            f"✅ 已完成 —— 交付 {len(outcome.artifacts)} 个产物"
-            if outcome.artifacts
-            else "✅ 已完成 —— 成果在执行器的回复里（**没有产物**）"
-        )
-    elif outcome.status == "waiting_for_input":
-        head = "⏳ 没完成 —— **它在请求信息**"
-    else:
-        head = f"❌ 失败 —— 推了 {outcome.rounds} 轮，仍然既没完成、也没说明需要什么信息"
-    lines.append(f"【交付】{head}")
-
-    # ── ② 产出的产物：逐条列，**带真实路径**（主 agent 要答"文件在哪"）──
-    produced = [a for a in (outcome.artifacts or []) if a]
-    if produced:
-        block = ["【产出的产物】"]
-        for aid in produced:
-            a = ARTIFACTS.get(aid)
-            if not a:
-                block.append(f"- {aid}（**产物库里没有这一条**）")
-                continue
-            block.append(
-                f"- {aid}《{a['title']}》（{len(a['content'])} 字）"
-                f"—— {a.get('summary') or '（无梗概）'}"
-            )
-            if a.get("path"):
-                block.append(f"  文件：{a['path']}")
-        block.append(
-            "（正文在**产物库**里，你的上下文里没有 —— 要看就用 `read_artifact('art_001')` 读，"
-            "不要凭标题猜。回复里报 ID ＋ 路径就够了。）"
-        )
-        lines.append("\n".join(block))
-
-    # ── ③ 执行器说：**全文，一个字都不截**（这是"它交付了什么"）──
-    report = str(outcome.report or "").strip()
-    if report:
-        lines.append(f"【执行器说】（**它说的** —— 原样，未经改写）\n{report}")
-
-    # ── ④ 判定给的进度 / 缺失项：**没完成才给**，且标清是第三方评审说的 ──
-    if outcome.status != "completed":
-        if outcome.progress:
-            lines.append(f"【已做到】（**判定说**）{outcome.progress}")
-        if outcome.missing:
-            lines.append("【还缺】（**判定说**）" + "\n" + "\n".join(f"- {x}" for x in outcome.missing))
-
-    # ── ⑤ 主 agent 自己试答补的信息（成对记进了 `qa`，这里回显一下）──
-    if agent_answer.strip():
-        lines.append(
-            f"【你补的信息】（**你说的** —— 已成对记进 Task，下次重入还会带上）"
-            f"\n{agent_answer.strip()}"
-        )
-
-    # ── ⑥ 下一步：处置提示（各出口不同）──
-    if note:
-        lines.append(f"【下一步】{note}")
-    return "\n".join(lines)
-
-
-def absorb_outcome(rec: dict, outcome: Any) -> None:
-    """把执行器的结果**写进 Task** —— 四个字段一个都不能少（F15 的同类：存了才可能喂）。
-
-    ⚠️ `artifacts` 只在非空时覆盖：执行器可能这一轮没产出，不能把上一轮的抹掉。
-    """
-    rec["report"] = outcome.report
-    rec["progress"] = outcome.progress
-    rec["missing"] = list(outcome.missing)
-    if outcome.artifacts:
-        rec["artifacts"] = list(outcome.artifacts)
-
-
 # ──────────────────────────── 委派 ────────────────────────────
 
 
@@ -545,11 +304,7 @@ def delegate(
     """
     skill = SKILLS.get(skill_name)
     if skill is None:
-        return _cmd(
-            runtime, None,
-            f"【这次没有派发】❌ 没有能力「{skill_name}」\n"
-            f"【可用的能力】{'、'.join(SKILLS)}",
-        )
+        return _reject(runtime, "rejected_skill", f"❌ 没有能力「{skill_name}」", "、".join(SKILLS))
 
     # 用户原话**平台硬搬**（快照进 Task）—— 见 `_user_turns` 的 docstring
     turns = _user_turns(runtime.state.get("messages") or [])
@@ -560,10 +315,9 @@ def delegate(
     unknown_turns = [n for n in picked if n not in known]
     if unknown_turns:
         have = "、".join(str(n) for n in sorted(known)) or "（本会话还没有用户原话）"
-        return _cmd(
-            runtime, None,
-            f"【这次没有派发】❌ 轮次 {'、'.join(str(n) for n in unknown_turns)} 不存在\n"
-            f"【本会话的用户原话】{have}",
+        return _reject(
+            runtime, "rejected_turns",
+            f"❌ 轮次 {'、'.join(str(n) for n in unknown_turns)} 不存在", have,
         )
 
     # 产物引用**当场校验**：编出来的 ID 直接拒掉，并给出真实清单 ——
@@ -572,10 +326,9 @@ def delegate(
     unknown = [a for a in refs if a not in ARTIFACTS]
     if unknown:
         have = "；".join(artifact_index_lines()) or "（本会话还没有产物）"
-        return _cmd(
-            runtime, None,
-            f"【这次没有派发】❌ 产物 {'、'.join(unknown)} 不存在\n"
-            f"【本会话现有产物】{have}",
+        return _reject(
+            runtime, "rejected_artifact",
+            f"❌ 产物 {'、'.join(unknown)} 不存在", have,
         )
 
     # id 用 tool_call_id 派生 —— **并行调用时不会撞车**（用序号会撞，实测踩过）。
@@ -616,9 +369,20 @@ def delegate(
     if superseded:
         trace.note(f"取代了 {len(superseded)} 个同技能的未了结 Task：{[t['id'] for t in superseded]}")
 
-    def _out(rec: dict, msg: str) -> Command:
-        """统一的返回口 —— **总是带上被取代的旧 Task**。"""
-        return _cmd(runtime, [rec, *superseded], msg)
+    def _out(rec: dict, outcome: Any, *, agent_answer: str = "", note: str = "") -> Command:
+        """统一的返回口 —— **总是带上被取代的旧 Task**。
+
+        🔴 它做两件事，**一次做完**：构造**回执对象**、渲染成文本 ——
+        文本进 `content`（模型只看这个），对象挂 `additional_kwargs`（模型看不到，
+        记录层读它）。见 `proto/handoff/receipt.py` 的 docstring。
+        """
+        r = build_receipt(outcome, agent_answer=agent_answer, note=note)
+        text = render_receipt(r)
+        # 交接关键日志（复盘用）：这一跳交了多少、有没有结构化对象 —— 见 `trace.handoff`。
+        # 正文**不在这里 dump**：主 agent 的逐步骤 dump 里已经有它（`graph.node_agent`）。
+        trace.handoff("回执", "执行器", "主 agent", text,
+                      structured=f"Receipt(kind={r['kind']}，{len(r['sections'])} 段)")
+        return _cmd(runtime, [rec, *superseded], text, handoff=r)
 
     # ① 派发 —— run_task 内部已含「出口限制」：既没完成也没提问会被推回去继续
     # 第三个参数是用户原话（给执行器的 `read_user_turn` 用）—— 交接书里只有清单，全文按需取
@@ -629,13 +393,11 @@ def delegate(
     if outcome.status == "completed":
         rec.update(stage="completed", artifacts=outcome.artifacts)
         if outcome.artifacts:
-            return _out(rec, render_receipt(rec, outcome))
+            return _out(rec, outcome)
         return _out(
-            rec, render_receipt(
-                rec, outcome,
-                note="成果在**执行器的回复里**（上面【执行器说】那段）——"
-                     "**请原样转达给用户，不要改写**：它可能是调用方要解析的协议块。",
-            ),
+            rec, outcome,
+            note="成果在**执行器的回复里**（上面【执行器说】那段）——"
+                 "**请原样转达给用户，不要改写**：它可能是调用方要解析的协议块。",
         )
 
     if outcome.status == "waiting_for_input":
@@ -653,12 +415,12 @@ def delegate(
             absorb_outcome(rec, o2)
             if o2.status == "completed":
                 rec.update(stage="completed", artifacts=o2.artifacts, report=o2.report)
-                return _out(rec, render_receipt(rec, o2, agent_answer=answer))
+                return _out(rec, o2, agent_answer=answer)
             outcome = o2  # 补了还是不行 → 用新的结果去问用户（三态可能变成 incomplete）
 
         if outcome.status == "completed":
             rec.update(stage="completed", artifacts=outcome.artifacts, report=outcome.report)
-            return _out(rec, render_receipt(rec, outcome, agent_answer=answer))
+            return _out(rec, outcome, agent_answer=answer)
 
         if outcome.status == "waiting_for_input":
             rec.update(stage="waiting_for_input", report=outcome.report,
@@ -666,12 +428,10 @@ def delegate(
                        progress=outcome.progress, missing=list(outcome.missing))
             trace.note(f"delegate · {tid} 登记待答（平台负责转达，不由主 agent 代问）")
             return _out(
-                rec, render_receipt(
-                    rec, outcome,
-                    note="平台已登记为待答，**并会负责把这个问题转达给用户**，"
-                         "用户的答复也会由平台投回给它 —— 你**不用**重复问，"
-                         "更不要自己替用户定一个答案。你这条回复说清楚「派了什么、还差什么」就行。",
-                ),
+                rec, outcome,
+                note="平台已登记为待答，**并会负责把这个问题转达给用户**，"
+                     "用户的答复也会由平台投回给它 —— 你**不用**重复问，"
+                     "更不要自己替用户定一个答案。你这条回复说清楚「派了什么、还差什么」就行。",
             )
         # 补了信息之后反而变成 incomplete → 落到下面的 failed 分支
 
@@ -682,10 +442,8 @@ def delegate(
                progress=outcome.progress, missing=list(outcome.missing))
     trace.note(f"delegate · {tid} status=incomplete（推了 {outcome.rounds} 轮）→ failed")
     return _out(
-        rec, render_receipt(
-            rec, outcome,
-            note="你可以**换个说法再 delegate 一次**；或者向用户说明这次没做成。",
-        ),
+        rec, outcome,
+        note="你可以**换个说法再 delegate 一次**；或者向用户说明这次没做成。",
     )
 
 

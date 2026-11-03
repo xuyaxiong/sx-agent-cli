@@ -22,7 +22,7 @@ import sys
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from proto.agent import render_briefing
+from proto.handoff.briefing import render_briefing
 from proto.artifacts import ARTIFACTS, store_artifact
 
 #: **显式排除名单** —— 这些字段不进交接书，每一条都要有理由。
@@ -191,6 +191,16 @@ def main() -> None:
         repr(fresh_text),
     )
     check("首跑没有续跑提示", "续跑提示" not in fresh_text)
+
+    print("\n⑦ 渲染出来的段都在 `HOPS['briefing']` 里声明过（和回执那边对称）")
+    from proto.handoff import HOPS, SECTION
+
+    used = {k for k, v in SECTION.items() if v in text}
+    declared = set(HOPS["briefing"])
+    check("渲染出的段都在 `HOPS['briefing']` 里声明过", used <= declared,
+          f"没声明：{sorted(used - declared)}")
+    check("声明的段**都用到了**（没有死段）", declared <= used,
+          f"声明了没人用：{sorted(declared - used)}")
 
     print("\n" + "═" * 78)
     print(f"{'全部通过' if not FAIL else '有失败'}：{len(PASS)}/{len(PASS) + len(FAIL)}")

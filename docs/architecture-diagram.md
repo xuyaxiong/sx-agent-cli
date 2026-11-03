@@ -171,7 +171,7 @@ run_task(skill, briefing)
   │
   ├─ 第 1 轮 ─────────────────────────────────────────────────────┐
   │    stream_agent(executor_agent)   ← 工具：write/read_artifact  │
-  │    _recover_artifacts(resp, preexisting)  ← 只认**这次新写的**   │
+  │    created[]（write_artifact 记账）        ← 只认**这次新写的**   │
   │    _last_ai_text(resp)                    ← report（只给摘要用） │
   │    _judge_material(arts, resp)            ← 判定看的"执行结果"   │
   │    _judge(skill, arts, material, briefing) → _Judgement         │
@@ -609,7 +609,7 @@ absorb_outcome(rec, outcome)
 
 | # | 硬判断 | 位置 | 防的是 |
 |---|---|---|---|
-| H1 | 产物必须**真实存在**且是**这次新写的** | `executor._recover_artifacts` | 编 ID；读来的算成自己交付的 |
+| H1 | 产物必须**真实存在**且是**这次新写的** | `artifacts.make_write_artifact(created)`（**按 run 记账**，2026-11-03 起） | 编 ID；读来的算成自己交付的 |
 | H2 | 执行器不许无限跑（**3 轮上限**） | `executor.MAX_REACT_ROUNDS` | 烧钱 / 死循环 |
 | H3 | **状态字段由代码写** | `agent.delegate` 的 `rec.update` | 模型自报状态 |
 | H4 | **三态穷举分派**（没有第四种） | `agent.delegate` | 隐式 `else` 把 incomplete 当成"在请求信息"（P3 复发） |

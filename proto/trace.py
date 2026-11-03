@@ -217,6 +217,11 @@ def render_message(m) -> str:
     kind = type(m).__name__
     content = str(m.content)
     parts = [f"{kind}({len(content)}字)"]
+    # 🔴 **平台注入的标记**（`proto.handoff.INJECTED`）—— 透传注入的是 AIMessage，
+    # 内容是**执行器的原话**；不写出来，读日志的人会以为那是主 agent 说的。
+    tag = (getattr(m, "additional_kwargs", None) or {}).get("injected_by")
+    if tag:
+        parts.append(f"    injected_by={tag}")
     if content.strip() and kind != "AIMessage":
         # `!r` 只为**压成一行**（日志一行一条），不是为了截断。
         parts.append(f"    content={content!r}")
@@ -234,3 +239,49 @@ def dump_trace(tag: str, messages: list) -> None:
 
 def close() -> None:
     _fh.close()
+
+
+# ──────────────────────────── 交接：关键日志（便于复盘） ────────────────────────────
+
+
+def handoff(
+    hop: str,
+    frm: str,
+    to: str,
+    text: str,
+    *,
+    structured: str = "",
+    full: bool = False,
+) -> None:
+    """**一次交接的完整记录** —— 一行摘要（＋可选全文）。
+
+    用户 2026-11-03：*"你得加上关键日志 —— 这些在日志中得完整记录下来**便于复盘**。"*
+
+    摘要行让复盘的人**一眼看到**：
+      - **谁给谁、交了多少字** → 判据①（内容）
+      - **有没有结构化对象** → 判据④（结构 ＋ 模板两层分离）
+      - **跳名与方向** → 判据⑤（这一跳是平台硬拼还是 LLM 转述）
+
+    截断（判据②）由**切的那一方**自己报（`cut()`）—— 不在这里事后解析文本。
+    膨胀（判据③）看每轮的上下文读数（`harness.snapshot` / CLI 的 `📊 CONTEXT` 行）。
+
+    ⚠️ `full=True` 只在**别处没有 dump 过**这一跳时用（否则日志里两份）。
+    """
+    note(
+        f"📤 交接 · {hop}（{frm} → {to}）：{len(text)} 字"
+        f"｜结构化：{structured or '（纯文本）'}"
+    )
+    if full:
+        block(f"交接全文 · {hop}", text)
+
+
+def cut(where: str, kept: int, total: int, *, see: str = "") -> None:
+    """**切了一刀就报一刀** —— 由切的那一方自己调，不靠事后从文本里解析。
+
+    用户 2026-11-03：*"主动截断是否有显式标记，被截断的内容，有没有告知它能查到
+    全文详情的方式方法。"* —— 标记在**文本里**（读的人看得见），
+    这一行在**日志里**（复盘的人看得见），两者都要有。
+
+    `see` = 全文在哪（渐进式披露的出口）。
+    """
+    note(f"✂️ 截断 · {where}：保留 {kept} 字 / 原文 {total} 字" + (f"｜全文：{see}" if see else ""))

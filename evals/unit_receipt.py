@@ -10,8 +10,13 @@
 它是 `unit_briefing.py` 的**镜像**：那边管交接书（平台 → 执行器），这边管回执
 （执行器 → 主 agent）。两边的规矩是同一条 —— **每个字段要么渲染、要么显式排除**。
 
-> 有效性自检：把 `render_receipt` 里任意一段删掉，本测试必须红；
+> 有效性自检：把 `build_receipt` 里任意一段删掉，本测试必须红；
 > 把 `report` 换成 `report[:150]`，② 必须红（2026-11-02 手工验过）。
+
+🔴 **2026-11-03 起：记录层读的是「对象」，不是文本** —— 用户定的硬规矩：
+*"禁止你反结构化任何 llm 正文输出 —— 结构化处理的前提一定是 llm 输出本身就是结构化的。"*
+所以 ⑥ 断的是 **`build_receipt` → `Receipt` → `_receipt_sections`** 这条链，
+**没有**任何"把渲染出来的散文解析回段"的代码（那条路已经整个删掉）。
 """
 
 # ruff: noqa: T201  # 诊断输出即本脚本的产出物
@@ -23,7 +28,7 @@ import sys
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from proto.agent import render_receipt
+from proto.handoff.receipt import build_receipt, render_receipt
 from proto.artifacts import ARTIFACTS, store_artifact
 from proto.executor import ExecOutcome
 
@@ -55,6 +60,11 @@ AID = store_artifact("白桦-导学单", "课前预习用填空式导学单", "m
 ARTIFACTS[AID]["path"] = r"C:\runs\art_001_白桦-导学单.md"
 
 
+def _render(outcome: ExecOutcome, **kw) -> str:
+    """结果 → **回执对象** → 文本。**两跳都要走** —— 渲染只认对象，不认结果。"""
+    return render_receipt(build_receipt(outcome, **kw))
+
+
 def _outcome(status: str) -> ExecOutcome:
     return ExecOutcome(
         status=status,
@@ -73,7 +83,7 @@ def main() -> None:
 
     print("① 三态各有自己的回执，且**每个字段都渲染了**")
     for label, out in (("completed", completed), ("waiting_for_input", waiting), ("incomplete", failed)):
-        text = render_receipt({}, out)
+        text = _render(out)
         check(f"[{label}] 有【交付】段", text.startswith("【交付】"), text[:60])
         # status 是英文枚举，回执里该是**人话**；断的是"三态各不相同"
         heads = {
@@ -97,13 +107,13 @@ def main() -> None:
 
     print("\n② 🔴 **一个字都不许截断** —— 这是这条规矩的由来")
     for label, out in (("completed", completed), ("waiting_for_input", waiting), ("incomplete", failed)):
-        text = render_receipt({}, out)
+        text = _render(out)
         check(f"[{label}] 执行器交代**全文**都在", out.report in text)
         check(f"[{label}] 结尾标记没丢", "**结尾标记**" in text)
         check(f"[{label}] 没有截断省略号", "…（" not in text and "…\n" not in text)
 
     print("\n③ 来源标注：**哪句是执行器说的、哪句是判定说的、哪句是主 agent 说的**")
-    text = render_receipt({}, waiting, agent_answer="用户之前说过是四年级")
+    text = _render(waiting, agent_answer="用户之前说过是四年级")
     check("【执行器说】标了是它说的", "**它说的**" in text)
     check("【已做到】【还缺】标了是判定说的", text.count("**判定说**") >= 2)
     check("【你补的信息】标了是主 agent 说的", "**你说的**" in text)
@@ -112,7 +122,7 @@ def main() -> None:
     print("\n④ 条件出现：没有的段不许凭空冒出来")
     bare = ExecOutcome(status="completed", artifacts=[], report="成果在这里", rounds=1,
                        progress="", missing=[])
-    t = render_receipt({}, bare)
+    t = _render(bare)
     check("没产物 → 没有【产出的产物】", "【产出的产物】" not in t)
     check("没产物 → 交付行说明了这件事", "没有产物" in t)
     check("没 progress/missing → 两段都不出", "【已做到】" not in t and "【还缺】" not in t)
@@ -122,8 +132,83 @@ def main() -> None:
 
     print("\n⑤ 试答成功那条出口：补了什么要看得见（原来截到 60 字）")
     long_answer = "用户之前说过：" + "四年级下册第一课时" * 12
-    t = render_receipt({}, completed, agent_answer=long_answer)
+    t = _render(completed, agent_answer=long_answer)
     check("补的信息**全文**在", long_answer in t, f"长度 {len(long_answer)}")
+
+    print("\n⑥ 记录层读的是**对象**，不是文本（用户 2026-11-03 定的硬规矩）")
+    from evals.harness import _RECEIPT_LABEL, _receipt_sections
+    from proto.handoff import HOPS, SECTION
+    from proto.handoff.receipt import build_rejection
+
+    # ① 三态：对象里的段 = 渲染出来的段；**执行器的原话逐字相等**
+    #    （老实现靠解析文本，这段根本切不出来 → 回执掉进 1200 字兜底截断）
+    for label, out in (("completed", completed), ("waiting_for_input", waiting),
+                       ("incomplete", failed)):
+        r = build_receipt(out, agent_answer="补一句", note="（示例）下一步")
+        text = _render(out, agent_answer="补一句", note="（示例）下一步")
+        parts = _receipt_sections(r)
+        check(f"[{label}] 对象切得出段", len(parts) >= 4,
+              f"只切出 {len(parts)} 段：{[p[0][:12] for p in parts]}")
+        got = [t for lab, t in parts if lab == _RECEIPT_LABEL["report"]]
+        check(f"[{label}] 执行器的原话那一段 == `report` 逐字",
+              bool(got) and got[0] == out.report.strip())
+        check(f"[{label}] 渲染出的文本包含对象里每一段的内容",
+              all(t in text for _, t in parts))
+
+    # ② 段名 ⊆ `HOPS` 声明（**加了段忘了登记 → 这里红**）
+    all_used: set[str] = set()
+    for out in (completed, waiting, failed):
+        all_used |= set(build_receipt(out, agent_answer="补一句", note="（示例）下一步")["sections"])
+    declared = set(HOPS["receipt"])
+    check("对象里的段都在 `HOPS['receipt']` 里声明过", all_used <= declared,
+          f"没声明：{sorted(all_used - declared)}")
+    check("声明的段**都用到了**（没有死段）", declared <= all_used,
+          f"声明了没人用：{sorted(declared - all_used)}")
+
+    # ③ 出口分类在**对象**上（`kind`），不靠解析文本
+    check("三态 → `kind` 分得对",
+          build_receipt(completed)["kind"] == "completed"
+          and build_receipt(waiting)["kind"] == "waiting"
+          and build_receipt(failed)["kind"] == "failed")
+    bare = ExecOutcome(status="completed", artifacts=[], report="成果在这里", rounds=1)
+    check("正文交付 → `kind` 分得对", build_receipt(bare)["kind"] == "completed_in_reply")
+
+    # ④ 派发被拒那三个口：对象 → 文本 → 记录层，三边一致
+    rejected = {
+        "rejected_skill": build_rejection("rejected_skill", "❌ 没有能力「x」", "a、b"),
+        "rejected_turns": build_rejection("rejected_turns", "❌ 轮次 9 不存在", "（无）"),
+        "rejected_artifact": build_rejection("rejected_artifact", "❌ 产物 art_9 不存在", "（无）"),
+    }
+    for kind, r in rejected.items():
+        check(f"认得出来：{kind}", r["kind"] == kind)
+        check(f"切得开：{kind}", len(_receipt_sections(r)) == 2, str(_receipt_sections(r))[:80])
+        check(f"渲染得出：{kind}", render_receipt(r).startswith(SECTION["not_dispatched"]))
+
+    # ⑤ 走**真代码路径**：真 `delegate` 吐出来的消息上挂着对象，记录层读得到
+    import proto.agent as A
+
+    class _R:  # 假的 ToolRuntime —— 拒绝口只用到 state / tool_call_id
+        state = {"messages": [], "tasks": []}
+        tool_call_id = "call_abc12345"
+
+    real = {
+        "rejected_skill": A.delegate.func(skill_name="nope", task="x", runtime=_R()),
+        "rejected_turns": A.delegate.func(skill_name="quiz", task="x", based_on_turns=[9], runtime=_R()),
+        "rejected_artifact": A.delegate.func(skill_name="quiz", task="x", artifacts=["art_9"], runtime=_R()),
+    }
+    for kind, cmd in real.items():
+        msg = cmd.update["messages"][0]
+        obj = (msg.additional_kwargs or {}).get("handoff")
+        check(f"真 `delegate` 把对象挂在消息上：{kind}", bool(obj) and obj["kind"] == kind)
+        check(f"对象切得开：{kind}", bool(obj) and len(_receipt_sections(obj)) == 2)
+
+    # ⑥ 对象**不会漏给模型** —— 这是它敢挂在消息上的前提（实测 `_convert_message_to_dict`
+    #    只取 content / role / tool_call_id）
+    from langchain_openai.chat_models.base import _convert_message_to_dict
+
+    d = _convert_message_to_dict(real["rejected_skill"].update["messages"][0])
+    check("发给模型的 dict 里**没有** handoff 对象", "handoff" not in str(d), str(d))
+
 
     print("\n" + "═" * 78)
     print(f"{'全部通过' if not FAIL else '有失败'}：{len(PASS)}/{len(PASS) + len(FAIL)}")

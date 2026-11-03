@@ -125,23 +125,46 @@ def store_artifact(title: str, summary: str, file_type: str, content: str) -> st
     return aid
 
 
-@tool
-def write_artifact(title: str, summary: str, file_type: str, content: str) -> str:
-    """把成品写入产物库。正文不会再回到主 agent 的上下文，只返回产物 ID。
+def make_write_artifact(created: list[str] | None = None):
+    """造一个 `write_artifact` 工具。`created` 非空时，**顺手把产物 ID 记进去**。
 
-    Args:
-        title: 产物名。
-        summary: **一句话梗概** —— 它是产物对外露出的那一层：主 agent 靠它决定
-            要不要读全文、要不要把它传给下一个技能。不写梗概，别人只能读全文。
-        file_type: **文件类型**（`md` / `html`）—— 由**产出方**在交付时一起说，
-            平台据此**硬性派发**保存：说 md 就存 `.md`，说 html 就存 `.html`。
-        content: 产物正文全文。
+    🔴 **为什么要"造"而不是共用一个**（2026-11-03，第 5 步）：执行器要回答
+    "**这次 run 写了哪些产物**"（`outcome.artifacts`）。原来靠**扫消息文本**猜
+    （`_recover_artifacts`），再用 `preexisting` 差集补"读来的被算成写出来的" ——
+    **既不是结构化、也不是硬机制**，而且差集本身还留着并发窗口。
+
+    现在改成**记账**：谁写的，谁自己记。
+
+    ⚠️ **用闭包，不用模块级全局**：并行 delegate 时两个执行器会互相覆盖 ——
+    同 `executor._user_turn_reader` 的教训（`ARTIFACT_DIR` 那种全局状态在这儿就是坑）。
+    闭包 = **按 run 归属**，并发窗口**结构上不存在**。
     """
-    aid = store_artifact(title, summary, file_type, content)
-    a = ARTIFACTS[aid]
-    # 返回里**带上文件类型和保存地址** —— 用户和后面的代码都要靠它找到这份产物
-    where = f"\n文件：{a['path']}" if a.get("path") else ""
-    return f"已写入产物 {aid}（{len(content)} 字，{a['ext'].lstrip('.')}）{where}"
+
+    @tool
+    def write_artifact(title: str, summary: str, file_type: str, content: str) -> str:
+        """把成品写入产物库。正文不会再回到主 agent 的上下文，只返回产物 ID。
+
+        Args:
+            title: 产物名。
+            summary: **一句话梗概** —— 它是产物对外露出的那一层：主 agent 靠它决定
+                要不要读全文、要不要把它传给下一个技能。不写梗概，别人只能读全文。
+            file_type: **文件类型**（`md` / `html`）—— 由**产出方**在交付时一起说，
+                平台据此**硬性派发**保存：说 md 就存 `.md`，说 html 就存 `.html`。
+            content: 产物正文全文。
+        """
+        aid = store_artifact(title, summary, file_type, content)
+        if created is not None:
+            created.append(aid)
+        a = ARTIFACTS[aid]
+        # 返回里**带上文件类型和保存地址** —— 用户和后面的代码都要靠它找到这份产物
+        where = f"\n文件：{a['path']}" if a.get("path") else ""
+        return f"已写入产物 {aid}（{len(content)} 字，{a['ext'].lstrip('.')}）{where}"
+
+    return write_artifact
+
+
+#: 主 agent 用的那个（它不需要按 run 记账 —— 它写的东西直接进自己的对话）
+write_artifact = make_write_artifact()
 
 
 @tool

@@ -31,12 +31,18 @@ from pydantic import BaseModel, Field
 
 from proto import trace
 from proto.config import get_model
+from proto.handoff.judgement import (  # 判定：schema + 输入模板（搬去 handoff 包）
+    _Judgement,
+    _judge_material,
+    build_prompt,
+)
+from proto.handoff.nudge import nudge_text  # 推回去的模板
 from proto.llm import safe_structured
 from proto.artifacts import (  # 产物领域
     ARTIFACTS,
     read_artifact,
     store_artifact,
-    write_artifact,
+    make_write_artifact,
 )
 from proto.skill_pack import read_skill_file, skill_file_index_lines  # 技能包文件（磁盘）
 from proto.skills import Skill  # 技能领域
@@ -63,49 +69,6 @@ _PLATFORM_RULE = (
 
 #: 一个任务最多让它 react 几轮（平台自保，不约束 skill 作者）
 MAX_REACT_ROUNDS = 3
-
-#: 判定提示词里，**每一项**（一条 AI 产出 / 一个产物）的字符预算。
-#: 超了就**保头保尾 + 显式标注省略** —— 不是简单截尾。
-#:
-#: 🔴 **这个数是被实测调出来的，原来是 800，是错的。**
-#: `experiments/debug_clip_marker.py` 的预算扫描（3 次采样，产物 3112 字）：
-#:
-#: | 预算 | 截断？ | 完整产物→completed | 真占位符→incomplete |
-#: |---|---|---|---|
-#: | 800（原值） | 是 | 3/3 | **0/3** |
-#: | 1600 | 是 | 3/3 | 1/3 |
-#: | 2400 | 是 | 3/3 | 2/3 |
-#: | **4000** | 否 | 3/3 | **3/3** |
-#:
-#: **单调** —— 判定判得准不准，基本取决于它能不能看到全文。
-#: 800 字时占位符正好落在被截掉的中段，判定既误判完整产物、又漏掉真缺陷。
-#:
-#: ⚠️ **但要清醒**：这只把门槛往后挪了。产物再长（48k 课件）还是会截断，
-#: 截断之后判定就**没有能力**验证完整性 —— 那时它给的"完成"是**推测**，不是判断。
-#: 所以：① 这个数是**可调**的，按真实产物长度定；② 完整性最终要靠**产物落盘 + 人工审计**
-#: （`evals/` 会把产物原文写到 `runs/<tag>/artifacts/`）。
-JUDGE_ITEM_BUDGET = 4000
-
-#: 「实际执行结果」整段的字符上限。超出时砍掉排在后面的项，并**显式说明少了几项**。
-#: 与 `JUDGE_ITEM_BUDGET` 同步放大（约 4 项的量）。
-JUDGE_TOTAL_BUDGET = 16000
-
-#: 保头保尾时，头部占的比例（剩下给尾部）。
-_CLIP_HEAD_RATIO = 0.6
-
-#: **平台截断的标记** —— 措辞要顶得住"被当成作者占位符"。
-#:
-#: ⚠️ **别说"内容完整"** —— 平台**不知道**内容完不完整，那是在替判定下结论。
-#: 实测（`experiments/debug_clip_marker.py` 变体 B）：光把标记写成"不代表内容缺失"，
-#: 完整产物那一列从 0/3 修到 3/3，但**真占位符那一列从 3/3 塌到 0/3** ——
-#: 判定开始接受真正残缺的产物。**用一个假阴性换了个假阳性。**
-#:
-#: 所以措辞只说**平台知道的事实**：这部分你没看到；别仅凭"看不到"下结论；
-#: 但在看得到的地方发现缺陷，照常判。
-_CLIP_MARK = (
-    "……【平台截断：中间 {n} 字因提示词长度限制未展示给你。**你无法看到这部分**，"
-    "所以不要仅凭「看不到」判未完成；但若在**看得到**的部分发现占位符、待补充、半成品，照常判未完成】……"
-)
 
 #: 每次 `run_task` 一个递增编号 —— 日志里用来**区分不同的 run**
 #: （一次进程会跑很多次 run_task，没有编号就分不清哪一行属于哪一次）
@@ -143,176 +106,6 @@ class ExecOutcome:
     missing: list[str] = field(default_factory=list)
 
 
-class _Judgement(BaseModel):
-    """任务状态 —— **三态，不是两个布尔值**（用户给的模板）。
-
-    ⚠️ **判定要吐的不只是"状态"，还要吐出"下一轮所需的信息"**——
-    用户要求：*"没有完成的情况下，做到什么程度了，
-    可以有一些有效信息支持下一轮 react 继续推进"*。
-    否则推回去时它只能从头再来。
-    """
-
-    status: Literal["completed", "waiting_for_input", "incomplete"] = Field(
-        description="任务状态"
-    )
-    #: 非 completed 时：**已经做到什么程度**（哪些部分已完成）
-    #: —— 让下一轮能**接着推进**，而不是从头再来
-    progress: str = Field(
-        default="", description="status 不是 completed 时填：已经做到什么程度（哪些部分已完成）"
-    )
-    #: `incomplete` 时：**还缺什么** —— 平台据此**精确引导它回去继续**
-    missing: list[str] = Field(
-        default_factory=list,
-        description="status=incomplete 时填：还缺什么（缺的产物 / 没做完的部分），逐条列出",
-    )
-    reason: str = Field(default="", description="一句话理由")
-
-
-#: 判定规则 —— 用户拟的模板 + 用户补充的四点（有产物/无产物各自什么叫完成、
-#: 未完成时报告进度、提问是**向主 agent 请求**而不是"向用户"）
-_JUDGE_RULES = (
-    "根据任务要求和实际执行结果，判断任务状态：\n"
-    "- completed：任务已完成，且满足必要的交付条件。\n"
-    "- waiting_for_input：任务尚未完成，且明确请求了继续所必需的信息。\n"
-    "- incomplete：任务尚未完成，但不属于请求信息的情况。\n"
-    "\n"
-    "判定规则：\n"
-    "1. **需要文件产物的任务**：检查产物是否存在、完整且符合要求。\n"
-    "   产物可能有**多个**——逐个检查，缺一个都不算完成。\n"
-    "   占位内容、待补充项、半成品（如「待补充」「TODO」「待填写」）**不能视为完成**。\n"
-    "2. **不需要文件产物的任务**：确认实际工作已经完成。\n"
-    "   不能仅凭执行者声称完成、或输出确认性文字（如「好的」「我了解了」「已收到」）判定。\n"
-    "3. 只有**明确请求继续所必需的信息**，才能判定为 waiting_for_input。\n"
-    "   解释失败原因、表达困惑、描述缺少的信息，**都不算**请求信息。\n"
-    "\n"
-    "另外，只要不是 completed，都要填写：\n"
-    "- `progress`：**已经做到什么程度**（哪些部分已完成）——让下一轮能**接着推进**，"
-    "而不是从头再来；\n"
-    "- `missing`（仅 incomplete 时）：**还缺什么**，逐条列出，越具体越好。\n"
-    "\n"
-    "⚠️ **关于「平台截断」**：\n"
-    "平台为了控制本提示词的体积，会把过长的产物**截断后**再交给你，并在中间插入\n"
-    "形如「……【平台截断：中间 N 字……未展示给你】……」的标记。\n"
-    "- 那是**平台加的**，不是作者写的占位符 —— **不要把它写进 `progress` / `missing`**；\n"
-    "- **不要仅凭「看不到中间」就判 `incomplete`**（那会让产物越长越必然被判半成品）；\n"
-    "- **但在你看得到的地方**（开头、结尾）发现「待补充」「TODO」「此处省略」这类\n"
-    "  **作者写的**占位符，照常判未完成 —— 两者措辞不同：平台截断会带「平台截断」字样。\n"
-)
-
-
-def _nudge_text(j: _Judgement) -> str:
-    """**推它继续**时说什么 —— 把判定吐出的 `progress` / `missing` 都喂回去。
-
-    用户要求：*"尽可能暴露一些有用信息到外部，
-    不然你只是说没完成，后续即使回去继续 react 也不知道该怎么做。"*
-    """
-    parts: list[str] = ["任务还没完成。"]
-    if j.progress:
-        parts.append(f"**你已经完成了**：{j.progress}")
-    if j.missing:
-        parts.append("**还缺**：\n" + "\n".join(f"- {x}" for x in j.missing))
-    parts.append("请**接着往下做**，不要从头再来。")
-    parts.append(
-        "如果确实缺少必要信息才能继续，就**明确说明你需要什么**"
-        "（缺哪个参数、要什么确认）；否则不要用「已完成」之类的话收尾。"
-    )
-    return "\n\n".join(parts)
-
-
-def _clip(text: str, budget: int = JUDGE_ITEM_BUDGET) -> str:
-    """**保头保尾**截断，中间**显式标注省略了多少字**。
-
-    ⚠️ **标注省略这件事，比保头保尾本身更重要。**
-    不标的话，判定**不知道自己没看全**，会基于不完整的信息**自信地下判断** ——
-    那比"猜"更糟，是"以为自己没在猜"。
-
-    保头保尾的理由：开头通常交代"这是什么/要做什么"，结尾是**最新状态**，中间多为过程。
-
-    🔴 **标记的措辞是被实测逼出来的，别改回去。**
-    原来写的是「……（此处省略 N 字）……」，判定会把它当成**作者偷懒的占位符**
-    （`_JUDGE_RULES` 第 1 条：占位内容 / 待补充 / 半成品不能视为完成），
-    于是**产物越长越必然判 `incomplete`** —— 而"产物长"恰恰是本架构要支持的正常场景。
-
-    实测代价（`docs/discussion-log.md` F1）：
-      - `s13`：一个任务被推回去 3 轮，**重写了 3 份重复教案**（607 秒 / 144k token），最终还记 `failed`
-      - `e13`：单 run 从 **9.7k** token 涨到 **79k**，约 **8 倍**
-      - 而且**不是确定性的** —— 同一轮里一个任务判 completed、另一个判 incomplete，看起来像"模型偶发不稳"
-    """
-    if len(text) <= budget:
-        return text
-    head = int(budget * _CLIP_HEAD_RATIO)
-    tail = budget - head
-    return (
-        f"{text[:head]}\n"
-        + _CLIP_MARK.format(n=len(text) - budget)
-        + f"\n{text[-tail:]}"
-    )
-
-
-def _judge_material(arts: list[str], resp: dict) -> str:
-    """判定要看的「实际执行结果」—— **两条路的取材不同，别合并**。
-
-    | | 交付物是什么 | 执行器的散文是什么 |
-    |---|---|---|
-    | **有产物** | **产物正文**（就是它） | **过程话术**（含"需要调整吗？"这类礼貌收尾）—— **不是交付物** |
-    | **无产物** | 只能从 AI 产出里找 → **全部轮次都要给** | **就是交付物本身** |
-
-    🔴 **有产物时不要把散文喂进来。** 实测踩过：执行器在产物之后补了句
-    "……如果需要进一步压缩，我马上帮你收紧。**需要调整吗？**"，
-    判定看到后把它当成"明确请求继续所必需的信息" → 判成 `waiting_for_input`，
-    而产物其实**已经完整交付**了。
-
-    🔴 **无产物时不能只给最后一条。** 出口循环里消息是**累积**的
-    （`messages = list(resp["messages"]) + [HumanMessage(nudge)]`），
-    所以第 2 轮的 `resp` **包含第 1 轮的全部内容**。只取最后一条会让判定
-    **看不到前面几轮的产出** —— 执行器说"我接着上面的进展"，而"上面"判定看不到。
-
-    ⚠️ 后者是同一个 bug 的**第四次**（前三次见 `_judge` 的 docstring）。
-    前三次都是"提示词忘了带某个字段"，这次是"信息在列表里、但取错了那一条" ——
-    **前三次的检查法（"字段带了没有"）发现不了它**。
-
-    每一项**各自**保头保尾（`_clip`），而不是整体截断 ——
-    这样**每一轮都保证有代表**，不会被整体截断挤掉中间那轮。
-
-    TODO（已记档，暂不做）：**`need_more` —— 有界的一次补看。**
-      现在信息不够时判定只能硬判。可给 `_Judgement` 加一个 `need_more: str` 字段，
-      判定点名要看哪一段 → 平台补上 → **再判一次**（只允许一次）。
-      比给判定完整 tool loop 便宜得多，但仍是额外一轮 LLM 调用。
-      **等本版上线后看实测**：判定还会不会因信息不够判错。会，再加。
-    """
-    parts: list[str] = []
-
-    if arts:
-        # 有产物 → 交付物就是产物正文，**不含散文**
-        for aid in arts:
-            if aid in ARTIFACTS:
-                parts.append(f"【产物 {aid}】\n{_clip(ARTIFACTS[aid]['content'])}")
-    else:
-        # 无产物 → 交付物只能从 AI 产出里找，**全部轮次都要给**
-        n = 0
-        for m in resp["messages"]:
-            if isinstance(m, AIMessage) and str(m.content).strip():
-                n += 1
-                parts.append(f"【产出 {n}】\n{_clip(str(m.content))}")
-
-    if not parts:
-        return "（执行者一句话都没说，也没产出任何文件）"
-
-    # 总量兜底：超出就砍后面的项，并**显式说明少了几项**
-    # ⚠️ 措辞同 `_CLIP_MARK` —— 也要防"被当成作者占位符"
-    out, used = [], 0
-    for p in parts:
-        if used + len(p) > JUDGE_TOTAL_BUDGET and out:
-            out.append(
-                f"……【平台截断：另有 {len(parts) - len(out)} 项因提示词长度限制未展示给你，"
-                "**你无法看到这些项**】……"
-            )
-            break
-        out.append(p)
-        used += len(p)
-    return "\n\n".join(out)
-
-
 def _judge(skill: Skill, arts: list[str], material: str, briefing: str = "") -> _Judgement:
     """判定任务状态：`completed` / `waiting_for_input` / `incomplete`。
 
@@ -336,8 +129,6 @@ def _judge(skill: Skill, arts: list[str], material: str, briefing: str = "") -> 
        所以只能说"F 更好"，不能说"F 的提示词更好"。
        `criteria` 被砍的理由是**没有增量价值**（要求已在 instructions 里），不是分数低。
     """
-    n = len(arts)
-    art_line = f"执行者**产出了 {n} 个文件**。" if n else "执行者**没有产出任何文件**。"
     # 判定**输入**只记构成，不逐字复述 —— 里面既有产物正文、又有技能原文，两样都另有出处。
     trace.note(
         f"判定输入：技能 {skill.name}（instructions {len(skill.instructions)} 字，按名引用）"
@@ -349,13 +140,11 @@ def _judge(skill: Skill, arts: list[str], material: str, briefing: str = "") -> 
         )
         + f"（材料共 {len(material)} 字）"
     )
-    prompt = (
-        f"【任务要求】\n{skill.instructions}\n\n"
-        f"【执行者已经拿到的信息】\n{briefing.strip() or '（无）'}\n\n"
-        f"【实际执行结果】\n---\n{material}\n---\n\n"
-        f"【产物情况】{art_line}\n\n"
-        f"{_JUDGE_RULES}"
-    )
+    # 提示词怎么拼在 `proto/handoff/judgement.py`（schema 与模板放一起）
+    prompt = build_prompt(skill.instructions, arts, material, briefing)
+    # 判定这一跳**不逐字记 prompt**（内含产物正文，另有出处）—— 但交了多少、从哪来要记。
+    trace.handoff("判定输入", "平台", "判定", prompt,
+                  structured=f"_Judgement 出参；material {len(material)} 字（逐字不记，见上一行构成）")
     return safe_structured(
         _Judgement,
         prompt,
@@ -422,7 +211,11 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
     Returns:
         `ExecOutcome` —— 平台据此定任务状态（**不再靠"产物库空不空"猜**）。
     """
-    tools = [write_artifact, read_artifact, read_skill_file]
+    #: 🔴 **这次 run 写了哪些产物 —— 由工具自己记**（闭包，按 run 归属）。
+    #: 原来是**扫消息文本**猜（`_recover_artifacts` + `preexisting` 差集）——
+    #: 既不是结构化、也不是硬机制，而且并发时差集还会互相覆盖。见 `make_write_artifact`。
+    created: list[str] = []
+    tools = [make_write_artifact(created), read_artifact, read_skill_file]
     if user_turns:
         tools.append(_user_turn_reader(user_turns))
     agent = create_agent(
@@ -458,6 +251,8 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
     trace.section(f"run_task · {run_id} · skill={skill.name}（通用执行器，隔离上下文）")
     # 🔴 **能力指令按名引用，不逐字复述**（用户要求：读了 skill 只写"读了啥、谁读的"）——
     # 技能原文是静态资产、另有落盘文件；日志里真正要留的是**这次的交接内容**。
+    # 交接关键日志：这一跳交了多少、有没有结构化对象（正文在下面那个 block 里）
+    trace.handoff("交接书", "平台", "执行器", briefing_text, structured="Task → render_briefing")
     trace.block(
         "发给执行器的内容（能力指令按名引用）",
         f"【能力指令】{skill.name}"
@@ -468,8 +263,6 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
 
     messages: list = [HumanMessage(task_text)]
     outcome = ExecOutcome()
-    #: 进来之前就存在的产物 —— 这次跑**读到的**不算它交付的（见 `_recover_artifacts`）
-    preexisting = set(ARTIFACTS)
     for round_i in range(MAX_REACT_ROUNDS):
         # 不传 config —— 传了执行器会变成独立根图。
         # `stream_agent` 边跑边录（每个字都写进日志）—— 一次 LLM 调用那几十秒不再黑屏。
@@ -479,7 +272,7 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
             resp = chunk
         trace.dump_trace(f"run_task 第 {round_i + 1} 轮", resp["messages"])
 
-        outcome.artifacts = _recover_artifacts(resp, preexisting)
+        outcome.artifacts = list(created)  # 记账，不扫文本
         outcome.report = _last_ai_text(resp)
         outcome.rounds = round_i + 1
 
@@ -512,9 +305,10 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
         #    这才是"出口限制"的意义：执行器没干完活是**它的问题**，不该转嫁给用户。
         #    判定给了 `missing` 就**精确告诉它缺什么**，比笼统一句"你还没做完"有效。
         if round_i + 1 < MAX_REACT_ROUNDS:
-            nudge = _nudge_text(j)
+            nudge = nudge_text(j)
             trace.note(f"⚠️ 第 {round_i + 1} 轮 incomplete → 推它继续（提示词见下）")
-            trace.block("推回去的提示词", nudge)
+            trace.handoff("推回去", "平台", "执行器", nudge,
+                          structured=f"_Judgement(status=incomplete) → nudge_text", full=True)
             messages = list(resp["messages"]) + [HumanMessage(nudge)]
         else:
             # **显式写出这个分支**：推满了，不再推 → outcome 保持 incomplete → delegate 判 failed
@@ -527,27 +321,6 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
         f"（{time.time() - t0:.1f}s）"
     )
     return outcome
-
-
-def _recover_artifacts(resp: dict, preexisting: set[str] | None = None) -> list[str]:
-    """从工具结果里捞产物 ID（只认产物库里真实存在的），**且必须是这次新写的**。
-
-    🔴 `preexisting` 不是可选的优化，是正确性：执行器 `read_artifact` 读前序产物时，
-    那个产物 ID 会出现在它的消息里 —— 不排除的话，**读来的会被算成它交付的**。
-    实测（2026-10-29，`t2-refs2`）：guided-learning 读了 `art_001`，任务记录就变成
-    「产出 `art_001`、`art_002`」，主 agent 被告知"已交付 art_001, art_002"，
-    判定取材也把教案正文一并喂了进去。
-
-    ⚠️ 已知窗口：两个执行器**并行**时，各自算差集可能把兄弟刚写的产物算进来。
-    与 `store_artifact` 的 ID 竞态同源、同量级（难触发），先记档不修。
-    """
-    found: list[str] = []
-    for m in resp["messages"]:
-        text = str(m.content)
-        for aid in ARTIFACTS:
-            if aid in text and aid not in found and aid not in (preexisting or ()):
-                found.append(aid)
-    return found
 
 
 def _last_ai_text(resp: dict) -> str:

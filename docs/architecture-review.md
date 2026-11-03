@@ -150,7 +150,7 @@
 
 | # | 约束 | 怎么强制的 | 在哪 |
 |---|------|-----------|------|
-| 1 | **产物必须真实存在** | 只认产物库里查得到的 ID，LLM 编 `art_999` 无效 | `executor._recover_artifacts` |
+| 1 | **产物必须真实存在** | 只认产物库里查得到的 ID，LLM 编 `art_999` 无效 | `artifacts.make_write_artifact`（按 run 记账） |
 | 2 | **执行器不许无限跑** | `MAX_REACT_ROUNDS = 3`，硬上限 | `executor.run_task` |
 | 3 | **状态字段由代码写** | `rec.update(stage=...)`，不是 LLM 声称 | `agent.delegate` |
 | 4 | **三态穷举分派** | 枚举 if —— **没有第四种** | `agent.delegate` |

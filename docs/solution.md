@@ -157,7 +157,7 @@
 |---|---|
 | **落库**（当场写盘） | `artifacts.store_artifact` |
 | **给 ID 和真实路径** | `write_artifact` 的返回；`delegate` 的回执（`render_receipt`）顺路带上去 |
-| **跨轮次累积** | `executor._recover_artifacts` 收**全部轮次**的产出 |
+| **跨轮次累积** | 执行器的 `write_artifact` **按 run 记账**（`make_write_artifact(created)`），收全部轮次的产出 |
 | **判定可见**（当证据） | `_judge_material` 把产物正文喂给判定 |
 | **可以有多个** | 一次任务产出多份，各自独立 |
 
@@ -777,7 +777,7 @@ for round_i in range(MAX_REACT_ROUNDS):
     resp = {}
     for chunk in trace.stream_agent(agent, {"messages": messages}, None, f"执行器·{skill.name}"):
         resp = chunk                                  # ⚠️ 不传 config；边跑边录（逐字流式）
-    outcome.artifacts = _recover_artifacts(resp, preexisting)   # 只认这次新写的
+    outcome.artifacts = list(created)             # 记账（write_artifact 自己记的）
     outcome.report    = _last_ai_text(resp)
     outcome.rounds    = round_i + 1
 
@@ -817,22 +817,33 @@ for round_i in range(MAX_REACT_ROUNDS):
 > **实测效果**：那一轮执行器只把内容写在正文里没落库，判定发现 → 推回去 →
 > **下一轮就落库了**。如果不告诉它"内容已设计好、只差落库"，它很可能从头再设计一遍。
 
-#### 4.3.6 产物识别（硬机制）
+#### 4.3.6 产物识别（硬机制）—— **按 run 记账**（2026-11-03 改）
 
 ```python
-def _recover_artifacts(resp, preexisting: set[str]) -> list[str]:
-    for m in resp["messages"]:
-        for aid in ARTIFACTS:          # ← 只遍历产物库里**真实存在**的 ID
-            if aid in text and aid not in found and aid not in preexisting:
-                found.append(aid)
+# run_task 里：给这次 run 造一个**自己的** write_artifact（闭包）
+created: list[str] = []
+tools = [make_write_artifact(created), read_artifact, read_skill_file]
+...
+outcome.artifacts = list(created)      # ← 谁写的谁记账，**不扫消息文本**
 ```
 
-两条口径缺一不可：
+**原来**是 `_recover_artifacts(resp, preexisting)`：**扫执行器的消息文本**找回
+"消息里出现过、且产物库里真实存在、且不是这次之前就有的" ID。两条口径缺一不可：
 
-1. **必须在产物库里查得到** —— LLM 编 `art_999` 无效
-2. 🔴 **必须不是这次跑之前就存在的**（`preexisting`）—— 依赖机制让执行器会
-   `read_artifact` 读前序产物，读回来的正文里带着那个 ID，不排除就**把读来的算成它交付的**
+1. 必须在产物库里查得到 —— LLM 编 `art_999` 无效
+2. 必须不是这次跑之前就存在的（`preexisting` 差集）—— 否则**把读来的算成它交付的**
    （F14，2026-10-29 实测：guided-learning 读 `art_001` → 任务记录变成"产出 art_001、art_002"）
+
+🔴 **改成记账的理由**（用户 2026-11-03 的全局交接自查点 ④⑤）：
+**扫文本既不是结构化、也不是硬机制** —— `preexisting` 差集就是给这个扫描打的补丁，
+而差集本身还留着"两个执行器并行时互相覆盖"的窗口。改成**闭包记账**之后：
+
+- **"读来的算成写出来的"结构性不可能**（读不记账）→ `preexisting` **不需要了**
+- **并行窗口结构上不存在**（闭包按 run 归属，不是"难触发"）
+
+> ⚠️ **闭包，不是模块级全局** —— 同 `executor._user_turn_reader` 的教训：
+> 并行 delegate 时两个执行器会互相覆盖（`ARTIFACT_DIR` 那种全局状态在这儿就是坑）。
+> 断言在 `evals/unit_handoff.py` ⑬。
 
 #### 4.3.7 主 agent 的上下文大小：**只记录 + 超线 warning，不判红**
 
@@ -1454,7 +1465,7 @@ running ──┬─→ completed          已完成
 
 | 🔴 程序强制（**17 条**） | 位置 |
 |---|---|
-| 产物必须真实存在、且是**这次新写的**（编 ID 无效、读来的不算） | `executor._recover_artifacts` |
+| 产物必须真实存在、且是**这次新写的**（编 ID 无效、读来的不算） | `artifacts.make_write_artifact`（按 run 记账） |
 | 执行器不许无限跑（3 轮上限） | `executor.MAX_REACT_ROUNDS` |
 | 状态字段由代码写 | `agent.delegate` |
 | 三态穷举分派（没有第四种） | `agent.delegate` |

@@ -37,6 +37,7 @@
 | 新场景 / 某条场景状态变了 | `scenarios.md` **和** `evals/cases/` | **两边都改**（人读版 ↔ 可执行版） |
 | 架构图变了 | `architecture-diagram.md` + `figures/*.svg` | 🔴 **先改文档、再照它画图**（文档是唯一依据；图**只出 SVG**） |
 | 某个交接的内容变了 / 多了一处 LLM 判定 | `architecture-diagram.md` **§三 数据交接** / **§四 软判断·硬判断** | **改**（这两节是"现状说明书"的承重墙） |
+| 交接的**截断 / 落点**变了（加一处切片、调阈值、换载体） | `handoff-audit.md` | **改**（§一总账 ＋ 那一跳的详查；§五 隐患清单**修了就标"已修"，不删条目**） |
 | 评审点有了新结论 | `architecture-review.md` | **改** |
 | 处事原则变了 | `principles.md` | **改** |
 
@@ -59,6 +60,7 @@
 | **调提示词** | **`solution.md` §十一** —— 判定机制 + 实测对比 + 可调优点 |
 | **讲清楚架构**（给人看） | **`architecture-diagram.md`** + `figures/*.svg` |
 | **查"这一跳交接了什么"** | **`architecture-diagram.md` §三** —— 13 跳逐跳的精确内容 |
+| **查"交接截没截 / 落在哪 / 会不会撑爆"** | **`handoff-audit.md`** —— **23 处**交接逐点审计（含执行器内部循环与评测层）＋ 膨胀账 ＋ 隐患清单 |
 | **查"这个是 LLM 判的还是代码保证的"** | **`architecture-diagram.md` §四** —— 运行期 + 评测期两半 |
 | **查某个字段是什么** | **`architecture-diagram.md` §五 字段字典** |
 | **查某个评审点怎么定的** | **`architecture-review.md`** —— 20 个点逐条结论 |
@@ -98,6 +100,13 @@ README.md（本文）              入口 + **导航**（找东西 / 写东西�
 │
 ├── architecture-review.md     外部评审反馈的逐条讨论 —— 20 个点全部有结论  【现行的】
 │                              ★ 想知道"某个设计为什么这么定"时看
+│
+├── handoff-audit.md           ★ **上下文交接审计** —— 23 处交接逐点查  【现行的】
+│                              §一 总账（截没截 / 落在哪，一页看完）
+│                              §二 运行期 17 处 · §三 评测期 6 处，逐点四问
+│                              §四 膨胀账（谁在长、长多快、读数在哪）
+│                              §五 隐患清单（含 3 处**静默截断**，未修）
+│                              ★ **改任何一处切片 / 交接载体前先看它**
 │
 └── figures/                   给领导看的图（**只出 SVG**）
     ├── architecture.svg       架构总览
@@ -169,6 +178,18 @@ README.md（本文）              入口 + **导航**（找东西 / 写东西�
 ├── llm.py         结构化输出 + 兜底
 │
 ├── skills.py      【技能领域】Skill 是什么 + read_skill
+│
+├── handoff/       【交接】**一个交接点 = 一个模块 = schema ＋ 模板**（高内聚，2026-11-03 拆出）
+│   ├── __init__.py  共享词汇表：段名 / 来源标注 / 出口分类 / 平台注入标记 / 每跳用哪几段
+│   │                （**唯一来源** —— 渲染器与记录层共用，改段名 = 改提示词，要实测）
+│   ├── briefing.py  委托单（平台 → 执行器）：Task / Turn / QA schema ＋ render_briefing
+│   ├── receipt.py   回执（执行器 → 主 agent）：Receipt schema ＋ build/render_receipt
+│   ├── ledger.py    台账（平台 → 主 agent）：stage 词表 ＋ render_ledger（**唯一故意短**的一跳）
+│   ├── judgement.py 判定：_Judgement schema ＋ 输入模板 ＋ 保头保尾截断（`_clip`）
+│   ├── nudge.py     推回去（平台 → 执行器）：nudge_text
+│   └── ask.py       试答（平台 → 主 agent）：build_prompt（**全部消息、不截**）
+│
+│   ⚠️ 搬完 `executor.py` 只剩**执行循环**；`agent.py` 只剩**工具与编排**
 ├── skill_pack.py  【技能包】文件夹形态 → Skill + 自带文件的列/读 —— I/O + 格式，换存储只动这里
 ├── artifacts.py   【产物领域】产物库 + 类型派发 + 落盘 + write/read/list_artifact
 │

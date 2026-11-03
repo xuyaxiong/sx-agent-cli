@@ -113,7 +113,7 @@ def main() -> None:
     check("可读产物进了交接书", readable in prompt and "《白桦》教案" in prompt, prompt[-260:])
 
     print("\n④ 投递的提示词**就是** `render_briefing(rec)`（三条路径共用同一份交接书）")
-    from proto.agent import render_briefing
+    from proto.handoff.briefing import render_briefing
 
     seen = _capture()
     state["tasks"][0].update(
