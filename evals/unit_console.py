@@ -126,6 +126,23 @@ def main() -> None:
     check("主 agent 的返回标的是 `delegate`", len(rets) == 2 and rets[1].startswith("delegate"),
           repr([t.splitlines()[0] for t in rets]))
 
+    print("\n⑥ repr 的**两种引号都要剥**（2026-11-03 实测踩到）")
+    # 真实形状：回执正文里含 `read_artifact('art_001')` —— Python 的 repr 见内容里有单引号，
+    # **改用双引号**；只剥 `'` 的话整份回执被一对多余的 `"` 包住。
+    seen3: list[str] = []
+    chat._emit = lambda role, text, stamp=None: seen3.append(text)  # type: ignore[assignment]
+    try:
+        st3 = {"section": "agent", "kind": "ToolMessage", "ts": "t",
+               "calls": {"agent": ["delegate"]}, "block": None}
+        chat._feed(st3, '    content="【交付】\\n  要看就用 `read_artifact(\'art_001\')` 读"')
+    finally:
+        chat._emit = real_emit  # type: ignore[assignment]
+    got3 = seen3[-1]
+    check("双引号包住的 repr **剥干净了**（没有多余的 `\"`）",
+          not got3.splitlines()[1].startswith('"') and not got3.rstrip().endswith('"'),
+          repr(got3[:60]))
+    check("`\\n` 还原成了真换行", "\n" in got3 and "【交付】" in got3.splitlines()[1])
+
     print("\n" + "═" * 78)
     print(f"{'全部通过' if not FAIL else '有失败'}：{len(PASS)}/{len(PASS) + len(FAIL)}")
     for name in FAIL:
@@ -136,3 +153,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
