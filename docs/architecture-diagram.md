@@ -42,7 +42,8 @@
 |---|---|---|---|
 | `config.py` | 配置 | `app_root()`（冻结后 = exe 目录）· `RESOURCE_ROOT` · `.env` 加载 · **三流 UTF-8** · `get_model()` · `describe()` | 不碰任何业务 |
 | `llm.py` | LLM 公共 | `safe_structured()`（重试 1 次 → 保守默认）· 压掉 pydantic 序列化警告 | 不知道谁在调它 |
-| `skills.py` | **技能领域** | `Skill`（`name`/`description`/`instructions`）· `SKILLS` 表 · `read_skill` 工具 · `catalog()` | **不做磁盘 I/O** |
+| `registry.py` | **技能注册表** | `{name: Skill}` 的**唯一持有者** · `get/all/values/names/catalog` · 变更只走 `replace/extend/reset` | 不定义 Skill 的语义 · **对外不给 dict** |
+| `skills.py` | **技能领域** | `Skill`（`name`/`description`/`instructions`）· **内置表**（登记进 `registry`）· `read_skill` 工具 | **不做磁盘 I/O** · **不持有表** |
 | `skill_pack.py` | **技能包 I/O** | 文件夹形态 → `Skill`：`split_frontmatter` / `load_skill_pack` / `load_skills_dir`；自带文件的**列与读**（`list_skill_files` / `read_skill_file`） | 不定义 Skill 的语义 |
 | `artifacts.py` | **产物领域** | 产物库 `ARTIFACTS` · ID 发号器 · 类型→扩展名**硬性派发** · 当场落盘 · `write/read/list_artifact` | 不管技能 |
 | `executor.py` | 执行器 | `_PLATFORM_RULE` · 三态判定 · 出口限制循环 · `run_task()` · `ExecOutcome` · **`read_user_turn`**（闭包造，见 §3.2.2） | **不持有状态、不跨轮、不直接问用户** |
@@ -83,9 +84,13 @@ config ──► trace ──► (所有模块都在写日志)
 | **`executor` 与 `agent` 互相不 import** —— 公共的 LLM 调用放 `llm.py` | 否则成环 |
 | **`skills` / `artifacts` 是两个领域**（2026-10-30 拆开） | 变化原因不同：技能规范变了 vs 交付机制变了。原来挤在一个文件里叫"Skill 定义 + 产物库"，边界不清 |
 
-> 🔴 **`read_skill` 在 `skills.py` 里延迟 import `proto.agent.SKILLS`** ——
-> 技能表的**真值以 `proto.agent.SKILLS` 为准**（`delegate` 读的就是它，评测会替换它）。
-> 延迟导入是为了避开 `agent ↔ skills` 的模块级成环。
+> 🔴 **技能表只有一个家：`proto/registry.py`**（2026-11-03，R1 修）。
+> 原来表定义在 `skills.py`，被 `agent`（**值导入**）和 `graph`（函数内导入）各自绑定，
+> 于是 `read_skill` 得反向 `from proto.agent import SKILLS` 才读得到"评测替换过的那份"
+> —— **领域层依赖编排层**，就为了绕开"注册表没有独立的家"造成的环。
+> 现在三方都只认 `registry.get()` / `all()`（每次调用查当前表），换技能只走
+> `replace/extend/reset` 一个入口 —— 环和那条 lazy import 一起消失。
+> 守卫：`evals/unit_registry.py`（AST 扫依赖方向 + 运行时语义 + 装配路径）。
 
 ### 1.3 三个领域对象 + 一条不变量
 

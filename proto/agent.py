@@ -42,7 +42,8 @@ from proto.artifacts import (  # 产物领域
     write_artifact,
 )
 from proto.skill_pack import read_skill_file  # 技能包文件（磁盘）
-from proto.skills import SKILLS, read_skill  # 技能领域
+from proto.skills import read_skill  # 技能领域
+from proto.registry import registry  # 技能注册表（唯一持有者）
 
 #: 主 agent 的 system prompt —— 平台约定，**不约束 skill 作者**
 _MAIN_PROMPT = (
@@ -327,9 +328,10 @@ def delegate(
         artifacts: 这次工作要参考的产物 ID（如 `["art_001"]`）。不确定有哪些产物先
             `list_artifacts()`；不确定某个能力交付什么先 `read_skill(name)`。
     """
-    skill = SKILLS.get(skill_name)
+    skill = registry.get(skill_name)
     if skill is None:
-        return _reject(runtime, "rejected_skill", f"❌ 没有能力「{skill_name}」", "、".join(SKILLS))
+        return _reject(runtime, "rejected_skill", f"❌ 没有能力「{skill_name}」",
+                       "、".join(registry.names()))
 
     # 用户原话**平台硬搬**（快照进 Task）—— 见 `_user_turns` 的 docstring。
     # ⚠️ 平台**不挑**哪几轮给全文（原来由主 agent 用 `based_on_turns` 点，见 `turn_lines`
@@ -517,7 +519,7 @@ def build_agent(state_schema: type) -> Any:
         system_prompt=_MAIN_PROMPT
         + _MODE_NOTE.get(EXEC_PATH, "")
         + "\n\n可用能力：\n"
-        + "\n".join(f"- {s.name}：{s.description}" for s in SKILLS.values()),
+        + registry.catalog(),
         state_schema=state_schema,
         name="main_agent",
     )

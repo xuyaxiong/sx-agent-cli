@@ -16,12 +16,14 @@
 ⚠️ **装配 / 快照 / 落盘不在这里** —— 那些是交互式 CLI 和跑批**共用**的，
 在 `evals/harness.py`（本文件只负责"跑批子进程"这一个角色：case → run → JSON）。
 
-## 三个"值导入"的坑（不写下来下次一定踩）
+## "值导入"的坑（不写下来下次一定踩）
 
 `agent.py` / `executor.py` / `llm.py` 都是 `from proto.config import get_model`
 这种**值导入** —— 改 `proto.config.get_model` **不生效**，得改**它们各自命名空间里的那个名字**。
-`SKILLS` 同理：`from proto.skills import SKILLS` 是值导入，
-但 `delegate` 和 `build_agent` 都读 `proto.agent` 的模块全局，所以 patch `proto.agent.SKILLS` 一处就够。
+
+⚠️ **技能表不在这个坑里**（R1 之后）：它没有"值导入"的机会了，因为对外只有
+`registry.get()/all()` 这类函数，每次调用查当前表。换技能一律走
+`registry.replace()/extend()/reset()` —— **不要再 patch 任何模块的 `SKILLS` 属性**。
 """
 
 from __future__ import annotations

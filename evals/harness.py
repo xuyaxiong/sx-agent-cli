@@ -2,7 +2,7 @@
 
     from evals.harness import install, snapshot, dump_run_record
 
-**装什么**：技能（从目录读，或 case 内联）→ 换进 `proto.agent.SKILLS`；
+**装什么**：技能（从目录读，或 case 内联）→ 换进 `proto.registry`（唯一入口）；
 再把 `store_artifact` / `run_task` / 模型调用包一层**记录器**
 （产物流水、执行器流水、token 计数）。
 
@@ -31,6 +31,7 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage
 
 from proto import config as proto_config
+from proto.registry import registry
 from proto.skill_pack import ENTRY_NAME
 from proto.config import app_root
 
@@ -192,23 +193,29 @@ def install(case: dict) -> dict:
     proto.artifacts.ARTIFACTS.clear()
 
     # ② 技能集（case 可以带自己的：`skills_dir` 读目录 / `skills` 内联）
+    #
+    # 🔴 **先 reset 再叠加**（R1）。三件事，每件都曾是"靠纪律"：
+    #   1. 原来这里手拼 `{**proto.skills.SKILLS, **extra}`，底取自"上一个 case 改过的表"
+    #      —— 上一个是 `replace` 模式时，它的技能就漏进这个 case（跨 case 串味）。
+    #      ⚠️ **今天走不到**（跑批是**一 case 一子进程**，`run.py:60` 起进程；
+    #      `install()` 全仓只有 `chat.py` / `_child.py` 两个调用点，各自进程只调一次）。
+    #      留着是因为它**本来就该对**：`reset()` 回到独立的**内置表**，一旦哪天做
+    #      "同进程多 case"（跑批提速 / 批量重放）就立刻用得上 —— 别等踩了再补。
+    #   2. 原来要 `proto.agent.SKILLS = merged` **和** `proto.skills.SKILLS = merged`
+    #      赋两次值 —— 漏一句就是"用户答了，执行器却像换了个人"（**这条实测踩过**：
+    #      `skills_mode: replace` + 多轮 + 有等待任务的 case）。现在只有一个入口。
+    #   3. `extra` 为空时**也要 reset**：同 1，为"同进程多 case"留的。
+    registry.reset()
     extra: dict = {}
     if case.get("skills_dir"):
         extra.update(_load_skills_dir(str(case["skills_dir"])))
     if case.get("skills"):
         extra.update({s["name"]: proto.skills.Skill(**s) for s in case["skills"]})
     if extra:
-        merged = (
-            extra
-            if case.get("skills_mode", "extend") == "replace"
-            else {**proto.skills.SKILLS, **extra}
-        )
-        proto.agent.SKILLS = merged
-        # 🔴 `graph._feed_waiting` 里是**函数内** `from proto.skills import SKILLS` ——
-        #    只换 `proto.agent.SKILLS` 的话，多轮投递（用户答复 → 待答任务）会按
-        #    **内置技能**重跑，或找不到而跳过：表现为"用户答了，执行器却像换了个人"。
-        #    实测踩点：`skills_mode: replace` + 多轮 + 有等待任务的 case 才会触发。
-        proto.skills.SKILLS = merged
+        if case.get("skills_mode", "extend") == "replace":
+            registry.replace(extra)
+        else:
+            registry.extend(extra)
 
     # ③ 产物写入流水 —— 记「谁在什么时候写了什么」，用来判并发与归属
     # ⚠️ **签名要跟着 `proto.artifacts.store_artifact` 走**：它变过（加 `file_type`），
@@ -294,7 +301,6 @@ def install(case: dict) -> dict:
         "writes": writes,
         "run_tasks": run_tasks,
         "fault": fault_state,
-        "skills_mod": proto.skills,
     }
 
 
@@ -347,10 +353,10 @@ def _sys_prompt_chars() -> int:
     但真实上下文 = `main_ctx_chars + sys_prompt_chars`，这个数也记下来。
     """
     import proto.agent
-    from proto.skills import SKILLS
 
-    catalog = "\n".join(f"- {s.name}：{s.description}" for s in SKILLS.values())
-    return len(proto.agent._MAIN_PROMPT) + len("\n\n可用能力：\n" + catalog)
+    # 口径必须与 `agent.build_agent` 里拼的那份**完全一致** —— 所以两边都调
+    # `registry.catalog()`，不各写一份格式化（原来是手抄的，改一处忘另一处就量错）。
+    return len(proto.agent._MAIN_PROMPT) + len("\n\n可用能力：\n" + registry.catalog())
 
 
 def snapshot(state: dict, user: str, prev_len: int, idx: int, wall_s: float) -> dict:

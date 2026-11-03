@@ -58,8 +58,8 @@
 ## 干活前
 
 - 单元测试（不调 LLM，改完必跑）：`uv run python -m evals.unit_<名字>`
-  （10 个：`briefing` `receipt` `handoff` `handoff_matrix` `console` `decision`
-  `feed_waiting` `stream_join` `artifact_race` `frozen_paths`）
+  （11 个：`briefing` `receipt` `handoff` `handoff_matrix` `console` `decision`
+  `feed_waiting` `stream_join` `artifact_race` `frozen_paths` `registry`）
 - 跑真会话：`uv run python -m evals.chat`；跑批：`uv run python -m evals.run`
 - **结论必须实测**（`docs/principles.md` ③）：不说"我觉得应该没问题"；
   实测要写清"想验证什么、怎么验证、预期是什么"

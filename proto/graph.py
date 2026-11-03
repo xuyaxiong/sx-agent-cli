@@ -35,6 +35,7 @@ from proto import trace
 from proto.agent import build_agent
 from proto.handoff.briefing import absorb_outcome, render_briefing
 from proto.handoff.ledger import render_ledger
+from proto.registry import registry  # 技能注册表（唯一持有者）
 
 
 def _merge_tasks(old: list[dict] | None, new: list[dict] | None) -> list[dict]:
@@ -104,7 +105,6 @@ def _feed_waiting(state: State) -> tuple[list[dict], list[str]]:
     这也是**待答唯一的解除路径**：投递后要么 completed，要么还在等。
     """
     from proto.executor import run_task
-    from proto.skills import SKILLS
 
     user = _last_human(state)
     waiting = [
@@ -116,7 +116,7 @@ def _feed_waiting(state: State) -> tuple[list[dict], list[str]]:
     out: list[dict] = []
     logs = [f"prepare: 待答 {len(waiting)} 条 → 把用户这条消息**原话**投过去（不判断是不是回答）"]
     for t in waiting:
-        skill = SKILLS.get(t["skill"])
+        skill = registry.get(t["skill"])
         if skill is None:
             logs.append(f"prepare: ⚠️ {t['id']} 的能力「{t['skill']}」不存在，跳过")
             continue

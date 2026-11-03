@@ -48,6 +48,7 @@ from proto import artifacts as proto_artifacts  # noqa: E402
 from proto import trace  # noqa: E402
 from proto.graph import build  # noqa: E402
 from proto.artifacts import ARTIFACTS  # noqa: E402
+from proto.registry import registry  # noqa: E402
 
 # ⚠️ 路径一律走 `harness`（`ROOT` / `RUNS_DIR` / `DEFAULT_SKILLS_DIR`）——
 # 这里不再自己算，否则打包后会算出解包目录，和 exe 旁边那个目录对不上。
@@ -673,7 +674,7 @@ def main() -> None:
     # ⚠️ 走函数而不是直接赋值 —— 写错模块会当场 AttributeError（见 `use_dir` 的 docstring）
     proto_artifacts.use_dir(out_dir / "artifacts" / f"{tag}__r1")
 
-    skills = list(proto.agent.SKILLS.values())
+    skills = registry.values()
     # 🔴 **开场白只有一套**（用户 2026-11-02：*"合成一套啊 以开发态为主"*）——
     # 原来按 `FROZEN` 分叉成"用户版 / 开发版"两份文案：同一个屏幕上看过两遍，
     # 改一句话还得改两处。留开发态这版。

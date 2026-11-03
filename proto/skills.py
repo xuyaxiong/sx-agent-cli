@@ -23,9 +23,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from langchain.tools import tool
+
+from proto.registry import registry
 
 
 # ──────────────────────────── Skill 定义 ────────────────────────────
@@ -64,7 +66,10 @@ class Skill:
     instructions: str
 
 
-SKILLS: dict[str, Skill] = {
+#: 内置技能表 —— **登记进注册表，不再是一个模块级变量**（R1）。
+#: 唯一持有者是 `proto.registry`；这里只是"内置的那一份"的声明。
+#: ⚠️ 不要写 `from proto.skills import SKILLS` —— 那会重新制造一个绑定点（见 registry 模块 docstring）。
+registry.register_defaults({
     "lesson-prep": Skill(
         name="lesson-prep",
         description="备课：产出教学设计要点（目标 / 重难点 / 教学过程提纲）",
@@ -90,12 +95,12 @@ SKILLS: dict[str, Skill] = {
             "**你需要知道「难度」**（基础 / 提升 / 挑战 三档）——不知道就先问。"
         ),
     ),
-}
+})
 
 
-def catalog() -> str:
-    """给规划用的能力清单（只有名字与描述 —— 渐进式披露的第一层）。"""
-    return "\n".join(f"- {s.name}：{s.description}" for s in SKILLS.values())
+# ⚠️ 这里原来还有个 `catalog()` 转发壳（`return registry.catalog()`）——
+# 2026-11-03 审核删掉：零调用点，而且"能力清单只拼一次"的目标下，
+# 多一个同名出口就是多一个将来被抄错的地方。要清单请直接 `registry.catalog()`。
 
 
 @tool
@@ -105,13 +110,12 @@ def read_skill(skill_name: str) -> str:
     常驻在你眼前的只有能力名和一句话描述。写任务要求前若不确定这个能力
     **交付什么、按什么标准交付**，用它读原文核对 —— **不要凭描述猜**。
     """
-    # 延迟导入：`agent` 反向依赖本模块，模块级导入会成环；
-    # 且技能表以 `proto.agent.SKILLS` 为准（delegate 读的就是它，评测会替换它）。
-    from proto.agent import SKILLS
-
-    skill = SKILLS.get(skill_name)
+    # 🔴 这里原来是 `from proto.agent import SKILLS`（领域层反向依赖编排层，
+    #    就为了读到"评测替换过的那份表"）。注册表独立成模块后，那个环和这条
+    #    lazy import 一起消失了 —— 见 `proto/registry.py` 的模块 docstring。
+    skill = registry.get(skill_name)
     if skill is None:
-        return f"没有能力「{skill_name}」。可用：{'、'.join(SKILLS)}"
+        return f"没有能力「{skill_name}」。可用：{'、'.join(registry.names())}"
     out = f"【能力 {skill.name}】{skill.description}\n\n{skill.instructions}"
     # 参考文件清单**现场扫盘**（不缓存在 Skill 上，见 `skill_pack` 的模块 docstring）。
     # 有才带这一段 —— 没有就一个字不加（**没有就是没有**，不写"（无参考文件）"这种废话）。
