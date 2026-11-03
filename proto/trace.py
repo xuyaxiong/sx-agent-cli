@@ -275,6 +275,80 @@ def handoff(
         block(f"交接全文 · {hop}", text)
 
 
+# ──────────────────────────── 决策记录 ────────────────────────────
+
+#: **一次 LLM 决策，人要看的四样** —— 顺序就是**复现这个决策**的顺序：
+#:
+#:     前提（它看到了什么）→ 问题（它要回答什么）→ 结果（它答了什么）→ 下一步（平台据此干什么）
+#:
+#: 🔴 用户 2026-11-03：*"decide 那一段日志也得整理下格式，人看着也不清晰。既然是决策，
+#: 很显然：**决策前提是什么、要决策的问题是什么、决策结果是什么**，有可能还要补充
+#: **下一步该干什么** —— 你现在的打印也是人类不好看懂。"*
+#:
+#: ⚠️ **改之前是两条互不相干的 note**：`判定输入：…`（前提）在前、`R02 第 1 轮判定：…`
+#: （结果）在后，**中间隔着一次 LLM 调用**（实测 6 秒）。读的人得自己把两条拼起来 ——
+#: 而"前提"恰恰是判错时要**第一个**看的东西（判定只看得到喂进去的那些）。
+#:
+#: ⚠️ **段名只有这一份**：记录层从这里取，展示层（`evals/chat.py`）也从这里取。
+#: 这是 `handoff.SECTION` 那条教训的同一条 —— harness 手抄段名，回执改了格式之后
+#: **新格式 0/8 命中**，12560 字的回执被静默切成 1200，一声不吭。
+DECISION: dict[str, str] = {
+    "given": "前提",
+    "q": "问题",
+    "result": "结果",
+    "next": "下一步",
+}
+
+#: 决策块的**首行前缀** —— 展示层靠它认块。
+#:
+#: 🔴 **不靠内容特征**（原来是 `"轮判定：status=" in body` 这种）：措辞一改，展示层就
+#: **静默失配** —— 块认不出来 → 整块当噪音丢掉，而丢的是"平台为什么这么决定"。
+DECISION_HEAD = "🧭 决策"
+
+#: 决策块的缩进 —— ⚠️ 从 4 起，不是 2：展示层（`chat._feed`）会给**每一续行剥掉 2 格**
+#: （那是给 `block()` 的 `indent="  "` 用的），落到终端正好是 2 格。
+_DEC = "    "
+
+
+def decision(
+    who: str,
+    *,
+    q: str = "",
+    given: Any = (),
+    result: Any = (),
+    nxt: str = "",
+) -> None:
+    """记一次 **LLM 决策**：前提 → 问题 → 结果 → 下一步（段名见 `DECISION`）。
+
+    `given` / `result` 传**列表**（逐项一行）→ 渲染成 `- ` 列表；传字符串 → 一行。
+    ⚠️ 列表化不是装饰：判定那段原来直接把 `j.missing` 打出来，人看到的是
+    **Python repr** `['尚未收到…', '教案文本文件产物为空…']` —— 括号引号全是噪音。
+
+    ⚠️ 多行值**整块缩进**，续行不掉回 0 列（同 `handoff.BODY` 那条规矩）。
+    """
+    out = [f"{DECISION_HEAD} · {who}"]
+    # ⚠️ 顺序**由 `DECISION` 的声明顺序定**（前提 → 问题 → 结果 → 下一步）——
+    # 就是用户那句话的顺序。写死在这里的话，改了表不改这里，两处就分家了。
+    vals = {"given": given, "q": q, "result": result, "next": nxt}
+    for key in DECISION:
+        val = vals[key]
+        items = list(val) if isinstance(val, (list, tuple)) else [val]
+        items = [str(x) for x in items if str(x or "").strip()]
+        if not items:
+            continue
+        if len(items) == 1 and not isinstance(val, (list, tuple)):
+            ls = items[0].splitlines() or [""]
+            out.append(f"{_DEC}{DECISION[key]}：{ls[0]}")
+            out += [f"{_DEC}  {ln}" for ln in ls[1:]]
+        else:
+            out.append(f"{_DEC}{DECISION[key]}：")
+            for it in items:
+                ls = it.splitlines() or [""]
+                out.append(f"{_DEC}  - {ls[0]}")
+                out += [f"{_DEC}    {ln}" for ln in ls[1:]]
+    note("\n".join(out))
+
+
 def cut(where: str, kept: int, total: int, *, see: str = "") -> None:
     """**切了一刀就报一刀** —— 由切的那一方自己调，不靠事后从文本里解析。
 

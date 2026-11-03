@@ -129,17 +129,10 @@ def _judge(skill: Skill, arts: list[str], material: str, briefing: str = "") -> 
        所以只能说"F 更好"，不能说"F 的提示词更好"。
        `criteria` 被砍的理由是**没有增量价值**（要求已在 instructions 里），不是分数低。
     """
-    # 判定**输入**只记构成，不逐字复述 —— 里面既有产物正文、又有技能原文，两样都另有出处。
-    trace.note(
-        f"判定输入：技能 {skill.name}（instructions {len(skill.instructions)} 字，按名引用）"
-        f"｜已知信息 {len(briefing.strip())} 字（委派时给的）"
-        f"｜材料 "
-        + (
-            "、".join(f"{a}（{len(ARTIFACTS[a]['content'])} 字）" for a in arts if a in ARTIFACTS)
-            or "执行器散文（无产物）"
-        )
-        + f"（材料共 {len(material)} 字）"
-    )
+    # ⚠️ 判定**输入**只记构成，不逐字复述 —— 里面既有产物正文、又有技能原文，两样都另有出处。
+    # 这条构成摘要现在由**调用方**（`run_task` 的轮次循环）并进那条「决策记录」的**前提**里 ——
+    # 用户 2026-11-03：一次决策就该是**一条**记录（前提 → 问题 → 结果 → 下一步），
+    # 不是两条隔着一整次 LLM 调用的 note。
     # 提示词怎么拼在 `proto/handoff/judgement.py`（schema 与模板放一起）
     prompt = build_prompt(skill.instructions, arts, material, briefing)
     # 判定这一跳**不逐字记 prompt**（内含产物正文，另有出处）—— 但交了多少、从哪来要记。
@@ -156,6 +149,39 @@ def _judge(skill: Skill, arts: list[str], material: str, briefing: str = "") -> 
         # 日志只记上一行"判定输入"的构成，不逐字复述（用户要求）。
         log_prompt=False,
     )
+
+
+def _material_note(arts: list[str]) -> str:
+    """判定那份「实际执行结果」**是从哪取的** —— 有产物取产物正文，没有才取散文。
+
+    见 `judgement._judge_material` 的表格：**两条路的取材不同，别合并**
+    （有产物时把散文也喂进去，实测会把"需要调整吗？"这类礼貌收尾判成"在要信息"）。
+    """
+    return (
+        "、".join(f"{a}（{len(ARTIFACTS[a]['content'])} 字）" for a in arts if a in ARTIFACTS)
+        or "执行器散文（无产物）"
+    )
+
+
+def _judge_next(status: str, outcome: Any, round_i: int) -> str:
+    """判定结果 → **平台接下来实际走哪条路**。
+
+    ⚠️ 这三条就是 `run_task` 出口那段**三态枚举**的穷举，措辞跟着代码走 ——
+    看日志的人判完立刻知道"所以接下来会发生什么"，不用去读源码。
+    """
+    if status == "completed":
+        # ⚠️ **两个子出口**（`agent.delegate` 里分的）：有产物 vs 成果只在回复正文里 ——
+        # 后者的回执会多带一句"**原样转达，不要改写**"，措辞别在这儿写反了。
+        return (
+            f"回执给主 agent（交付 {len(outcome.artifacts)} 个产物）→ 由它转达用户"
+            if outcome.artifacts
+            else "回执给主 agent（**没有产物**，成果在它的回复正文里）→ 由它**原样转达**用户"
+        )
+    if status == "waiting_for_input":
+        return "登记待答 → 平台强制主 agent 试答 → 答不上就**原样透传**给用户"
+    if round_i + 1 < MAX_REACT_ROUNDS:
+        return f"推回去让它继续（第 {round_i + 2}/{MAX_REACT_ROUNDS} 轮，带上「还缺」逐条）"
+    return "推的轮数用完了 → 交给用户（没干完、也没说要什么）"
 
 
 def _user_turn_reader(user_turns: list[dict]):
@@ -286,15 +312,30 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
         outcome.status = j.status
         outcome.progress = (j.progress or "").strip()
         outcome.missing = [x.strip() for x in (j.missing or []) if x and x.strip()]
-        trace.note(
-            f"{run_id} 第 {round_i + 1} 轮判定：status={j.status}　·　"
-            f"判定看到：{material.count('【产出')} 段产出 + {len(outcome.artifacts)} 个产物"
-            f"（{len(material)} 字）\n"
+        # 🔴 **一次决策 = 一条记录**（用户 2026-11-03）：前提 → 问题 → 结果 → 下一步。
+        # 原来前提（`_judge` 里那条 note）和结果（这里）是**两条**，中间隔着这次 LLM 调用 ——
+        # 读的人得自己拼，而"前提"正是判错时要第一个看的东西。
+        trace.decision(
+            f"判定（LLM）· {run_id} 第 {round_i + 1} 轮",
+            q="这个任务完成了没？没完成的话，是**在要信息**（waiting_for_input）还是**没干完**（incomplete）？",
+            given=[
+                f"技能 {skill.name}（instructions {len(skill.instructions)} 字，按名引用）",
+                f"已知信息 {len(briefing.strip())} 字（委派时给的）",
+                f"材料 {_material_note(outcome.artifacts)}｜"
+                f"判定看到 {material.count('【产出')} 段产出 + {len(outcome.artifacts)} 个产物"
+                f"（{len(material)} 字）",
+            ],
             # ⚠️ **日志不截断**（`trace.render_message` 那条契约）：判定理由**只写日志**，
             # 它要是被切了，事后复盘误判就没得看了。
-            f"          理由：{j.reason or '（无）'}\n"
-            f"          进度：{j.progress or '（无）'}\n"
-            f"          还缺：{j.missing or '（无）'}"
+            result=[
+                f"status = **{j.status}**",
+                f"理由：{j.reason or '（无）'}",
+                f"进度：{j.progress or '（无）'}",
+                "还缺：" + ("（无）" if not outcome.missing
+                          else "\n" + "\n".join(f"- {x}" for x in outcome.missing)),
+            ],
+            # 下一步＝平台**按这个结果实际走的那条路**（和下面那段分支一一对应）
+            nxt=_judge_next(j.status, outcome, round_i),
         )
 
         if j.status in ("completed", "waiting_for_input"):

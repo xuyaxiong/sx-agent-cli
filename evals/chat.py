@@ -251,8 +251,24 @@ def _short_ts(stamp: str) -> str:
     return stamp[11:] if len(stamp) >= 19 and stamp[10] == " " else stamp
 
 
+#: 折行的**最小单位**：英文词 / 标识符 / `` `代码段` `` 各是一整块，其余逐字。
+#:
+#: 🔴 **为什么不能逐字符折**（用户 2026-11-03 实测看到）：`read_user_turn(轮次)`
+#: 被折成 `read_us` / `er_turn`，`waiting_for_input` 折成 `waiting_for_inpu` / `t` ——
+#: 读的人得自己拼，**拷贝的人拼不回来**（而日志里的标识符正是拿来搜代码的）。
+#: CJK 逐字断没问题（中文本来就能在字间断），英文词和标识符不行。
+#:
+#: ⚠️ 三个分支各有来由，别简化成一个 `\w+`：
+#:   - `` `…` ``：反引号是**成对**的，拆开就成了 `` …就用 ` `` / `` read_user_turn(轮次)` 读… ``
+#:     （2026-11-03 实测看到）
+#:   - `[0-9A-Za-z_]+(?:\.[0-9A-Za-z_]+)*`：带点的标识符/文件名要连上 ——
+#:     否则 `SKILL.md` 从点处断成 `SKILL.` / `md`
+#:   - `[\s\S]`：其余**逐字**（CJK 本来就该在字间断）
+_TOKENS = re.compile(r"`[^`]+`|[0-9A-Za-z_]+(?:\.[0-9A-Za-z_]+)*|[\s\S]")
+
+
 def _wrap(s: str, width: int) -> list[str]:
-    """按**显示宽度**折行（CJK 占 2 列）。
+    """按**显示宽度**折行（CJK 占 2 列），且**优先断在词边界上**。
 
     🔴 **为什么必须自己折**（2026-10-30 用户提的：*"我们能处理这种行太长的显示问题吗"*）：
     交给终端折的话，**续行会顶到最左边** —— `┃` 那道 gutter 就断了，
@@ -260,19 +276,41 @@ def _wrap(s: str, width: int) -> list[str]:
     自己折，续行就能**带上同一道 gutter**（`_emit` 的 `cont`）。
 
     宽度按 `_dw` 算，和 gutter 对齐用的是同一套口径（见 `_dw` 的注释）。
+
+    🔴 **续行要补回行首缩进**（2026-11-03 实测踩到）：段体缩进（`handoff.BODY`）是**结构**
+    —— 段名 0 列、段体 2 列、每层 +2。折行不补缩进的话，一条长段体会被折成
+    "第一行缩进、后面几行顶到 0 列"，**结构在终端里就断了**，读的人分不清
+    哪几行属于哪一段（实测：`【任务】` 的正文第二行掉到 0 列，看着像另一段）。
+    ⚠️ 所以 `"".join(_wrap(s, w))` 对**带缩进的行**不再等于 `s` —— 缩进是**故意重复**的，
+    内容一个字不丢（自检见 `unit_decision` 的同源断言）。
     """
     if width <= 1:
         return [s]
+    lead = s[: len(s) - len(s.lstrip())]
+    body = s[len(lead) :]
+    if not body:
+        return [s]
+    inner = max(1, width - sum(_dw(c) for c in lead))
     out: list[str] = []
     cur, w = "", 0
-    for ch in s:
-        cw = _dw(ch)
-        if w + cw > width and cur:
-            out.append(cur)
+    for tok in _TOKENS.findall(body):
+        tw = sum(_dw(c) for c in tok)
+        if w + tw > inner and cur:
+            # 整块放不下 → 换行。**不留半截词**：下一行的开头就是这个完整 token。
+            out.append(lead + cur)
             cur, w = "", 0
-        cur += ch
-        w += cw
-    out.append(cur)
+        if tw > inner:
+            # 单个词比整行还宽（超长 URL / 标识符）—— 没有边界可用，只能硬切
+            for c in tok:
+                if w + _dw(c) > inner:
+                    out.append(lead + cur)
+                    cur, w = "", 0
+                cur += c
+                w += _dw(c)
+            continue
+        cur += tok
+        w += tw
+    out.append(lead + cur)
     return out
 
 
@@ -301,16 +339,6 @@ def _emit(role: str, text: str, stamp: str | None = None) -> None:
     for ln in lines[1:]:
         print(paint(cont + ln, tint))
         _to_file(cont + ln)
-
-
-def _live(role: str, line: str) -> None:
-    """把一条 trace 日志行推出去 —— 时间戳**用日志里的**（那才是事件真实发生的时刻）。"""
-    m = re.match(r"\[(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3})\]\s*(.*)", line, re.S)
-    if not m:
-        return
-    # 执行器的话给宽一点（提问往往在正文末尾，截太狠就看不到了）
-    cap = 1000 if role == "say" else 400
-    _emit(role, m.group(2)[:cap], stamp=m.group(1))
 
 
 def _feed(st: dict, line: str) -> None:
@@ -352,22 +380,29 @@ def _feed(st: dict, line: str) -> None:
             # 平台注入给执行器的**整份交接书**（任务 / 上次做到哪 / 历次答复 / 可读产物）
             st["block"] = ("inject", ["平台 → 执行器：本次交接的全部已知"], st["ts"])
             return
-        if body.startswith("判定输入："):
-            _emit("decide", "判定（LLM 决策）看的是什么：" + body[len("判定输入：") :], stamp=st["ts"])
-            return
-        if "轮判定：status=" in body:
-            # 判定是 LLM 决策：**理由 / 进度 / 还缺** 都在它下面的续行里，一起收进块
-            st["block"] = ("decide", ["【判定 · LLM 决策】" + body], st["ts"])
+        if body.startswith(trace.DECISION_HEAD):
+            # 🔴 **一次 LLM 决策 = 一块**：前提 → 问题 → 结果 → 下一步（用户 2026-11-03）。
+            # ⚠️ 认块的依据是 `trace.DECISION_HEAD` —— 记录层和这里**同一张表**；
+            # **不是** `"轮判定：status="` 那种内容特征：措辞一改就**静默失配**，
+            # 块认不出来 → 整块当噪音丢掉，而丢的正是"平台为什么这么决定"。
+            # 首行去掉 `🧭 决策` —— 左边 gutter 上已经有一个 🧭 DECIDE 了。
+            st["block"] = (
+                "decide",
+                [body[len(trace.DECISION_HEAD) :].lstrip(" ·")],
+                st["ts"],
+            )
             return
         if "平台强制让主 agent 试答" in body:
             # 🔴 提问链路的关键一环：执行器问了 → **平台强制**让主 agent 先用自己的上下文试答。
-            # 下面的块会把"参与决策的全部信息"（能力/任务/执行器的话/已做到/还缺/上下文）
-            # 和决策结果（can_answer）一起收进来 —— 用户点名要看这个。
+            # 这一块收的是**参与决策的全部信息**（能力 / 任务 / 执行器的话 / 已做到 / 还缺 /
+            # 主 agent 全部上下文，全文不截）—— 用户点名要看这个。
+            # ⚠️ 结论（can_answer）**不在这里**：它在下面那条「决策记录」里，排在**这份证据之后**
+            # —— 前提 → 证据 → 结论，读起来是顺的；也不会同一件事两副面孔。
             st["section"] = "ask_main"
             st["block"] = (
                 "decide",
-                ["【主 agent 试答 · LLM 决策】平台强制的一步（在 `delegate` 内部）",
-                 "参与决策的信息 ↓"],
+                ["【试答 · LLM 决策】平台强制的一步（在 `delegate` 内部）",
+                 "参与决策的全部信息（发给 LLM 的全文）↓"],
                 st["ts"],
             )
             return
@@ -385,12 +420,23 @@ def _feed(st: dict, line: str) -> None:
         # （试答的 RESPONSE 由上面那个块一起收 —— 不单独再打一条，重复）
         for needle, role in _LIVE:
             if needle in body:
-                _emit(role, body[:400], stamp=st["ts"])
+                # 🔴 **切了必须标**（交接三问②，用户 2026-11-02）：原来是一刀切下去
+                # **一声不吭** —— 读的人分不清"它就说到这儿"和"被切了"，
+                # 而这两种情况该做的决定**完全不同**。
+                # （`docs/handoff-audit.md` H22 记的就是这一处 🔴 静默截断。）
+                cap = 400
+                if len(body) > cap:
+                    body = body[:cap] + f"（**平台截断：还有 {len(body) - cap} 字未显示**）"
+                _emit(role, body, stamp=st["ts"])
                 return
         return
 
     # ── 续行：要么在多行块里，要么在某个 dump 里（trace 日志里没有时间戳前缀的行）──
     s = line.strip()
+    # ⚠️ **段分隔线不是内容**（`trace.section` 前后那两道 `═══`）：块已经开了的时候
+    # 它会当成续行收进去，于是块中间横着一行 `═══════…`（2026-11-03 实测看到）。
+    if s and set(s) == {"═"}:
+        return
     if st["block"] is not None:
         st["block"][1].append(line[2:] if line.startswith("  ") else line)
         return

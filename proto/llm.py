@@ -32,7 +32,13 @@ warnings.filterwarnings(
 
 
 def safe_structured(
-    schema: type, prompt: str, default: Any, *, tag: str = "", log_prompt: bool = True
+    schema: type,
+    prompt: str,
+    default: Any,
+    *,
+    tag: str = "",
+    log_prompt: bool = True,
+    log_response: bool = True,
 ) -> Any:
     """结构化输出调用 + **兜底**。
 
@@ -49,6 +55,12 @@ def safe_structured(
             （`_judge_material` 会把产物内容喂进去），产物本身已另存 —— 用户要求
             "日志只告知生成了产物、给点产物信息，不必全文放在那里"，故此时传 False，
             由调用方先记一行"喂了什么"的结构化摘要。
+        log_response: 是否把返回**原样**写进日志（`str(r)` ＝ pydantic repr）。
+            ⚠️ 调用方**自己会渲染一条「决策记录」**时传 False —— 否则同一件事在日志里
+            **两副面孔**：决策块里是排好版的「结果：can_answer = true / 补充：…」，
+            下面又跟一条 `can_answer=True answer='课型：…\n学生基础：…'`（转义过的 repr）。
+            用户 2026-11-03 定的规矩：**同一个东西不要搞两套** —— 显示给人看的
+            和留在日志里的必须是同一份。
     """
     trace.section(tag or f"结构化输出 · {getattr(schema, '__name__', schema)}")
     if log_prompt:
@@ -64,7 +76,8 @@ def safe_structured(
     for attempt in (1, 2):
         try:
             r = get_model().with_structured_output(schema).invoke(prompt)
-            trace.block(f"RESPONSE（{time.time() - t0:.1f}s）", str(r))
+            if log_response:
+                trace.block(f"RESPONSE（{time.time() - t0:.1f}s）", str(r))
             return r
         except Exception as e:  # noqa: BLE001
             trace.note(f"⚠️ 结构化输出失败（第 {attempt}/2 次）：{type(e).__name__}: {e}")
