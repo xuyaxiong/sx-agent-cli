@@ -449,7 +449,14 @@ def _feed(st: dict, line: str) -> None:
         rest = s[len("tool_call=") :]
         name = rest.split(" ", 1)[0]
         args = rest.split("args=", 1)[1] if "args=" in rest else ""
-        st["calls"].append(name)
+        # 🔴 **按段各排各的队**（2026-11-03 实测踩到）：原来是一条**全局** FIFO ——
+        # 主 agent 的 `delegate` 先入队，中间执行器那条链路又入了 `write_artifact`，
+        # 于是执行器的返回弹出来的是 `delegate`，**两个标签整好对调**（用户日志里：
+        # `执行器 → write_artifact` 下面写着「delegate 的返回」，而真正的回执
+        # 又标成了「write_artifact 的返回」）。
+        # 记录层没有 `tool_call_id` 可对（`trace.render_message` 只写 name/args），
+        # 所以按**段**分队 —— 同一段里 dump 是按消息顺序走的，队列天然对得上。
+        st["calls"].setdefault(st["section"], []).append(name)
         who = "执行器" if st["section"] == "exec" else "主 agent"
         # ⚠️ **不截参数**：`delegate(task=...)` 就是交接本身，砍了等于看不到交接了什么
         # （2026-10-30 用户：*"你怎么把这么关键的上下文交接信息给去掉了？？"*）。
@@ -467,7 +474,8 @@ def _feed(st: dict, line: str) -> None:
             .replace(chr(92) * 2, chr(92))
         )
         if st["kind"] == "ToolMessage":  # 工具**返回了什么**
-            who = st["calls"].pop(0) if st["calls"] else "?"
+            q = st["calls"].get(st["section"]) or []
+            who = q.pop(0) if q else "?"
             # 🔴 **只有这两种工具返回截断**：它们的全文**另有出处**
             # （技能原文在 `evals/skills/*.md`，产物正文在产物文件里），
             # 摊在终端里只是噪音。**其余一律不截** —— 见下面两条。
@@ -496,7 +504,7 @@ def _drain_once(pos: list[int]) -> None:
     返回后立刻停，最后那批行就漏了 —— 表现为"主 agent 的话只在回合小结里出现、顺序还错"。
     """
     path = Path(trace.LOG_FILE)
-    st: dict = {"section": "", "kind": "", "ts": "", "calls": [], "block": None}
+    st: dict = {"section": "", "kind": "", "ts": "", "calls": {}, "block": None}
     try:
         with path.open(encoding="utf-8", errors="replace") as fh:
             fh.seek(pos[0])
@@ -517,7 +525,7 @@ def _tail_trace(stop: threading.Event, pos: list[int]) -> None:
     而 trace 日志是**实时**写的，且每行自带真实时间戳 —— 所以时间是事件真实发生的时刻。
     """
     path = Path(trace.LOG_FILE)
-    st: dict = {"section": "", "kind": "", "ts": "", "calls": [], "block": None}
+    st: dict = {"section": "", "kind": "", "ts": "", "calls": {}, "block": None}
     while not stop.wait(0.8):
         if not path.exists():
             continue

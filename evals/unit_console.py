@@ -85,7 +85,7 @@ def main() -> None:
     chat._emit = lambda role, text, stamp=None: seen.append(text)  # type: ignore[assignment]
     try:
         st = {"block": ("decide", ["【试答】"], "t"), "section": "plat", "ts": "t",
-              "kind": "", "calls": []}
+              "kind": "", "calls": {}}
         chat._feed(st, "═" * 70)                       # 段分隔线
         check("`═══` 分隔线**不进块**", len(st["block"][1]) == 1, repr(st["block"][1]))
         chat._feed({**st, "block": None}, "[2026-11-03 12:00:00.000] run_task · R01 " + "长" * 500)
@@ -95,6 +95,36 @@ def main() -> None:
         check("短行**不该**被标", "平台截断" not in seen[-1])
     finally:
         chat._emit = real_emit  # type: ignore[assignment]
+
+    print("\n⑤ 工具返回的标签**不许跨段串**（2026-11-03 实测踩到）")
+    # 真实形状：主 agent 调 `delegate` → 中间执行器那条链路调 `write_artifact`
+    # → 回到主 agent 收 `delegate` 的返回。全局 FIFO 的话，执行器的返回会弹出
+    # `delegate`、主 agent 的回执会弹出 `write_artifact` —— **两个标签整好对调**。
+    seen2: list[str] = []
+    chat._emit = lambda role, text, stamp=None: seen2.append(text)  # type: ignore[assignment]
+    try:
+        st2 = {"section": "", "kind": "", "ts": "t", "calls": {}, "block": None}
+        for line in (
+            "[2026-11-03 12:00:00.000] node_agent 第 1 步 消息轨迹（2 条）:",
+            "  [1] AIMessage(20字)",
+            "    tool_call=delegate args={'skill_name': 'lesson-prep'}",
+            "[2026-11-03 12:00:01.000] run_task 第 1 轮 消息轨迹（3 条）:",
+            "  [2] AIMessage(20字)",
+            "    tool_call=write_artifact args={'title': '《荷花》教案'}",
+            "  [3] ToolMessage(30字)",
+            "    content='已写入产物 art_001（4931 字，md）'",
+            "[2026-11-03 12:00:02.000] node_agent 第 2 步 消息轨迹（4 条）:",
+            "  [4] ToolMessage(40字)",
+            "    content='【交付】\\n  ✅ 已完成 —— 交付 1 个产物'",
+        ):
+            chat._feed(st2, line)
+    finally:
+        chat._emit = real_emit  # type: ignore[assignment]
+    rets = [t for t in seen2 if "的返回" in t]
+    check("执行器的返回标的是 `write_artifact`", len(rets) == 2 and rets[0].startswith("write_artifact"),
+          repr([t.splitlines()[0] for t in rets]))
+    check("主 agent 的返回标的是 `delegate`", len(rets) == 2 and rets[1].startswith("delegate"),
+          repr([t.splitlines()[0] for t in rets]))
 
     print("\n" + "═" * 78)
     print(f"{'全部通过' if not FAIL else '有失败'}：{len(PASS)}/{len(PASS) + len(FAIL)}")
