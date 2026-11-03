@@ -120,7 +120,7 @@ if __name__ == "__main__":
     from proto.skills import Skill
 
     WITH = GL  # 有 criteria
-    WITHOUT = SKILLS["courseware-config"]  # 无 criteria
+    WITHOUT = SKILLS["quiz"]  # 无 criteria（原来用 courseware-config —— 那技能已删，见正文交付那条）
 
     print(f"\n{'─' * 70}")
     print("B 判定分派（有/无 criteria × 有/无产物）")
