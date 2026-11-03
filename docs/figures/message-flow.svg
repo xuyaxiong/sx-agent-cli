@@ -92,8 +92,8 @@
   <text x="923" y="448" text-anchor="middle" font-size="11"><tspan font-weight="700" fill="#5F6368">④ 交接书</tspan><tspan fill="#9AA0A6"> · HumanMessage · 平台 → 执行器（所有重入路径的唯一入口）</tspan></text>
   <rect x="480" y="464" width="610" height="47" rx="5" fill="#F8F9FA" stroke="#E0E0E0"/>
   <text x="490" y="479" font-size="9.5" fill="#616161">【任务】（<tspan font-weight="600">主 agent 交代的</tspan>）・【用户原话】（<tspan font-weight="600">用户说的</tspan>・平台硬搬・每轮带「它在回答的上一句」）</text>
-  <text x="490" y="491" font-size="9.5" fill="#616161">【你上次说到哪】（判定说已做到/还缺 ・ 你上次说）・【已经答复过的信息】（<tspan font-weight="600">一问一答成对</tspan>：执行器问／用户答／主 agent 答）</text>
-  <text x="490" y="503" font-size="9.5" fill="#616161">【已经产出的产物】・【可读产物】・【续跑提示】　—— 7 段按条件出现，<tspan font-weight="600">每段都标来源</tspan></text>
+  <text x="490" y="491" font-size="9.5" fill="#616161">【问答经过】（<tspan font-weight="600">按时间序</tspan> ・ 一问一答成对：问 1／答 1 ・ 末尾接它最后说的那句）・【上次判定】（<tspan font-weight="600">判定说</tspan> ・ 上一轮的情况）</text>
+  <text x="490" y="503" font-size="9.5" fill="#616161">【已经产出的产物】・【可读产物】・【续跑提示】　—— 7 段按条件出现，<tspan font-weight="600">每段都标来源</tspan> · 段名 0 列 / 段体 2 列</text>
 
   <!-- ═══════════ ⑤ ═══════════ -->
   <line x1="1090" y1="536" x2="1396" y2="536" stroke="#5F6368" stroke-width="1.8" marker-end="url(#m)"/>

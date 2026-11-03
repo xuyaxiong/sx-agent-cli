@@ -67,7 +67,8 @@ def main() -> None:  # noqa: C901
         "artifacts": [aid], "refs": [aid],
     })
     row("① 交接书（平台→执行器）",
-        OK if all(s in brief for s in ("主 agent 交代的", "**用户说的**", "**判定说**", "**你上次说**", "**用户** 答")) else BAD,
+        OK if all(s in brief for s in ("主 agent 交代的", "**用户说的**", "**判定说**",
+                                       "（执行器原话）", "**答 1**（**用户**）")) else BAD,
         OK if ("read_user_turn" in brief and "…" in brief) else BAD,
         NA,
         OK,   # Task（TypedDict 声明）→ render_briefing：两层分离

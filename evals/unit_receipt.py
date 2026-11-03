@@ -28,6 +28,8 @@ import sys
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
+from proto.handoff import BODY, SECTION
+from proto.handoff.briefing import _flat
 from proto.handoff.receipt import build_receipt, render_receipt
 from proto.artifacts import ARTIFACTS, store_artifact
 from proto.executor import ExecOutcome
@@ -108,7 +110,10 @@ def main() -> None:
     print("\n② 🔴 **一个字都不许截断** —— 这是这条规矩的由来")
     for label, out in (("completed", completed), ("waiting_for_input", waiting), ("incomplete", failed)):
         text = _render(out)
-        check(f"[{label}] 执行器交代**全文**都在", out.report in text)
+        # ⚠️ **按压平后的口径比**：段体渲染时会整块缩进 2 列（`handoff.BODY`），
+        #    多行的原话就不再是连续子串了 —— 缩进是结构，不是内容，
+        #    用 `_flat` 两边同一个口径（同 `unit_briefing` ⑦ 那条注释）。
+        check(f"[{label}] 执行器交代**全文**都在", _flat(out.report) in _flat(text))
         check(f"[{label}] 结尾标记没丢", "**结尾标记**" in text)
         check(f"[{label}] 没有截断省略号", "…（" not in text and "…\n" not in text)
 
@@ -153,7 +158,18 @@ def main() -> None:
         check(f"[{label}] 执行器的原话那一段 == `report` 逐字",
               bool(got) and got[0] == out.report.strip())
         check(f"[{label}] 渲染出的文本包含对象里每一段的内容",
-              all(t in text for _, t in parts))
+              all(_flat(t) in _flat(text) for _, t in parts))
+
+    # ①b 排版：**段名独占一行 · 段体 2 列**（和委托单**同一条规矩**，2026-11-03）
+    #     ⚠️ 断言对象是**渲染结果**：换实现也照样管用。
+    for label, out in (("completed", completed), ("waiting_for_input", waiting), ("incomplete", failed)):
+        text = _render(out, agent_answer="补一句", note="（示例）下一步")
+        stray = [ln for ln in text.splitlines()
+                 if ln.startswith("【") and ln.strip() not in SECTION.values()]
+        check(f"[{label}] 段名独占一行（后面不跟内容）", not stray, f"越界的行：{stray[:2]}")
+        loose = [ln for ln in text.splitlines()
+                 if ln.strip() and not ln.startswith(("【", BODY))]
+        check(f"[{label}] 段体/续行都缩进 ≥2 列", not loose, f"越界的行：{loose[:2]}")
 
     # ② 段名 ⊆ `HOPS` 声明（**加了段忘了登记 → 这里红**）
     all_used: set[str] = set()

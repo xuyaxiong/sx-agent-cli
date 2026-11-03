@@ -34,11 +34,12 @@ from __future__ import annotations
 from typing import Any, TypedDict
 
 from proto.handoff import (
+    BODY,
     DELIVERY,
     HOPS,
     SECTION,
-    SECTION_LAYOUT,
-    SOURCE_NOTE,
+    body_lines,
+    section_head,
 )
 
 # ──────────────────────────── schema：回执上有什么 ────────────────────────────
@@ -185,6 +186,10 @@ def render_receipt(receipt: Receipt) -> str:
         text = sections.get(key)
         if not text:
             continue
-        head = SECTION[key] + SOURCE_NOTE.get(key, "")
-        lines.append(f"{head}{text}" if SECTION_LAYOUT.get(key) == "inline" else f"{head}\n{text}")
+        # 🔴 **段名独占一行 → 来源另起一行 → 段体缩进 2 列**（`section_head` ＋ `body_lines`），
+        # 和委托单**同一条规矩**。原来段体顶在 0 列：执行器那段长原话和【已做到】【还缺】
+        # 这些平台框架话**左边界一模一样**，读的人分不清哪几行是执行器说的、哪几行是平台说的
+        # —— 而"哪句是谁说的"正是这段存在的全部意义（用户 2026-11-02）。
+        # 用户 2026-11-03 实测原话：*"return 那块日志还是很乱"*。
+        lines += section_head(key) + body_lines(text, BODY)
     return "\n".join(lines)

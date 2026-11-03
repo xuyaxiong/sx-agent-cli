@@ -22,7 +22,8 @@ import sys
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from proto.handoff.briefing import render_briefing
+from proto.handoff import BODY, SECTION
+from proto.handoff.briefing import _flat, render_briefing
 from proto.artifacts import ARTIFACTS, store_artifact
 
 #: **显式排除名单** —— 这些字段不进交接书，每一条都要有理由。
@@ -139,28 +140,32 @@ def main() -> None:
     print("\n⑤ 来源标注：**哪句是用户说的、哪句是模型说的**，一眼分得清")
     check("【任务】标明是主 agent 交代的", "主 agent 交代的" in text)
     check("【用户原话】标明是用户说的", "**用户说的**" in text)
-    check("【已经答复过的信息】逐条标了**谁**答的",
-          "**用户** 答：" in text and "**主 agent** 答：" in text)
-    # 这一段里混着**两方**的话，子段必须各自标来源（判定是第三方评审，执行器是当事人）
-    check(
-        "【你上次说到哪】子段标了来源",
-        "**判定说**" in text and "**你上次说**" in text,
-        "缺「判定说」或「你上次说」",
-    )
+    check("【问答经过】逐条标了**谁**答的",
+          "（**用户**）" in text and "（**主 agent**）" in text)
+    # 2026-11-03 分家之后，每段**只留一方的话**，来源由段头一次写死：
+    #   【问答经过】＝ 执行器自己的话（问）＋ 谁答的（答）
+    #   【上次判定】＝ 第三方评审的话（它可能判错，所以必须一直挂着"判定说"）
+    check("【问答经过】标明「问」是执行器的原话", "（执行器原话）" in text)
+    check("【上次判定】标明是判定说的、且是**上一轮**的",
+          "**判定说**" in text and "上一轮的情况" in text)
 
     print("\n⑦ 一问一答：**答不能脱离问**（用户 2026-11-02 定的形状）")
     # ① 每一对都必须"问在前、答在后"地出现 —— 只出现答案等于没交接上下文
     # ⚠️ 顺序只在**这一段内**比：`课前预习` 这类词在【用户原话】里也会出现，
     #    用全文 `find` 会拿到更早的那次命中（实测踩过，测试自己误报）
-    seg = text[text.find("【已经答复过的信息】"):text.find("【已经产出的产物】")]
-    check("【已经答复过的信息】这一段渲染出来了", bool(seg.strip()))
+    # ⚠️ **段名从 `SECTION` 取**，不写死字面量 —— 2026-11-03 段名一改，写死的地方就静默失效了
+    seg = text[text.find(SECTION["answered"]):text.find(SECTION["already_produced"])]
+    check("【问答经过】这一段渲染出来了", bool(seg.strip()))
+    # ⚠️ **按压平后的口径比**：多行值渲染时会整块缩进（`body_lines`），
+    #    原文的多行字符串就不再是连续子串了 —— 用 `_flat` 两边同一个口径（同 `_flat` 的注释）
+    flat = _flat(seg)
     for i, x in enumerate(task["qa"], 1):
-        q, a = str(x["q"]), str(x["a"])
-        both = q in seg and a in seg
-        ordered = seg.find(q) < seg.find(a) if both else False
+        q, a = _flat(x["q"]), _flat(x["a"])
+        both = q in flat and a in flat
+        ordered = flat.find(q) < flat.find(a) if both else False
         check(f"第 {i} 对：问和答都在，且问在答前", both and ordered,
               "" if (both and ordered) else f"q={q!r} a={a!r}")
-        check(f"第 {i} 对：标了**谁**答的（{x['by']}）", f"**{x['by']}** 答：" in seg)
+        check(f"第 {i} 对：标了**谁**答的（{x['by']}）", f"**答 {i}**（**{x['by']}**）" in seg)
     # ② 用户原话那一段：短应答必须带上"它在回答的上一句"
     for t in task["user_turns"]:
         after = str(t.get("after") or "").strip()
@@ -192,8 +197,8 @@ def main() -> None:
     )
     check("首跑没有续跑提示", "续跑提示" not in fresh_text)
 
-    print("\n⑦ 渲染出来的段都在 `HOPS['briefing']` 里声明过（和回执那边对称）")
-    from proto.handoff import HOPS, SECTION
+    print("\n⑧ 渲染出来的段都在 `HOPS['briefing']` 里声明过（和回执那边对称）")
+    from proto.handoff import HOPS
 
     used = {k for k, v in SECTION.items() if v in text}
     declared = set(HOPS["briefing"])
@@ -201,6 +206,67 @@ def main() -> None:
           f"没声明：{sorted(used - declared)}")
     check("声明的段**都用到了**（没有死段）", declared <= used,
           f"声明了没人用：{sorted(declared - used)}")
+
+    # ══════════════════════════════════════════════════════════════════════
+    print("\n⑨ 去重：**最后一问 == report** 时只贴一遍（确定性 ＋ 必须标出来）")
+    # 🔴 为什么这条能当**不变量**断，而不是"碰巧"：
+    #    `qa` 里的「问」是**当时那条 `report`** 原样抄下来的
+    #    （`graph._feed_waiting` / `agent.delegate` 两处都这么建），
+    #    而 `report` 要到 `absorb_outcome` 才被覆盖 —— **渲染发生在覆盖之前**。
+    #    所以"最后一问 == report"在**每一次重入渲染时恒成立**（实测 R07：白贴 275 字）。
+    base = {
+        "task": "生成导学单", "stage": "waiting_for_input",
+        "user_turns": [], "based_on": [], "progress": "", "missing": [],
+        "artifacts": [], "refs": [],
+    }
+    # 多行的问（真实形状：执行器的整条 report，前面还有一句交代）
+    q2 = ("好的，场景确认为 **A. 课前预习** ✅\n\n"
+          "**第二个问题：你希望导学单以什么形式让学生填写？**\n"
+          "- A. 填空补白\n- B. 表格记录")
+    dup = {**base, "report": q2,
+           "qa": [{"by": "用户", "q": "用在哪？", "a": "课前预习"},
+                  {"by": "用户", "q": q2, "a": "A"}]}
+    dup_text = render_briefing(dup)
+    check("最后一问和 `report` 逐字相同时，**只出现一遍**",
+          _flat(dup_text).count(_flat(q2)) == 1,
+          f"出现了 {_flat(dup_text).count(_flat(q2))} 次")
+    check("折叠**标出来了**（读的人分得清「它没说」和「被折叠了」）",
+          "不重复贴" in dup_text)
+    # 🔴 **反向断言**：不逐字相同时，**一个字都不能少** ——
+    #    折叠写歪了会**静默吞掉**内容，那是比重复更贵的错（交接三问①）
+    diff = {**base, "report": "好的，两个问题都确认了，现在进入第三步：生成导学单。",
+            "qa": [{"by": "用户", "q": q2, "a": "A"}]}
+    diff_text = render_briefing(diff)
+    check("最后一问和 `report` 不同时，两句**都在**",
+          diff["report"] in diff_text and _flat(q2) in _flat(diff_text))
+    check("没折叠就不该出现「不重复贴」", "不重复贴" not in diff_text)
+    check("首跑（无 qa 无 report）不出现【问答经过】",
+          SECTION["answered"] not in render_briefing({**base, "task": "x"}))
+
+    print("\n⑩ 排版：**段名独占一行 · 段体 2 列 · 续行不掉回 0 列**")
+    # 🔴 **段名那一行只能是段名**（用户 2026-11-03 在三选一里挑的排法）：
+    # 原来是 `【任务】（**主 agent 交代的** —— …）`，一长串括号说明跟段名挤在一行 ——
+    # 读的人看着**像同一个层级**（原话："仿佛是同一个层级"）。来源现在另起一行。
+    # ⚠️ 断言对象是**渲染结果**，换实现也照样管用。
+    for label, t in (("满字段的 Task", task), ("重入（含折叠）", dup), ("兜底那条路", diff)):
+        stray = [ln for ln in render_briefing(t).splitlines()
+                 if ln.startswith("【") and ln.strip() not in SECTION.values()]
+        check(f"{label}：段名独占一行（后面不跟内容）", not stray, f"越界的行：{stray[:2]}")
+    # 🔴 这条是**结构性**的：它一次盖住实测那三种破法 ——
+    #   ① 多行的「答」续行掉到 0 列；② 「答」和「问」的续行同缩进（靠 ③ 的编号区分）；
+    #   ③ 点名轮的原文顶在 0 列。任何一种复发，这里当场红。
+    # ⚠️ 断言对象是**渲染结果**，不是源码写法 —— 换实现也照样管用。
+    for label, t in (("满字段的 Task", task), ("重入（含折叠）", dup), ("兜底那条路", diff)):
+        bad = [ln for ln in render_briefing(t).splitlines()
+               if ln.strip() and not ln.startswith(("【", "  "))]
+        check(f"{label}：没有掉回 0 列的续行", not bad, f"越界的行：{bad[:3]}")
+    # 多行的「答」整块缩进 —— 这是上面那条最常被踩的具体形状，单独钉一遍
+    multiline_a = {**base, "report": "它最后说的。",
+                   "qa": [{"by": "主 agent", "q": "问一句？", "a": "第一行\n第二行\n第三行"}]}
+    ma_lines = {ln.strip(): ln for ln in render_briefing(multiline_a).splitlines()}
+    check("多行的「答」续行**整块缩进**（不顶回 0 列）",
+          all(ma_lines.get(k, "").startswith(BODY * 2) for k in ("第二行", "第三行")),
+          repr([ma_lines.get(k) for k in ("第二行", "第三行")]))
 
     print("\n" + "═" * 78)
     print(f"{'全部通过' if not FAIL else '有失败'}：{len(PASS)}/{len(PASS) + len(FAIL)}")

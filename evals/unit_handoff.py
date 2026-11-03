@@ -53,9 +53,11 @@ ALLOWED: dict[str, list[tuple[str, str]]] = {
     ],
     # ⚠️ **`proto/handoff/` 是包，`glob('proto/*.py')` 扫不到它** ——
     # 2026-11-03 把交接的 schema 与模板搬进包里时差点让它掉出守卫的覆盖面。
-    'proto/handoff/briefing.py': [
-        (r'q_lines\[0\]|q_lines\[1:\]', '按行拆分渲染，不丢字'),
-    ],
+    #
+    # ⚠️ `proto/handoff/briefing.py` 那条豁免（`q_lines[0]|q_lines[1:]`，"按行拆分渲染"）
+    # **2026-11-03 已删** —— 那段换成了 `proto.handoff.body_lines`，豁免的正则再也匹配不到，
+    # 本文件的 ALLOWED 自检当场报红（"代码改了就把这条豁免删掉，别留着烂"）。
+    # 现在的多行拆分在 `body_lines` 里，不含切片形状，**不需要豁免**。
     'proto/handoff/receipt.py': [
         (r'原来七个返回口各拼各的字符串', '文档字符串里**引用**旧写法说明为什么改 —— 不是真代码'),
     ],
