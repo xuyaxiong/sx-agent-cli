@@ -116,7 +116,7 @@ config ──► trace ──► (所有模块都在写日志)
 ┌─────────────────────────────────────────────────────────────────────┐
 │ ① prepare（平台节点 · 纯代码）                                        │
 │                                                                     │
-│   ⓪ _feed_waiting：把用户这条消息**原话**投给所有 waiting_for_input 的 Task │
+│   ⓪ _feed_waiting：**定向**投给 `answer_to` 指的那一条待答（没有标识就不投）│
 │        └─► run_task(skill, render_briefing(rec))   ← 重入执行器        │
 │        └─► settle(rec, outcome)  → 写字段 + 定 stage（唯一一处迁移）   │
 │        ⚠️ 不判断"用户是不是在回答" —— 那是语义判断，平台不做            │

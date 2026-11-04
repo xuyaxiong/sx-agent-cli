@@ -93,6 +93,9 @@ def main() -> None:
     seen = _capture()
     state = {
         "messages": [HumanMessage("篇幅一页")],
+        # 🔴 **标识**（`solution.md` §0.65 Y1）：这句在回答哪个待答任务 ——
+        #    没有它**一条都不投**（那是主 agent 的输入）。值 = 下面那个待答 Task 的 id。
+        "answer_to": "t1",
         "tasks": [
             {
                 "id": "t1",
@@ -182,6 +185,9 @@ def main() -> None:
     proto.executor.run_task = lambda *a, **k: _no_delivery()  # type: ignore[assignment]
     state6 = {
         "messages": [HumanMessage("就按这个改")],
+        # 🔴 **标识**（`solution.md` §0.65 Y1）：这句在回答哪个待答任务 ——
+        #    没有它**一条都不投**（那是主 agent 的输入）。值 = 下面那个待答 Task 的 id。
+        "answer_to": "t1",
         "tasks": [{
             "id": "t1", "skill": "guided-learning", "task": "生成导学单",
             "stage": "waiting_for_input", "artifacts": ["art_001"],   # ← 上一轮交付的
@@ -207,6 +213,9 @@ def main() -> None:
         fault="TimeoutError: （模拟）投递那趟抖动")
     state6b = {
         "messages": [HumanMessage("就按这个改")],
+        # 🔴 **标识**（`solution.md` §0.65 Y1）：这句在回答哪个待答任务 ——
+        #    没有它**一条都不投**（那是主 agent 的输入）。值 = 下面那个待答 Task 的 id。
+        "answer_to": "t1",
         "tasks": [{
             "id": "t1", "skill": "guided-learning", "task": "生成导学单",
             "stage": "waiting_for_input", "artifacts": [], "refs": [],
@@ -235,6 +244,9 @@ def main() -> None:
     proto.executor.run_task = lambda *a, **k: _waiting("问课时" * 60)  # type: ignore[assignment]
     state7 = {
         "messages": [HumanMessage("两课时")],
+        # 🔴 **标识**（`solution.md` §0.65 Y1）：这句在回答哪个待答任务 ——
+        #    没有它**一条都不投**（那是主 agent 的输入）。值 = 下面那个待答 Task 的 id。
+        "answer_to": "t1",
         "tasks": [{
             "id": "t1", "skill": "quiz", "task": "出随堂小测",
             "stage": "waiting_for_input", "artifacts": [], "refs": [],
@@ -263,6 +275,9 @@ def main() -> None:
     try:
         state8 = {
             "messages": [HumanMessage("两课时")],
+            # 🔴 **标识**（`solution.md` §0.65 Y1）：这句在回答哪个待答任务 ——
+            #    没有它**一条都不投**（那是主 agent 的输入）。值 = 下面那个待答 Task 的 id。
+            "answer_to": "t1",
             "tasks": [{
                 "id": "t1", "skill": "quiz", "task": "出随堂小测",
                 "stage": "waiting_for_input", "artifacts": [], "refs": [],
@@ -289,6 +304,9 @@ def main() -> None:
     seen9 = _capture()
     state9 = {
         "messages": [HumanMessage("两课时")],
+        # 🔴 **标识**（`solution.md` §0.65 Y1）：这句在回答哪个待答任务 ——
+        #    没有它**一条都不投**（那是主 agent 的输入）。值 = 下面那个待答 Task 的 id。
+        "answer_to": "t1",
         "tasks": [{
             "id": "t1", "skill": "quiz", "task": "出随堂小测",
             "stage": "waiting_for_input", "artifacts": [], "refs": [],
@@ -305,7 +323,40 @@ def main() -> None:
     check("动作里带**多少字**（用户原话长度）",
           acts9 and acts9[0].get("chars") == len("两课时"), repr(acts9))
     check("同一刻那句**人话仍在** `log` 里（给人看的，没被删）",
-          any("投过去" in ln for ln in (out9.get("log") or [])), repr(out9.get("log")))
+          any("定向投递" in ln for ln in (out9.get("log") or [])), repr(out9.get("log")))
+
+    print("\n⑩ 定向投递（`solution.md` §0.65 Y1）：**标识由通道填，平台不猜**")
+    # 🔴 2026-11-05：原来是**广播**（把用户这句话投给**所有**待答）—— 一句话只答了一个，
+    #    其余全都要白跑一趟（各 60–120 秒，实测 3.8% 的轮次会碰上）。
+    #    现在：**有标识 → 只投那一个；没标识 → 一条都不投**（那是主 agent 的输入）。
+    #    ⚠️ 平台**不判断**"这句在答谁"（语义判断，F7 的死因）—— 标识来自**通道**。
+    _two = {
+        "messages": [HumanMessage("答第一条的")],
+        "answer_to": "tA",
+        "tasks": [
+            {"id": "tA", "skill": "quiz", "task": "出小测", "stage": "waiting_for_input",
+             "artifacts": [], "refs": [], "report": "难度？", "qa": [], "user_turns": []},
+            {"id": "tB", "skill": "lesson-prep", "task": "备课", "stage": "waiting_for_input",
+             "artifacts": [], "refs": [], "report": "课型？", "qa": [], "user_turns": []},
+        ],
+    }
+    _seen = _capture()
+    _out, _ = graph._feed_waiting({**_two})
+    check("**只投标识指的那一条**（另一条不动）",
+          len(_seen) == 1 and [t["id"] for t in _out] == ["tA"],
+          f"投了 {len(_seen)} 次：{[t['id'] for t in _out]}")
+    check("**没被投的那条**原样留着（还在等，没被碰）",
+          any(t["id"] == "tB" for t in _two["tasks"]) and not any(t["id"] == "tB" for t in _out),
+          repr([t["id"] for t in _out]))
+    _seen2 = _capture()
+    _out2, _ = graph._feed_waiting({"messages": [HumanMessage("随便说点什么")],
+                                    "tasks": _two["tasks"]})
+    check("**没有标识 → 一条都不投**（那是主 agent 的输入）",
+          not _seen2 and not _out2, f"投了 {len(_seen2)} 次")
+    _seen3 = _capture()
+    _out3, _ = graph._feed_waiting({**_two, "answer_to": "tZZZ"})
+    check("标识指向**不存在的任务** → 也不投（不猜、不广播）",
+          not _seen3 and not _out3, f"投了 {len(_seen3)} 次")
 
     # 守卫：断言层不许再回头去解析 `log`（AST 扫字符串常量，不看注释）
     def _log_refs(path: str) -> list[str]:

@@ -78,6 +78,16 @@ class State(TypedDict):
     #: ⚠️ **别加进 `AgentState`**：子图会把声明过的字段原样回吐给父图，
     #: 而这里的 reducer 是 `operator.add` —— 每轮翻一倍（`log` 那条指数膨胀的教训）。
     actions: NotRequired[Annotated[list[dict[str, Any]], operator.add]]
+    #: 🔴 **这一条用户消息是在回答哪个待答任务**（`solution.md` §0.65 Y1 第二步）。
+    #:
+    #: **由通道填，平台不猜**：CLI 的答复提示符（`↩ `）/ case YAML / 跑批子进程。
+    #: - 有它 → `_feed_waiting` **只投给那一个**任务；
+    #: - 没有 → **一条都不投**（那是主 agent 的输入）。
+    #:
+    #: ⚠️ **用后即清**（`node_prepare` 在每条返回路径上都写回 `""`）——
+    #: 它跟着 checkpointer 活到下一轮，不清的话**后面每一轮都会被当成"在回答那条"** ✗。
+    #: ⚠️ 也**别加进 `AgentState`**：理由同 `actions`（子图会把声明过的字段原样回吐）。
+    answer_to: NotRequired[str]
 
 
 class AgentState(TypedDict):
@@ -113,7 +123,7 @@ def _last_human(state: State) -> str:
 
 
 def _feed_waiting(state: State) -> tuple[list[dict], list[str]]:
-    """把用户这条消息**原话**投给所有还挂着的待答任务。
+    """把用户这条消息**原话**投给**它标明的那一个**待答任务（`answer_to`）。
 
     🔴 **不做任何判断** —— 不判断"用户是不是在回答""答的是哪一条"。
 
@@ -126,20 +136,35 @@ def _feed_waiting(state: State) -> tuple[list[dict], list[str]]:
 
     这也是**待答唯一的解除路径**：投递后要么 completed，要么还在等。
 
-    📌 **已定：这条路要改成"定向投递"**（用户 2026-11-05）—— subagent 的请求做成**弹框**
-    （一次只开一个），用户在框里答 → **只投给那个任务**；主输入框的话只给主 agent
-    （弹框继续等）。**弹框做出来之前，这里的广播仍是唯一能用的路 —— 别提前拆。**
-    分三步与两个边界见 `docs/solution.md` §0.65（Y1）。
+    🔴 **2026-11-05 起是"定向投递"，不再是广播**（`solution.md` §0.65 Y1 第二步）：
+    只投给**这条消息标明的那个任务**（`answer_to` —— **通道**填的：CLI 的答复提示符 /
+    case YAML）；**没有标识 = 主 agent 的输入，一条都不投**。
+    原来的广播是"一句话投给所有待答"，其余任务全白跑一趟（各 60–120 秒）。
+    **平台不猜"这句在答谁"**（语义判断，F7 的死因）—— 标识来自通道，不是读文本。
     """
     user = _last_human(state)
-    waiting = [
+    all_waiting = [
         t for t in (state.get("tasks") or []) if t.get("stage") == "waiting_for_input"
     ]
+    # 🔴 **定向投递**（2026-11-05，`solution.md` §0.65 Y1 第二步）：
+    #    只投给**这条消息标明的那个任务**（`answer_to`，由**通道**填 ——
+    #    CLI 的答复提示符 / case YAML）。**没有标识 = 主 agent 的输入，一条都不投**。
+    #
+    #    ⚠️ 原来这里是**广播**（投给所有待答）：一句话只答了一个，其余全都要白跑一趟
+    #    （各 60–120 秒，实测 3.8% 的轮次会碰上）。**平台不猜"这句在答谁"** ——
+    #    那是语义判断（F7 的死因）；标识来自**通道**，不是读文本。
+    target = str(state.get("answer_to") or "").strip()
+    waiting = [t for t in all_waiting if t.get("id") == target] if target else []
     if not user or not waiting:
+        if target and not waiting:
+            trace.note(
+                f"⚠️ `answer_to={target}` 指的那条**不在待答**（已被取代 / 已完成 / 不存在）"
+                f" → 不投递（当前待答 {len(all_waiting)} 条）"
+            )
         return [], []
 
     out: list[dict] = []
-    logs = [f"prepare: 待答 {len(waiting)} 条 → 把用户这条消息**原话**投过去（不判断是不是回答）"]
+    logs = [f"prepare: 定向投递 → {target}（`answer_to` 指的那条；其余待答不动）"]
     for t in waiting:
         skill = registry.get(t["skill"])
         if skill is None:
@@ -226,7 +251,9 @@ def node_prepare(state: State) -> dict:
         merged[t["id"]] = t
     tasks = list(merged.values())
     if not tasks:
-        return {"log": logs} if logs else {}
+        # ⚠️ **`answer_to` 每条返回路径都要清**（它跟 checkpointer 活到下一轮，
+        #    不清的话后面每一轮都会被当成"在回答那条"）—— 见 `State.answer_to`。
+        return {**({"log": logs} if logs else {}), "answer_to": ""}
 
     # 台账怎么渲染在 `proto/handoff/ledger.py`（schema 与模板放一起）
     waiting = [t for t in tasks if t.get("stage") == "waiting_for_input"]
@@ -331,6 +358,31 @@ def node_finalize(state: State) -> dict:
             "tasks": [t["id"] for t in waiting], "chars": len(block),
         }],
     }
+
+
+# ──────────────────────────── 待答：一次摆一个 ────────────────────────────
+
+
+def next_pending(state: State, skill: str = "") -> dict | None:
+    """**当前该摆到用户面前的那一个待答**（`solution.md` §0.65 Y1）—— CLI 据此换提示符。
+
+    返回那条 Task（`None` = 没有待答）。`skill` 非空时只看那个技能的。
+
+    🔴 **"一次只摆一个"**（用户 2026-11-05 定）—— 不指定技能时摆的是**第一个**待答
+    （`tasks` 按派发顺序累积）。**CLI 摆哪条，用户答的就是哪条**：
+    把它当 `answer_to` 原样带回去（`graph.invoke(..., {"answer_to": t["id"]})`）。
+
+    ⚠️ `skill` 是给**跑批的 case** 用的：多个技能**并行**派发时，"第一个"取决于谁先回来
+    （不确定 ✗），而脚本写的答复是**针对某个技能**的 —— 所以 case 要能点名
+    （`answer_to: "@waiting:guided-learning"`）。**CLI 不点名**（用户看到哪条答哪条）。
+    ⚠️ **"取哪条"只许有这一处** —— 别在 CLI / 跑批里各写一套（"一套，别分叉"）。
+    ⚠️ 它**不判断**"用户这句是不是在回答它"（那是语义判断）—— 用户在**这个提示符下**
+    打的字，就属于它：**通道决定归属** ✓。
+    """
+    for t in state.get("tasks") or []:
+        if t.get("stage") == "waiting_for_input" and (not skill or t.get("skill") == skill):
+            return t
+    return None
 
 
 # ──────────────────────────── 装配 ────────────────────────────

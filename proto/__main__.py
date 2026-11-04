@@ -19,7 +19,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from proto import trace
 from proto.config import describe
-from proto.graph import build
+from proto.graph import build, next_pending
 from proto import artifacts as artifacts_mod
 
 BAR = "─" * 74
@@ -90,27 +90,33 @@ def main() -> None:
     print(f"日志：{trace.LOG_FILE}")
     print(BAR)
 
-    def turn(text: str) -> dict | None:
+    def turn(text: str, answer_to: str = "") -> dict | None:
         # 🔴 **炸一轮 ≠ 结束会话**（2026-11-04 复审 N2/R8）：一次基础设施抖动
         # （`stream_agent` 重试过仍失败）原来会把整个进程带走。现在按**轮**兜住，
         # 说清原因、返回 None，让调用方接着问下一句。
+        #
+        # `answer_to`：**这条消息是在回答哪个待答任务**（`solution.md` §0.65 Y1）——
+        # 由**通道**填（下面那个 `↩` 提示符），平台不猜。
+        init: dict = {"messages": [HumanMessage(text)], "log": []}
+        if answer_to:
+            init["answer_to"] = answer_to
         try:
-            result = graph.invoke({"messages": [HumanMessage(text)], "log": []}, config)
+            result = graph.invoke(init, config)
         except Exception as e:  # noqa: BLE001
             print(f"\n⚠️ **这一轮没跑成**（平台故障）：{type(e).__name__}: {e}")
             print("   会话还在 —— 把刚才那句**再说一遍**就行。\n")
             return None
         if args.say:
-            # 有待答就自动补一轮（模拟用户答复）
+            # 有待答就自动补一轮（模拟用户在 `↩` 提示符下答复）—— **带标识**投回去
             for _ in range(3):
-                waiting = [t for t in (result.get("tasks") or []) if t.get("stage") == "waiting_for_input"]
-                if not waiting:
+                p = next_pending(result)
+                if p is None:
                     break
-                print(f"\n❓ 执行器说：{waiting[0]['report']}")
+                print(f"\n❓【{p.get('skill')}】问：{p.get('asked') or p.get('report')}")
                 print(f"   自动答复：{args.answer}")
-                result = graph.invoke(
-                    {"messages": [HumanMessage(args.answer)], "log": []}, config
-                )
+                result = turn(args.answer, answer_to=p["id"])
+                if result is None:
+                    break
         return result
 
     if args.say:
@@ -145,6 +151,27 @@ def main() -> None:
         _print_new_messages(result, seen_msg)
         _dump(result)
         print(BAR)
+
+        # 🔴 **待答：一次摆一个**（`solution.md` §0.65 Y1）——
+        #    这个提示符**就是"通道"**：在它下面打的字**属于那一条请求**（带 `answer_to` 投回去）。
+        #    **直接回车 = 跳过** → 回到 `👤 `，在那里打的字只给主 agent（这条待答继续挂着）。
+        while (p := next_pending(result)) is not None:
+            q = p.get("asked") or p.get("report") or "（它没说清要什么）"
+            print(f"\n❓【{p.get('skill')}】问：{q}")
+            try:
+                ans = input("↩ 答它（回车跳过，回 👤 说别的）> ").strip()
+            except (EOFError, KeyboardInterrupt):
+                print()
+                break
+            if not ans:
+                break
+            result = turn(ans, answer_to=p["id"])
+            if result is None:
+                break
+            _print_delta(result, seen_log)
+            _print_new_messages(result, seen_msg)
+            _dump(result)
+            print(BAR)
 
     trace.close()
     print(f"完整日志：{trace.LOG_FILE}")

@@ -46,7 +46,7 @@ from evals.harness import (  # noqa: E402
 )
 from proto import artifacts as proto_artifacts  # noqa: E402
 from proto import trace  # noqa: E402
-from proto.graph import build  # noqa: E402
+from proto.graph import build, next_pending  # noqa: E402
 from proto import artifacts as artifacts_mod  # noqa: E402
 from proto.registry import registry  # noqa: E402
 
@@ -775,6 +775,38 @@ def main() -> None:
             seen_len = len(state.get("messages") or [])
             _turn_summary(snap, time.time() - t1)
             print()
+
+            # 🔴 **待答：一次摆一个**（`solution.md` §0.65 Y1）—— 这个提示符**就是"通道"**：
+            #    在它下面打的字**属于那一条请求**（带 `answer_to` 投回去，平台不猜"你在答谁"）；
+            #    **直接回车 = 跳过** → 回到 `👤`，在那里打的字**只给主 agent**（这条待答继续挂着）。
+            #    ⚠️ 摆哪一条由 `graph.next_pending` 定（**和投递认的是同一条规则**，一处定义）。
+            while (p := next_pending(state)) is not None:
+                icon, color = _STYLE["ask"]
+                q = p.get("asked") or p.get("report") or "（它没说清要什么）"
+                print(paint(f"{icon}【{p.get('skill')}】问：{q}", color))
+                try:
+                    ans = input(paint("↩ 答它（回车跳过，回 👤 说别的）┃ ", color)).strip()
+                except (EOFError, KeyboardInterrupt):
+                    print()
+                    break
+                if not ans:
+                    break
+                t2 = time.time()
+                try:
+                    state = graph.invoke(
+                        {"messages": [HumanMessage(ans)], "log": [], "answer_to": p["id"]},
+                        config,
+                    )
+                except Exception as e:  # noqa: BLE001 —— 同主循环：炸一轮 ≠ 结束会话
+                    print(f"\n⚠️ **这一轮没跑成**（平台故障）：{type(e).__name__}: {e}\n")
+                    break
+                snap = snapshot(state, ans, seen_len, len(turns) + 1, round(time.time() - t2, 1))
+                snap["input_source"] = "human"
+                snap["answer_to"] = p["id"]     # 记录层如实标：这句是在答哪一条
+                turns.append(snap)
+                seen_len = len(state.get("messages") or [])
+                _turn_summary(snap, time.time() - t2)
+                print()
     except Exception as e:  # noqa: BLE001
         import traceback
 

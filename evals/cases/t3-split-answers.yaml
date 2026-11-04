@@ -57,9 +57,11 @@ initial_tasks:
         text: 帮我写一份产品说明。产品：智学笔，一支能实时翻译的智能笔，面向学生和家长。
 
 turns:
-  # 用户**一次答一个** —— 每次答复都会被投给那个待答 Task（重入）
-  - "风格要简洁"
-  - "篇幅一页"
+  # 用户**一次答一个** —— 每次答复都**定向**投给那个待答 Task（重入）。
+  # ⚠️ 注入的 Task ID 是写死的（`t-injected`），所以这里直接点名 ——
+  #    比 `@waiting` 更稳（§0.65 Y1：标识由通道填，平台不猜"你在答谁"）
+  - {text: "风格要简洁", answer_to: "t-injected"}
+  - {text: "篇幅一页", answer_to: "t-injected"}
 checks:
   - check: task_stages
     stages: {product-brief: completed}

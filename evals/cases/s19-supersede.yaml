@@ -8,7 +8,8 @@ realism: 实测发生过
 tier: smoke
 turns:
   - "帮我出个随堂小测，人教版三年级数学《分数的初步认识》第一课时"
-  - "难度要基础的"
+  # 标了它是在回答第一个待答（§0.65 Y1：标识由通道填）
+  - {text: "难度要基础的", answer_to: "@waiting"}
 checks:
   - check: task_stages
     at: 1

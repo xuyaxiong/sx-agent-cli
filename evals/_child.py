@@ -52,7 +52,7 @@ def run_case(case: dict, rep: int, out_dir: Path | None = None) -> dict:
 
     inst = install(case)
 
-    from proto.graph import build
+    from proto.graph import build, next_pending
 
     graph = build()
     config = {"configurable": {"thread_id": f"{case['id']}-r{rep}"}}
@@ -62,10 +62,44 @@ def run_case(case: dict, rep: int, out_dir: Path | None = None) -> dict:
     error: str | None = None
     t0 = time.time()
 
+    prev_state: dict = {}
     try:
-        for i, user in enumerate(case["turns"], 1):
+        for i, raw in enumerate(case["turns"], 1):
             t1 = time.time()
+            # 一轮可以是**字符串**，也可以是 `{text, answer_to}` —— 后者表示
+            # **这一句是在回答某个待答任务**（`solution.md` §0.65 Y1：标识由**通道**填，
+            # 平台不猜"你在答谁"）。
+            #   · `answer_to: <任务ID>` —— 明确指哪一条（注入的 Task 用这个，ID 是写死的）
+            #   · `answer_to: "@waiting"` —— **上一个 state 里第一个待答任务**
+            #     （和 CLI 的 `↩` 提示符**同一条规则**：一次摆一个、摆的是第一个）
+            #   · `answer_to: "@waiting:<skill>"` —— 那个技能下第一个待答
+            #     （多技能**并行**派发时"第一个"不确定，脚本得点名是哪个技能在等）
+            if isinstance(raw, dict):
+                user, answer_to = str(raw.get("text") or ""), str(raw.get("answer_to") or "")
+            else:
+                user, answer_to = str(raw), ""
+            if answer_to.startswith("@waiting"):
+                _skill = answer_to.split(":", 1)[1].strip() if ":" in answer_to else ""
+                # ⚠️ **技能名写错 → 当场炸**（那是 case 写错了，静默下去这条 case 就悄悄变了）；
+                #    **任务在、只是没在等 → 只记日志**（"执行器会不会提问"是模型的自由选择，
+                #    条件性的等答复不算写错 —— 真没投到，case 自己的断言会说话）。
+                if _skill and not any(
+                    t.get("skill") == _skill for t in (prev_state.get("tasks") or [])
+                ):
+                    raise ValueError(
+                        f"{case['id']} 第 {i} 轮标了 `answer_to: {answer_to!r}`，"
+                        f"但上一轮结束时**根本没有「{_skill}」这个技能的任务**（case 写错了）"
+                    )
+                _p = next_pending(prev_state, _skill)
+                if _p is None:
+                    print(f"⚠️ {case['id']} 第 {i} 轮：`{answer_to}` 没有对应的待答"
+                          f"（这一轮**不投递**，当普通输入）")
+                    answer_to = ""
+                else:
+                    answer_to = _p["id"]
             init: dict = {"messages": [HumanMessage(user)], "log": []}
+            if answer_to:
+                init["answer_to"] = answer_to
             # 🔴 **平台造路**（2026-11-02）：case 可以往**第 1 轮**的初始 state 里注入 Task
             # （典型是 `stage: waiting_for_input` 的），于是"答复投递 / 重入"那条路径
             # **必然**被走到 —— 不用再指望"执行器先问一轮"。
@@ -77,8 +111,12 @@ def run_case(case: dict, rep: int, out_dir: Path | None = None) -> dict:
             if i == 1 and case.get("initial_tasks"):
                 init["tasks"] = case["initial_tasks"]
             state = graph.invoke(init, config)
-            turns.append(snapshot(state, user, seen, i, round(time.time() - t1, 1)))
+            snap = snapshot(state, user, seen, i, round(time.time() - t1, 1))
+            if answer_to:
+                snap["answer_to"] = answer_to   # 记录层如实标：这句是在答哪一条
+            turns.append(snap)
             seen = len(state.get("messages") or [])
+            prev_state = state
     except Exception as e:  # noqa: BLE001
         error = f"{type(e).__name__}: {e}\n\n{traceback.format_exc()}"
 
