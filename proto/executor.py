@@ -333,7 +333,12 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
                 f"已知信息 {len(briefing.strip())} 字（委派时给的）",
                 f"材料 {_material_note(outcome.artifacts)}｜"
                 f"判定看到 {material.count('【产出')} 段产出 + {len(outcome.artifacts)} 个产物"
-                f"（{len(material)} 字）",
+                # ⚠️ 总数**另起一句**（`｜材料共 N 字`），不挂在"N 个产物"后面 ——
+                #    原来写的是"…+ 1 个产物（4111 字）"，语法上那 4111 像是**产物的字数**，
+                #    而产物其实是 5487 字、判定看到 4000 字 —— 同一个东西三个数，
+                #    读的人只会觉得自相矛盾（2026-11-04 审核）。
+                #    ⚠️ 它**不是**产物正文的账（那个在 `✂️ 截断` 那行）：这里含标签行与截断标记。
+                f"｜材料共 {len(material)} 字",
             ],
             # ⚠️ **日志不截断**（`trace.render_message` 那条契约）：判定理由**只写日志**，
             # 它要是被切了，事后复盘误判就没得看了。

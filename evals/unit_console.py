@@ -246,16 +246,33 @@ def main() -> None:
         restore8()
 
     print("\n⑨ 切了一刀就得看得见 —— `cut` 事件进终端（交接三问②）")
+    # 🔴 口径（2026-11-04 审核）：`where` 要说清**切的是哪一份**（不是产物！），
+    #    `kept`/`total` 是**实测**字数（不是预算），`see` **原样**接在 `｜` 后面
+    #    （渲染层不再自己加"全文："—— 判定那一跳根本没有全文可指）。
+    cut_ev = {"type": "cut", "kind": "", "ts": "t",
+              "where": "判定看的材料（产物本身没动）", "kept": 4000, "total": 5487,
+              "see": "判定看不到中间 1487 字 —— 它没有读全文的手段（已知缺口）"}
     seen9, restore9 = _reset_emit(chat)
     try:
-        chat._on_event({"type": "cut", "kind": "", "ts": "t", "where": "判定输入·材料",
-                        "kept": 4000, "total": 5136, "see": "（判定没有工具循环）"})
+        chat._on_event(cut_ev)
     finally:
         restore9()
+    shown9 = seen9[0][1] if seen9 else ""
     check("`✂️ 截断` 进终端、且归机制层（plat）",
-          len(seen9) == 1 and seen9[0][0] == "plat" and seen9[0][1].startswith("✂️ 截断")
-          and "5136" in seen9[0][1],
+          len(seen9) == 1 and seen9[0][0] == "plat" and shown9.startswith("✂️ 截断"),
           repr(seen9))
+    check("说清「切的是判定看的那份、产物没动」", "产物本身没动" in shown9, repr(shown9[:80]))
+    check("`see` **原样**接上（不再自作主张加「全文：」）",
+          "｜判定看不到中间 1487 字" in shown9, repr(shown9[-60:]))
+    # 记录层同一行也要一样 —— 两处渲染器是两份代码，别只对一半
+    before9 = trace.LOG_FILE.stat().st_size
+    trace.cut(cut_ev["where"], cut_ev["kept"], cut_ev["total"], see=cut_ev["see"])
+    with io.open(trace.LOG_FILE, "rb") as f:
+        f.seek(before9)
+        line9 = f.read().decode("utf-8", "replace").strip()
+    check("记录层那行与展示层同口径（where / kept / total / see 都在）",
+          "产物本身没动" in line9 and "保留 4000 字 / 原文 5487 字" in line9
+          and line9.endswith(cut_ev["see"]), repr(line9[:100]))
 
     print("\n⑩ 角色只认 `role` 枚举 —— **措辞怎么改都不影响**（2026-11-03 e2e 暴露的残余耦合）")
     seen10, restore10 = _reset_emit(chat)

@@ -64,7 +64,7 @@ def brief(text: str, limit: int, what: str = "长文本") -> str:
     # 标记在**文本里**（读的人看得见），这一行在**日志里**（复盘的人看得见）—— 两者都要。
     from proto import trace
 
-    trace.cut(f"台账·{what}", limit, len(text), see="那次的回执（`delegate` 的返回）")
+    trace.cut(f"台账·{what}", limit, len(text), see="全文：那次的回执（`delegate` 的返回）")
     return f"{text[:limit]}……【平台截断：还有 {len(text) - limit} 字，全文见那次的回执】……"
 
 

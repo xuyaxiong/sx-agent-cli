@@ -282,7 +282,10 @@ def cut(where: str, kept: int, total: int, *, see: str = "") -> None:
     全文详情的方式方法。"* —— 标记在**文本里**（读的人看得见），
     这一行在**日志里**（复盘的人看得见），两者都要有。
 
-    `see` = 全文在哪（渐进式披露的出口）。
+    - `where`：**切的是哪一份**，要说人话（谁看到的东西被切了、原件动没动）。
+    - `kept` / `total`：**实测**字数（不是预算）—— 报意图不报事实，改天就静默不符。
+    - `see`：**补一句给读日志的人**（"全文在哪"／"为什么没有全文"）—— 原样接在 `｜` 后面，
+      所以措辞由调用点负责（要写"全文：…"就自己写）。
     """
     _publish({"type": "cut", "kind": "", "where": where, "kept": kept,
               "total": total, "see": see, "ts": stamp()})
@@ -525,7 +528,7 @@ def _recorder(ev: dict) -> None:
                        "text": ev["text"], "indent": "  ", "ts": ts})
     elif t == "cut":
         _write(f"[{ts}] ✂️ 截断 · {ev['where']}：保留 {ev['kept']} 字 / 原文 {ev['total']} 字"
-               + (f"｜全文：{ev['see']}" if ev.get("see") else ""))
+               + (f"｜{ev['see']}" if ev.get("see") else ""))
     elif t == "dump":
         messages = ev["messages"]
         _write(f"[{ts}] {ev['tag']} 消息轨迹（{len(messages)} 条）:")

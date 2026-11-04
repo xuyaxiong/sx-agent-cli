@@ -560,7 +560,7 @@ def _on_event(ev: dict) -> None:
     elif t == "cut":
         # 🔴 **切了一刀就得看得见**（交接三问②）：标记落在**块的头**，不必长在切口上。
         _emit("plat", f"✂️ 截断 · {ev['where']}：保留 {ev['kept']} 字 / 原文 {ev['total']} 字"
-                      + (f"｜全文：{ev['see']}" if ev.get("see") else ""),
+                      + (f"｜{ev['see']}" if ev.get("see") else ""),
               stamp=ev["ts"], cap=True)
     # `handoff` 与未打 kind 的 note / section：只进日志文件，不上屏（同旧契约）。
 
@@ -653,7 +653,6 @@ def main() -> None:
     graph = build()
     config = {"configurable": {"thread_id": args.thread}}
 
-    import proto.agent
     from proto.config import describe
 
     label = Path(args.skills).name or "skills"
