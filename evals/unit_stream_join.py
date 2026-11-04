@@ -141,6 +141,37 @@ def main() -> None:
         raised = True
     check("两次都失败 → **原样抛出**（降级由调用方决定，这里不吞）", raised)
 
+    print("\n⑤ 抖动发生在**吐过之后**：那半行必须留在日志里（不许静默丢）")
+    # 🔴 2026-11-04 深度审计 §P1-4 实测：`buf` 是**生成器局部变量**，异常时不 flush →
+    #    "被作废的那半行说了什么"在日志里**一个字都没有**，而 retry note 只说"那半段作废"。
+    #    判据②**切了必须标** —— 标了"作废"却看不到作废的是什么，等于没标。
+    #    ⚠️ ④ 只覆盖了"第一次**直接抛**"（还没动手）—— 那是最理想的抖动位置，测不到这条。
+
+    class _FlakyAfterText:
+        """第一次**吐了半行（无换行）**之后才抛；第二次正常吐。"""
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def stream(self, state, config, stream_mode=None):  # noqa: ARG002
+            self.calls += 1
+            yield "messages", (_chunk(f"这半行来自第{self.calls}次尝试", "m1"),
+                               {"langgraph_node": "model"})
+            if self.calls == 1:
+                raise TimeoutError("（模拟）吐到一半抖动")
+            yield "values", {"messages": []}
+
+    buf = io.StringIO()
+    old_fh, trace._fh = trace._fh, buf
+    try:
+        list(trace.stream_agent(_FlakyAfterText(), {}, {}, "测试", role=trace.AGENT))
+    finally:
+        trace._fh = old_fh
+    log = buf.getvalue()
+    check("第 1 次尝试那半行**在日志里**（不然读者不知道被作废的是什么）",
+          "这半行来自第1次尝试" in log, repr(log[-300:]))
+    check("第 2 次那半行也在（重试真的重跑了）", "这半行来自第2次尝试" in log, repr(log[-300:]))
+
     print("\n" + "═" * 78)
     print(f"{'全部通过' if not FAIL else '有失败'}：{len(PASS)}/{len(PASS) + len(FAIL)}")
     for name in FAIL:

@@ -418,7 +418,12 @@ def _stream_with_retry(graph, state, config, who: str, role: str):
       - 形状同 `llm.safe_structured`（重试一次 → 仍失败才退化）—— **先例在，别另立一套**。
 
     ⚠️ 重试是**整轮重跑**（`graph.stream` 从头来）：两条链的内层 agent 都**没有 checkpointer**
-      （`InMemorySaver` 在外层主图上），所以重跑 = 干净重来，不会把消息叠两遍。
+      （`InMemorySaver` 在外层主图上），所以 **state** 是干净重来，消息不会叠两遍。
+    🔴 **但副作用不干净**（2026-11-04 深度审计实测，**未修**）：重跑会把这一轮**已经做过的
+      工具调用再做一遍** —— `delegate` 重跑 = 执行器再跑 60–120 秒 ＋ **再写一份产物**；
+      模型在重试的 state 里**看不到自己刚派过**（`Command` 的 update 没提交），很可能再派一次。
+      **正解：只在"还没吐过任何 chunk"的窗口里重试**（吐过就按 fault 收场，`run_task` 已经
+      把 fault 兜住了）—— 见 `tmp/audit-2026-11-04.md` §P0-1。改之前别把这里读成"重试无代价"。
     ⚠️ 已经流出去的字**不收回**（记录层是原始记录）—— 所以重试前先发一条 `retry` 事件，
       把"上面那半段作废、现在重来"说破；不然读日志的人会以为模型把话说重了。
     """
@@ -445,41 +450,51 @@ def _stream_agent(graph, state, config, who: str, role: str):
             _publish({"type": "stream", "kind": "", "role": role, "who": who,
                       "text": line, "ts": stamp()})
 
-    for mode, payload in graph.stream(state, config, stream_mode=["values", "messages"]):
-        if mode == "messages":
-            chunk, meta = payload
-            # 🔴 **只发 agent 自己说的话**（`node='model'`）。
-            #
-            # `node='tools'` 是**工具内部的 LLM 调用** —— 实测就是判定 / 试答那几个
-            # **结构化输出**（它们跑在 `delegate` 里面，却被外层的 stream 捕获）。
-            # 流出来的是**裸 JSON**：既不可读（用户 2026-10-30：*"就打个 json 算啥"*），
-            # 又和**已经解开的展示重复**。所以这里跳过：它们的结论在
-            # `decision` 事件里已经是人话，这里再发一遍只是噪音。
-            if meta.get("langgraph_node") != "model":
-                continue
-            # 🔴 **换了消息就先把缓冲区落盘**（2026-11-02 实测踩到）。
-            #
-            # 模型调工具前会先说一句、工具跑完再接着说，**两段之间没有换行符** ——
-            # 攒在同一个 `buf` 里就被黏成一句。判据用 `chunk.id`：
-            # 同一条 AI 消息的流式 chunk 共享 id，换一次模型调用就换 id。
-            # ⚠️ 有些 provider 不给 id（`None`）—— 那时**保持原行为**，不要瞎猜边界。
-            cid = getattr(chunk, "id", None)
-            if cid and cur_id and cid != cur_id:
-                flush_line(buf)
-                buf = ""
-            if cid:
-                cur_id = cid
+    # 🔴 `try/finally` 是**必须的**（2026-11-04 深度审计 §P1-4 实测踩到）：
+    #    `buf` 是**生成器局部变量**，异常时原来**不 flush** —— 于是"这半行说了什么"
+    #    在日志里**一个字都没有**，而 `retry` note 只说"上面那半段作废"。
+    #    读日志的人看不到被作废的是什么，**等于记录层替模型说了假话**（判据②：切了必须标）。
+    #    ⚠️ 重试**不收回**已经发出去的 `stream` 事件（记录层是原始记录）——
+    #    所以那半行会留在日志里，紧跟着一条 `retry` note 说它作废。
+    try:
+        for mode, payload in graph.stream(state, config, stream_mode=["values", "messages"]):
+            if mode == "messages":
+                chunk, meta = payload
+                # 🔴 **只发 agent 自己说的话**（`node='model'`）。
+                #
+                # `node='tools'` 是**工具内部的 LLM 调用** —— 实测就是试答那个
+                # **结构化输出**（它跑在 `delegate` 里面，却被外层的 stream 捕获）。
+                # 流出来的是**裸 JSON**：既不可读（用户 2026-10-30：*"就打个 json 算啥"*），
+                # 又和**已经解开的展示重复**。所以这里跳过：它们的结论在
+                # `decision` 事件里已经是人话，这里再发一遍只是噪音。
+                if meta.get("langgraph_node") != "model":
+                    continue
+                # 🔴 **换了消息就先把缓冲区落盘**（2026-11-02 实测踩到）。
+                #
+                # 模型调工具前会先说一句、工具跑完再接着说，**两段之间没有换行符** ——
+                # 攒在同一个 `buf` 里就被黏成一句。判据用 `chunk.id`：
+                # 同一条 AI 消息的流式 chunk 共享 id，换一次模型调用就换 id。
+                # ⚠️ 有些 provider 不给 id（`None`）—— 那时**保持原行为**，不要瞎猜边界。
+                cid = getattr(chunk, "id", None)
+                if cid and cur_id and cid != cur_id:
+                    flush_line(buf)
+                    buf = ""
+                if cid:
+                    cur_id = cid
 
-            text = _chunk_text(chunk)
-            if not text:
+                text = _chunk_text(chunk)
+                if not text:
+                    continue
+                buf += text
+                while "\n" in buf:
+                    line, buf = buf.split("\n", 1)
+                    flush_line(line)
                 continue
-            buf += text
-            while "\n" in buf:
-                line, buf = buf.split("\n", 1)
-                flush_line(line)
-            continue
-        yield payload
-    flush_line(buf)  # 收尾：最后一行没有换行符
+            yield payload
+    finally:
+        # 收尾：最后一行没有换行符。**异常时也走这里**（见上面那条 try/finally 的理由）——
+        # 攒在 `buf` 里的那半行照发，读日志的人至少知道"它说到哪儿断的"。
+        flush_line(buf)
 
 
 def _chunk_text(chunk) -> str:
