@@ -382,7 +382,9 @@ def delegate(
     refs = [a for a in (artifacts or []) if a]
     unknown = [a for a in refs if not artifacts_mod.has(a)]
     if unknown:
-        have = "；".join(artifact_index_lines()) or "（本会话还没有产物）"
+        # ⚠️ 用**换行**拼，不用"；" —— 清单每项可能两行（梗概 ＋ 路径），
+        #    分号拼会把它们挤成一大坨（`body_lines` 那边会整块缩进，本来就是列表）。
+        have = "\n".join(artifact_index_lines()) or "（本会话还没有产物）"
         return _reject(
             runtime, "rejected_artifact",
             f"❌ 产物 {'、'.join(unknown)} 不存在", have,

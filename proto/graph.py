@@ -316,6 +316,10 @@ def node_finalize(state: State) -> dict:
     ⚠️ **产物路径不在这里贴** —— 那条信息顺着 `delegate` 的返回走
     （见 `agent.render_receipt` 的【产出的产物】）：路径是 `write_artifact` 的返回里就有的，
     平台把它**顺着原路带上去**就够了，不需要另起一套注入。
+    🔴 **但 `feed` 那条路没有回执**（`Task.run_by`）—— 所以投递重跑之后，主 agent 拿到
+    路径的**唯一入口**是 `list_artifacts`。2026-11-04 日志定位：那个入口当时**不给路径**，
+    于是它报给用户的是**自己编的** `art_001.md`（真实文件叫 `art_001_荷花-教案.md`）。
+    现在 `artifact_index_lines` 带路径（那一层是按需的，台账照旧只放 ID）。
     """
     waiting = [t for t in (state.get("tasks") or []) if t.get("stage") == "waiting_for_input"]
     if not waiting:

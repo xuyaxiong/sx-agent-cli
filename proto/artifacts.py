@@ -225,19 +225,32 @@ def read_artifact(artifact_id: str) -> str:
 
 
 def artifact_index_lines() -> list[str]:
-    """产物清单（渐进式披露第一层）：ID / 名称 / 字数 / **类型** / 梗概，**不含正文**。"""
+    """产物清单（渐进式披露第一层）：ID / 名称 / 字数 / **类型** / 梗概 / **落盘路径**，
+    **不含正文**。
+
+    🔴 **路径必须在这一层**（2026-11-04 日志定位）：主 agent 要答"文件在哪"，
+    而它在**投递重跑**（`feed`）那条路上**没有回执**（回执只属于 `delegate` 工具调用，
+    见 `briefing.Task.run_by`），台账的完成行又只有 ID。实测后果：主 agent 报给用户的
+    是**它自己编的** `art_001.md`（真实文件叫 `art_001_荷花-教案.md`）。
+
+    ⚠️ 放在**这一层**而不是台账：台账是每轮注入的索引，必须短；这里是**按需**的
+    （只有真调 `list_artifacts` 才付成本），和回执【产出的产物】是**同一个形状**
+    （ID ＋ 梗概一行，路径另起一行缩进 2 格）。
+    """
     return [
         f"- {aid}《{a['title']}》（{len(a['content'])} 字，{a.get('ext', '.md').lstrip('.')}）"
         f"—— {a.get('summary') or '（无梗概）'}"
+        + (f"\n  文件：{a['path']}" if a.get("path") else "")
         for aid, a in _ARTIFACTS.items()
     ]
 
 
 @tool
 def list_artifacts() -> str:
-    """列出本会话已交付的产物：ID、名称、字数、梗概。**不含正文。**
+    """列出本会话已交付的产物：ID、名称、字数、梗概、**落盘路径**。**不含正文。**
 
-    要判断"该把哪份产物交给下一个任务"时用它；正文按需用 `read_artifact` 读。
+    要判断"该把哪份产物交给下一个任务"、或**要答"文件在哪"**时用它；
+    正文按需用 `read_artifact` 读。
     """
     if not _ARTIFACTS:
         return "本会话还没有产物。"

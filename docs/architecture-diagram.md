@@ -249,7 +249,7 @@ ExecOutcome{status, artifacts, report, rounds, asked, fault}
 | ⑩ | **工具返回（回执）** | 平台 → 主 agent | `ToolMessage` | 见 §3.2.7 | **不截**（`render_receipt`） | 产物正文不进上下文，只给 ID＋路径＋梗概 |
 | ⑪ | **待答透传** | 平台 → 用户 | `AIMessage` | **它申报的那句原话**（`Task.asked` ＝ `ask_user` 的参数），**无条件**；缺 `asked` 时显式说清"没留下原话" | 不截 | — |
 | ⑫ | **答复投递** | 平台 → 执行器 | `HumanMessage`（新 run_task） | 见 §3.2.8 | **不截**（整份交接书重放） | 问答**成对**累积（`qa`），不覆盖 |
-| ⑬ | 产物路径 | 平台 → 主 agent | `ToolMessage` 附注 | `art_001 → <真实路径>` | 不截 | 并进 ⑩ 的同一条消息 |
+| ⑬ | 产物路径 | 平台 → 主 agent | ⑩ 的 `ToolMessage` 附注 ＋ `list_artifacts` | `art_001 → <真实路径>` | 不截 | **两条路**：`delegate` 那趟并进 ⑩ 同一条消息；**`feed` 那趟没有回执** → 走 `list_artifacts`（按需，台账保持短） |
 
 ### 3.2 逐跳展开
 

@@ -1226,6 +1226,11 @@ return {"messages": [AIMessage(content=block)], "log": [...]}   # ← 无条件
 > ⚠️ **产物路径不在这里贴** —— 那条信息顺着 `delegate` 的返回走（`agent.render_receipt` 的
 > 【产出的产物】）：
 > 路径是 `write_artifact` 的返回里就有的，平台把它**顺着原路带上去**就够了，不需要另起一套注入。
+>
+> 🔴 **但 `feed` 那条路没有回执**（`Task.run_by`）—— 所以投递重跑之后，主 agent 拿到路径的
+> **唯一入口**是 `list_artifacts`。2026-11-04 日志定位：那个入口当时**不给路径**，于是它报给
+> 用户的是**自己编的** `art_001.md`（真实文件叫 `art_001_荷花-教案.md`）。现在
+> `artifact_index_lines` 带路径（那一层是**按需**的，台账照旧只放 ID）。
 
 ### 4.6 其他模块
 
@@ -1303,7 +1308,7 @@ for mode, payload in graph.stream(state, config, stream_mode=["values", "message
 | 执行器产出 | 执行器 → 平台 | `🔙 RETURN` + `🚀 RUN`（产物 ID / 报告） |
 | **申报要信息** | 执行器 → 平台 | `ask_user` 的工具调用（参数里的原话） |
 | **试答** | 平台 → 主 agent | `🧭 DECIDE`（前提 / 问题 / 结果 / 下一步） |
-| 产物路径 | 平台 → 主 agent | `🔙 RETURN`（`文件：art_001 → <路径>`） |
+| 产物路径 | 平台 → 主 agent | `🔙 RETURN`（`文件：art_001 → <路径>`）＋ `list_artifacts`（**`feed` 那趟没有回执，只有这条路**） |
 | **待答透传** | 平台 → 用户 | `💬 ASK` |
 | 主 agent 回复 | → 用户 | 顶格（正文层） |
 
