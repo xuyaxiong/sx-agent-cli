@@ -367,6 +367,8 @@ _ROLE_BY_KIND: dict[str, str] = {
     "run_begin": "exec",        # run_task 开始（section）
     "run_end": "exec",          # run_task 结束
     "feed": "plat",             # 平台把用户原话投给待答任务（section）
+    "retry": "plat",            # 这一轮抖动、已重试一次（trace.stream_agent）
+    "run_fault": "exec",        # 重试过仍失败 → 这一轮没跑成（executor.run_task）
 }
 
 #: 有**专门渲染分支**的 kind（不走上表那条"摘要行"的路）。
@@ -697,6 +699,9 @@ def main() -> None:
         print(f"  {seed_note} —— 你也可以自己往 skills 文件夹里加。\n")
 
     turns: list[dict] = []
+    #: 哪几轮**没跑成**（平台故障）—— 单独记：`turns` 里只放跑成了的轮，
+    #: 而"这一轮炸过"这件事得进记录（不然 results.json 看着像一切正常）。
+    turn_errors: list[dict] = []
     seen_len = 0
     # 🔴 **展示层订阅事件总线**（2026-11-03 架构定）：`graph.invoke` 跑在主线程，
     # 业务代码每发一个事件，`_on_event` 就**同步**收到 —— 实时上屏，
@@ -736,7 +741,23 @@ def main() -> None:
             t1 = time.time()
             # `graph.invoke` 是**阻塞**的（一轮 2–3 分钟），但过程**不会**黑屏：
             # 业务代码发的事件同步到达 `_on_event`，实时上屏（事件订阅，非 tail 日志）。
-            state = graph.invoke({"messages": [HumanMessage(text)], "log": []}, config)
+            #
+            # 🔴 **炸一轮 ≠ 结束会话**（2026-11-04 复审 N2/R8）：原来整个 `while` 只有外面
+            # 那一层 `except` —— 一次基础设施抖动（重试过仍失败）就把**整场会话**结束掉，
+            # 用户白等一场、还得重新起进程。现在按**轮**兜：这一轮没跑成，说清原因，
+            # 提示符接着来 —— 把刚才那句再说一遍就行。
+            try:
+                state = graph.invoke({"messages": [HumanMessage(text)], "log": []}, config)
+            except Exception as e:  # noqa: BLE001
+                import traceback
+
+                turn_errors.append({
+                    "turn": len(turns) + 1, "input": text,
+                    "error": f"{type(e).__name__}: {e}\n\n{traceback.format_exc()}",
+                })
+                print(f"\n⚠️ **这一轮没跑成**（平台故障）：{type(e).__name__}: {e}")
+                print("   会话还在 —— 把刚才那句**再说一遍**就行。\n")
+                continue
             snap = snapshot(state, text, seen_len, len(turns) + 1, round(time.time() - t1, 1))
             snap["input_source"] = "human"  # 这句是用户当场打的，不是脚本预置
             turns.append(snap)
@@ -754,6 +775,7 @@ def main() -> None:
         "rep": 1,
         "turns": turns,
         "turns_done": len(turns),
+        "turn_errors": turn_errors,
         "usage": inst["counter"].snapshot(),
         "artifact_writes": inst["writes"],
         "run_tasks": inst["run_tasks"],

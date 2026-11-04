@@ -181,6 +181,10 @@ KINDS = frozenset({
     "feed", "relay",
     # llm.safe_structured（`llm_io` = 那次调用的 PROMPT / RESPONSE / 失败提示）
     "ask_main", "judge", "llm_io",
+    # trace.stream_agent（`retry` = 这一轮抖动、已重试一次）
+    "retry",
+    # executor.run_task（`run_fault` = 重试过仍失败，这一轮没跑成）
+    "run_fault",
 })
 
 
@@ -396,7 +400,38 @@ def stream_agent(graph, state, config, who: str, *, role: str):
     `who` 只是显示名（`执行器·lesson-prep`），**随便改，不影响任何逻辑**。
     """
     # 🔴 校验在**生成器外面**：漏传 / 传错立刻炸，而不是等第一次 next()。
-    return _stream_agent(graph, state, config, who, _check_role(role, "stream_agent"))
+    return _stream_with_retry(graph, state, config, who, _check_role(role, "stream_agent"))
+
+
+def _stream_with_retry(graph, state, config, who: str, role: str):
+    """跑 `_stream_agent`；**基础设施抖动就重试一次**，两次都失败才抛。
+
+    🔴 **为什么兜在这一层**（2026-11-04 复审 N2/R8）：
+      - 这是**两条链唯一共用的缝** —— 主 agent 的循环、执行器的循环都从这过。
+        放这儿，两边一起有兜底，不会"改了一条忘了另一条"（那正是 R8 的形状：
+        `executor.py` / `agent.py` 全文一个 try/except 都没有）。
+      - **降级不在这里**：两条链该怎么退化不一样（执行器 → 落"这轮没跑成"交主 agent 决定；
+        主 agent → 让**会话不死**，用户再说一遍就行）。这里只做最保守的一步：
+        重试一次，然后把异常**原样抛给调用方**。
+      - 形状同 `llm.safe_structured`（重试一次 → 仍失败才退化）—— **先例在，别另立一套**。
+
+    ⚠️ 重试是**整轮重跑**（`graph.stream` 从头来）：两条链的内层 agent 都**没有 checkpointer**
+      （`InMemorySaver` 在外层主图上），所以重跑 = 干净重来，不会把消息叠两遍。
+    ⚠️ 已经流出去的字**不收回**（记录层是原始记录）—— 所以重试前先发一条 `retry` 事件，
+      把"上面那半段作废、现在重来"说破；不然读日志的人会以为模型把话说重了。
+    """
+    for attempt in (1, 2):
+        try:
+            yield from _stream_agent(graph, state, config, who, role)
+            return
+        except Exception as e:  # noqa: BLE001 —— 抖动的种类不可穷举（网络/超时/限流/网关）
+            if attempt == 2:
+                raise
+            _publish({
+                "type": "note", "kind": "retry", "ts": stamp(),
+                "text": f"⚠️ {who} 这一轮**基础设施抖动**（{type(e).__name__}: {e}）"
+                        "—— 已重试一次（上面流出去的那半段作废）",
+            })
 
 
 def _stream_agent(graph, state, config, who: str, role: str):

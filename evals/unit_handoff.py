@@ -220,6 +220,40 @@ def main() -> None:
           _injected_label(tag))
     check("⑪ 透传 · 没标记的消息**不**被误标", _injected_label(None) == "")
 
+    # ── ⑭ 平台故障那条链：`run_task` **兜住**（不是炸整轮）→ 回执说清「原样再派」──
+    # 🔴 2026-11-04 复审 N2/R8：`stream_agent` 重试过仍失败 → 原来异常一路穿出去炸整轮
+    #    （用户白等 3 分钟 + 一屏栈）。现在 `run_task` 接住、记成 `fault`，交回主 agent 决定。
+    # ⚠️ 打桩 `get_model` / `create_agent` / `stream_agent` —— **不碰真模型、不联网、秒级**。
+    print("\n⑭ 平台故障：`run_task` 兜住（不是炸整轮），回执说清「原样再派」")
+    import proto.executor as _ex
+    from proto import trace
+    from proto.handoff.receipt import build_receipt as _build
+
+    _get_model, _create_agent, _stream = _ex.get_model, _ex.create_agent, trace.stream_agent
+    _ex.get_model = lambda temperature=0.0: object()  # type: ignore[assignment]
+    _ex.create_agent = lambda *a, **k: object()  # type: ignore[assignment]
+
+    def _boom(*a, **k):  # noqa: ANN002, ANN003, ANN202
+        raise TimeoutError("（模拟）sandbox grammar compile timed out")
+
+    trace.stream_agent = _boom  # type: ignore[assignment]
+    try:
+        from proto.skills import Skill as _Skill
+
+        out = _ex.run_task(_Skill(name="quiz", description="随堂小测", instructions="出 3 道题"),
+                           "给三年级出 3 道随堂小测")
+    finally:
+        _ex.get_model, _ex.create_agent = _get_model, _create_agent  # type: ignore[assignment]
+        trace.stream_agent = _stream  # type: ignore[assignment]
+
+    check("异常**没有穿出去**（run_task 正常返回了结果）", out is not None)
+    check("`status` 仍是三态里的 `incomplete`（**三态封闭，没有第四种**）",
+          out.status == "incomplete", out.status)
+    check("`fault` 记下了原因（复盘要看）", "TimeoutError" in out.fault, repr(out.fault))
+    check("**没有编造 `report`**（它一个字都没说）", out.report == "", repr(out.report))
+    check("回执的出口分类是 `fault`（不借 failed 的文案）",
+          _build(out, note="（示例）")["kind"] == "fault")
+
     # ── ⑬ 状态词汇**只有一份**（N4：三态 ↔ 映射键、五态 ↔ STAGE_MARK 键，必须刚好对上）──
     # 🔴 2026-11-04 复审 N4：同一套状态原来在四处各写一遍字符串 —— `settle()` 收敛了**写法**，
     # **词汇**还靠人守同名：改一处状态名，其余三处**静默分叉**。

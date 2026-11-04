@@ -40,7 +40,6 @@ from proto.handoff import (
     BODY,
     DELIVERY,
     HOPS,
-    SECTION,
     body_lines,
     section_head,
 )
@@ -69,9 +68,14 @@ def build_receipt(outcome: Any, *, agent_answer: str = "", note: str = "") -> Re
     """执行器的结果 ＋ 处置提示 → **回执对象**。**注入上下文之前**，一切都在对象上。
 
     ⚠️ 各段是**有条件**的（有产物才出【产出的产物】、试答过才出【你补的信息】）——
-    条件写在这里，`HOPS['receipt']` 声明的 7 段是**上限**。
+    条件写在这里，`HOPS['receipt']` 声明的 8 段是**上限**。
     """
-    if outcome.status == "completed":
+    # 🔴 **平台故障**先判（2026-11-04 复审 N2/R8）：这一轮**根本没跑成**，
+    #    与"执行器干不了"（failed）是两回事 —— 出口分类、交付行、下一步**全都不同**，
+    #    所以它自己是一个 `kind`，不借 failed 的文案（"推了 N 轮"对故障是假话）。
+    if outcome.fault:
+        kind = "fault"
+    elif outcome.status == "completed":
         kind = "completed" if outcome.artifacts else "completed_in_reply"
     elif outcome.status == "waiting_for_input":
         kind = "waiting"
@@ -81,7 +85,9 @@ def build_receipt(outcome: Any, *, agent_answer: str = "", note: str = "") -> Re
     sections: dict[str, str] = {}
 
     # ① 交付结果：一行说清成没成、交付了几样
-    if kind == "completed":
+    if kind == "fault":
+        sections["deliver"] = DELIVERY["fault"]
+    elif kind == "completed":
         sections["deliver"] = DELIVERY["completed"].format(len(outcome.artifacts))
     elif kind == "completed_in_reply":
         sections["deliver"] = DELIVERY["completed_in_reply"]
@@ -143,6 +149,17 @@ def build_receipt(outcome: Any, *, agent_answer: str = "", note: str = "") -> Re
     # ⑥ 下一步：处置提示（各出口不同）
     if note:
         sections["next"] = note
+
+    # ⑦ 平台故障：**说清是谁的锅 + 该怎么办**（2026-11-04 复审 N2/R8）
+    #    ⚠️ 单起一段，不塞进【执行器说】—— 那句话的来源标注是"**它说的**"，
+    #    而这段是**平台说的**（这套代码一直在治"来源标注不能串"）。
+    if outcome.fault:
+        sections["fault"] = (
+            f"这一轮**根本没跑成**：{outcome.fault}\n"
+            "平台侧的基础设施抖动，**重试过一次仍然失败** —— 不是任务本身的问题，"
+            "也不是执行器没干成。\n"
+            "**原样再 `delegate` 一次**即可（不用改措辞、不用改参数、不用问用户）。"
+        )
 
     return {"kind": kind, "sections": sections}
 

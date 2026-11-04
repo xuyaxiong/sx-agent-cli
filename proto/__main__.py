@@ -90,8 +90,16 @@ def main() -> None:
     print(f"日志：{trace.LOG_FILE}")
     print(BAR)
 
-    def turn(text: str) -> dict:
-        result = graph.invoke({"messages": [HumanMessage(text)], "log": []}, config)
+    def turn(text: str) -> dict | None:
+        # 🔴 **炸一轮 ≠ 结束会话**（2026-11-04 复审 N2/R8）：一次基础设施抖动
+        # （`stream_agent` 重试过仍失败）原来会把整个进程带走。现在按**轮**兜住，
+        # 说清原因、返回 None，让调用方接着问下一句。
+        try:
+            result = graph.invoke({"messages": [HumanMessage(text)], "log": []}, config)
+        except Exception as e:  # noqa: BLE001
+            print(f"\n⚠️ **这一轮没跑成**（平台故障）：{type(e).__name__}: {e}")
+            print("   会话还在 —— 把刚才那句**再说一遍**就行。\n")
+            return None
         if args.say:
             # 有待答就自动补一轮（模拟用户答复）
             for _ in range(3):
@@ -108,6 +116,9 @@ def main() -> None:
     if args.say:
         print(f"\n👤 {args.say}")
         result = turn(args.say)
+        if result is None:
+            trace.close()
+            return
         _print_delta(result, seen_log)
         _print_new_messages(result, seen_msg)
         _dump(result)
@@ -128,6 +139,8 @@ def main() -> None:
         if not text:
             break
         result = turn(text)
+        if result is None:
+            continue          # 这一轮没跑成 → 接着问下一句（会话不死）
         _print_delta(result, seen_log)
         _print_new_messages(result, seen_msg)
         _dump(result)

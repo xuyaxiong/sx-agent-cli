@@ -61,6 +61,9 @@ SECTION: dict[str, str] = {
     "missing": "【还缺】",
     "agent_answer": "【你补的信息】",
     "next": "【下一步】",
+    #: 平台故障（`receipt.py`）：这一轮**根本没跑成** —— 与"执行器没干成"是两回事，
+    #: 所以**单起一段**，不塞进【执行器说】（那句话的来源标注是"它说的"）。
+    "fault": "【平台故障】",
     # ── 派发被拒（平台 → 主 agent，**不建 Task**）──
     "not_dispatched": "【这次没有派发】",
     "available_skills": "【可用的能力】",
@@ -86,6 +89,7 @@ SOURCE_NOTE: dict[str, str] = {
     "progress": "**判定说**",
     "missing": "**判定说**",
     "agent_answer": "**你说的** —— 已成对记进 Task，下次重入还会带上",
+    "fault": "**平台说的** —— 不是执行器说的，也不是判定说的",
 }
 
 #: 来源那一行的前缀 —— `来源：` 后面接 `SOURCE_NOTE[key]`。
@@ -201,6 +205,9 @@ DELIVERY: dict[str, str] = {
     "completed_in_reply": "✅ 已完成 —— 成果在执行器的回复里（**没有产物**）",
     "waiting": "⏳ 没完成 —— **它在请求信息**",
     "failed": "❌ 失败 —— 推了 {} 轮，仍然既没完成、也没说明需要什么信息",
+    #: ⚠️ **单独一条**：故障时那句"推了 N 轮"是**假话**（一轮都没跑完），
+    #: 而且主 agent 该做的事完全不同（原样重派 vs 换说法重派）。
+    "fault": "⚠️ 没跑成 —— **平台故障**（重试过一次仍失败）",
 }
 
 #: ~~`delivery_key(head)`~~ —— **2026-11-03 删**。它按 `DELIVERY` 的固定前缀
@@ -225,6 +232,7 @@ HOPS: dict[str, tuple[str, ...]] = {
     ),
     "receipt": (
         "deliver", "produced", "report", "progress", "missing", "agent_answer", "next",
+        "fault",   # 只在平台故障时出现（条件段，同 produced/agent_answer）
     ),
     "receipt_rejected": (
         "not_dispatched", "available_skills", "available_artifacts",

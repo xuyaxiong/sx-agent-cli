@@ -296,11 +296,51 @@ def install(case: dict) -> dict:
 
         proto.llm.get_model = flaky  # 只影响 safe_structured，主模型调用不受影响
 
+    # ⑤′ **流式抖动注入**（`fault.stream: N`，可选 `fault.role` 限定哪条链）——
+    #     让 `stream_agent` 前 N 次调用**直接抛**。
+    #
+    # 🔴 **它替换的是整个 `stream_agent`（连同内部那次重试）**，所以：
+    #      - **一次调用 = 一轮**（`_stream_with_retry` 被绕过了，不会有第二次尝试）；
+    #      - `fault.stream: 1` → 第 1 轮（谁先跑就是谁）直接死 → 测**降级**；
+    #      - `fault.stream: 2` + `role: executor` → 执行器两次调用都死。
+    #    ⚠️ **想测"重试一次救回来"不能用它** —— 那必须让**同一个** `stream_agent` 调用
+    #    内部失败一次再成功：单测里用假图做（`unit_stream_join` ④），真跑里把注入点
+    #    放在**图的 `stream()`** 上（`experiments/` 里那个跑法）。
+    #
+    # ⚠️ `role` 用**枚举**（`trace.AGENT` / `trace.EXECUTOR`）过滤，**不按 `who` 的措辞**：
+    #    `who` 是显示名（"执行器·lesson-prep"），拿它做判据正是这套代码一直在治的病。
+    stream_fault_state = {"left": 0, "fired": 0}
+    _fault_cfg = case.get("fault") or {}
+    n_stream_fault = int(_fault_cfg.get("stream", 0))
+    if n_stream_fault:
+        stream_fault_state["left"] = n_stream_fault
+        only_role = str(_fault_cfg.get("role") or "")
+        if only_role and only_role not in proto.trace.ROLES:
+            raise ValueError(
+                f"case.fault.role 只能是 {sorted(proto.trace.ROLES)} 之一，收到 {only_role!r}"
+                "（它是**角色枚举**，不是显示名 —— 见 `trace.AGENT` / `trace.EXECUTOR`）"
+            )
+        orig_stream = proto.trace.stream_agent
+
+        def flaky_stream(*a, **k):  # noqa: ANN002, ANN003, ANN202
+            role = k.get("role")
+            if role is None and len(a) > 4:  # 位置传参也认
+                role = a[4]
+            if (stream_fault_state["left"] > 0) and (not only_role or role == only_role):
+                stream_fault_state["left"] -= 1
+                stream_fault_state["fired"] += 1
+                raise TimeoutError("（注入）流式调用抖动")
+
+            return orig_stream(*a, **k)
+
+        proto.trace.stream_agent = flaky_stream
+
     return {
         "counter": counter,
         "writes": writes,
         "run_tasks": run_tasks,
         "fault": fault_state,
+        "stream_fault": stream_fault_state,
     }
 
 

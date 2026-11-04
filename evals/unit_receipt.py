@@ -83,6 +83,10 @@ def main() -> None:
     completed = _outcome("completed")
     waiting = _outcome("waiting_for_input")
     failed = _outcome("incomplete")
+    #: 平台故障那一档（2026-11-04 复审 N2/R8）—— 也是**一个可达出口**，
+    #: 所以「声明的段都用到了」那条守卫要把它算进来（否则 `fault` 看着像死段）。
+    faulted = ExecOutcome(status="incomplete", artifacts=[], report="", rounds=1,
+                          progress="", missing=[], fault="TimeoutError: 抖动")
 
     print("① 三态各有自己的回执，且**每个字段都渲染了**")
     for label, out in (("completed", completed), ("waiting_for_input", waiting), ("incomplete", failed)):
@@ -174,7 +178,7 @@ def main() -> None:
 
     # ② 段名 ⊆ `HOPS` 声明（**加了段忘了登记 → 这里红**）
     all_used: set[str] = set()
-    for out in (completed, waiting, failed):
+    for out in (completed, waiting, failed, faulted):
         all_used |= set(build_receipt(out, agent_answer="补一句", note="（示例）下一步")["sections"])
     declared = set(HOPS["receipt"])
     check("对象里的段都在 `HOPS['receipt']` 里声明过", all_used <= declared,
@@ -227,6 +231,21 @@ def main() -> None:
     d = _convert_message_to_dict(real["rejected_skill"].update["messages"][0])
     check("发给模型的 dict 里**没有** handoff 对象", "handoff" not in str(d), str(d))
 
+
+    print("\n⑨ 平台故障：**独立出口**（不借 failed 的文案、不塞进【执行器说】）")
+    # 🔴 2026-11-04 复审 N2/R8：故障时"推了 N 轮"是**假话**（一轮都没跑完），
+    #    而且主 agent 该做的事完全不同（**原样**重派 vs 换说法重派）。
+    r = build_receipt(faulted, note="这次是**平台故障**，原样再 delegate 一次即可")
+    t = render_receipt(r)
+    check("出口分类是 `fault`（不是 `failed`）", r["kind"] == "fault", repr(r["kind"]))
+    check("交付行说的是**没跑成**，不是「推了 N 轮」",
+          "平台故障" in t and "推了" not in t, repr(t.splitlines()[:3]))
+    check("【平台故障】段在，且**说清是谁的锅**",
+          "【平台故障】" in t and "基础设施抖动" in t and "不是任务本身的问题" in t)
+    check("**给了明确的下一步**：原样重派（不是「换个说法」）",
+          "原样再 `delegate` 一次" in t and "换个说法" not in t)
+    check("故障原因原样带出来（复盘要看）", "TimeoutError: 抖动" in t)
+    check("**没有**冒出一个【执行器说】（它一个字都没说）", "【执行器说】" not in t)
 
     print("\n" + "═" * 78)
     print(f"{'全部通过' if not FAIL else '有失败'}：{len(PASS)}/{len(PASS) + len(FAIL)}")

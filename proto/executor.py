@@ -26,7 +26,6 @@ from dataclasses import dataclass, field
 from langchain.agents import create_agent
 from langchain.tools import tool
 from langchain_core.messages import AIMessage, HumanMessage
-from pydantic import BaseModel, Field
 
 from proto import trace
 from proto.config import get_model
@@ -41,7 +40,6 @@ from proto.llm import safe_structured
 from proto import artifacts as artifacts_mod  # 产物领域（唯一入口是它的读 API）
 from proto.artifacts import (
     read_artifact,
-    store_artifact,
     make_write_artifact,
 )
 from proto.skill_pack import read_skill_file, skill_file_index_lines  # 技能包文件（磁盘）
@@ -106,6 +104,15 @@ class ExecOutcome:
     progress: str = ""
     #: 判定给出的：**还缺什么**（incomplete 时有）
     missing: list[str] = field(default_factory=list)
+    #: 🔴 **平台故障**（非空 = 这一轮**根本没跑成**，不是执行器干不了）。
+    #:
+    #: 2026-11-04 复审 N2/R8：`stream_agent` 抖两次之后抛到这里，`run_task` 把它接住、
+    #: 记成这个字段，而不是让异常穿出去炸掉整轮（用户白等 3 分钟 + 一屏栈）。
+    #: ⚠️ **不能塞进 `report`**：回执里【执行器说】的来源标注是"**它说的**"，
+    #: 而这句话是**平台说的** —— 塞进去正好污染"来源标注不能串"这条规矩。
+    #: ⚠️ 与 `status` 的关系：故障时 `status` 仍是 `incomplete`（三态是封闭的，没有第四种），
+    #: **主 agent 该怎么做**由这个字段决定 —— 见回执的【平台故障】段。
+    fault: str = ""
 
 
 def _judge(skill: Skill, arts: list[str], material: str, briefing: str = "") -> _Judgement:
@@ -170,7 +177,7 @@ def _material_note(arts: list[str]) -> str:
     )
 
 
-def _judge_next(status: str, outcome: Any, round_i: int) -> str:
+def _judge_next(status: str, outcome: ExecOutcome, round_i: int) -> str:
     """判定结果 → **平台接下来实际走哪条路**。
 
     ⚠️ 这三条就是 `run_task` 出口那段**三态枚举**的穷举，措辞跟着代码走 ——
@@ -304,9 +311,24 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
         # ⚠️ `who` 带上技能名：多个执行器**并行**时，流式行会交错，得能分辨是谁。
         # `role` 是**逻辑**（展示层按它归版式），`who` 只是给人看的名字 —— 两者别混。
         resp = {}
-        for chunk in trace.stream_agent(agent, {"messages": messages}, None,
-                                        f"执行器·{skill.name}", role=trace.EXECUTOR):
-            resp = chunk
+        try:
+            for chunk in trace.stream_agent(agent, {"messages": messages}, None,
+                                            f"执行器·{skill.name}", role=trace.EXECUTOR):
+                resp = chunk
+        except Exception as e:  # noqa: BLE001
+            # 🔴 **基础设施抖动不该炸整轮**（2026-11-04 复审 N2/R8；兑现 `docs/solution.md`
+            #    §0.6 的 **N2** 承诺 —— 它原来只在 `safe_structured` 那条路上成立）。
+            # `stream_agent` 内部已经重试过一次，**两次都失败才走到这** —— 那就认了：
+            # 这一轮记成"**平台故障**"（不是执行器干不了），把决定权交回主 agent。
+            # ⚠️ 不在这里重跑：`run_task` 一轮就是 60–120 秒，再重跑是拿用户的时间赌。
+            outcome.fault = f"{type(e).__name__}: {e}"
+            outcome.rounds = round_i + 1
+            trace.note(
+                f"⚠️ run_task 第 {round_i + 1} 轮**平台故障**（已重试过一次仍失败）："
+                f"{type(e).__name__}: {e} —— 这一轮没跑成，交回主 agent",
+                kind="run_fault",
+            )
+            break
         trace.dump_trace(f"run_task 第 {round_i + 1} 轮", resp["messages"],
                          role=trace.EXECUTOR)
 

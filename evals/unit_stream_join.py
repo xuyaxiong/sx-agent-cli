@@ -100,6 +100,47 @@ def main() -> None:
     check("没有 id 就不切（照旧攒成一行）",
           len(lines) == 1 and "前半句后半句" in lines[0], repr(lines))
 
+    print("\n④ 基础设施抖动：**重试一次**；两次都失败才抛（2026-11-04 复审 N2/R8）")
+    # 🔴 这是**两条链唯一共用的缝**（主 agent 的循环 / 执行器的循环都从这过），
+    #    所以兜底兜在这里 —— 测的也是这一层：第一次抛、第二次成，整轮要照常跑完。
+    class _FlakyGraph:
+        """第一次 `stream` 直接抛（模拟抖动），第二次正常吐。"""
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def stream(self, state, config, stream_mode=None):  # noqa: ARG002
+            self.calls += 1
+            if self.calls == 1:
+                raise TimeoutError("（模拟）sandbox grammar compile timed out")
+            yield "messages", (_chunk("重试之后说的话\n", "m1"), {"langgraph_node": "model"})
+            yield "values", {"messages": []}
+
+    buf = io.StringIO()
+    old_fh, trace._fh = trace._fh, buf
+    g = _FlakyGraph()
+    try:
+        got = list(trace.stream_agent(g, {}, {}, "测试", role=trace.AGENT))
+    finally:
+        trace._fh = old_fh
+    log = buf.getvalue()
+    check("抖动一次后**重试成功**（整轮照常返回）", bool(got) and g.calls == 2, f"calls={g.calls}")
+    check("重试后的话照常流出去", "重试之后说的话" in log, repr(log[-200:]))
+    check("**说破了**：日志里有一行「重试一次」（不然读的人以为模型把话说重了）",
+          "重试一次" in log and "基础设施抖动" in log, repr(log[-300:]))
+
+    class _AlwaysFlaky:
+        def stream(self, state, config, stream_mode=None):  # noqa: ARG002
+            raise TimeoutError("（模拟）一直抖动")
+            yield  # pragma: no cover —— 让它是生成器
+
+    raised = False
+    try:
+        list(trace.stream_agent(_AlwaysFlaky(), {}, {}, "测试", role=trace.AGENT))
+    except TimeoutError:
+        raised = True
+    check("两次都失败 → **原样抛出**（降级由调用方决定，这里不吞）", raised)
+
     print("\n" + "═" * 78)
     print(f"{'全部通过' if not FAIL else '有失败'}：{len(PASS)}/{len(PASS) + len(FAIL)}")
     for name in FAIL:

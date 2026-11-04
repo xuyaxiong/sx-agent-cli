@@ -462,6 +462,16 @@ def delegate(
     #    按评审人 E2「情况 A：执行失败」→ **交给主 agent 决定**，而不是拿去烦用户。
     #    ⚠️ 附注必须带上 —— 主 agent 要知道"做到什么程度、还缺什么"才能决定下一步。
     settle(rec, outcome)
+    # 🔴 **平台故障 ≠ 执行器干不了**（2026-11-04 复审 N2/R8）：故障时那句"推了 N 轮"
+    #    是假话（一轮都没跑完），而主 agent 该做的事也完全不同 —— 换说法重派 vs **原样重派**。
+    if outcome.fault:
+        trace.note(f"delegate · {tid} **平台故障**（重试过仍失败）→ 没跑成",
+                   kind="delegate_failed")
+        return _out(
+            rec, outcome,
+            note="这次是**平台故障**，**不是任务本身的问题** —— 原样再 `delegate` 一次即可"
+                 "（不用改措辞、不用改参数、不用问用户）。",
+        )
     trace.note(f"delegate · {tid} status=incomplete（推了 {outcome.rounds} 轮）→ failed",
                kind="delegate_failed")
     return _out(
