@@ -425,18 +425,21 @@ def check_artifact_write_no_collision(run: dict, turn: dict) -> Result:
 
     `store_artifact` 用 `len(ARTIFACTS)+1` 生成 ID —— 主 agent 并行发多个 `delegate` 时
     ToolNode 是并发执行工具调用的，两个执行器同时算 `len+1` 会拿到**同一个 ID**，
-    后者覆盖前者。写入次数 > 产物个数，就是撞了。
+    后者覆盖前者。**同一个 ID 被写了两次，就是撞了。**
     """
     w = run.get("artifact_writes") or []
     ids = run.get("artifact_ids") or []
-    dup = len(w) - len(ids)
-    if dup <= 0:
-        return True, f"{len(w)} 次写入 / {len(ids)} 个产物，无覆盖"
     by_id: dict[str, list] = {}
     for x in w:
         by_id.setdefault(x["aid"], []).append(x)
     clash = {k: [x["title"] for x in v] for k, v in by_id.items() if len(v) > 1}
-    return False, f"⚠️ {dup} 次写入被覆盖：{clash}"
+    # ⚠️ **2026-11-05 修（深度审计 §4.2）**：原来先算 `dup = 写入次数 - 产物数`，
+    #    `dup <= 0` 就返回"无覆盖" —— 撞了之后**又写了新产物**时，两个差值正好被抹平
+    #    → **漏报**。而按 ID 分组的检查**就在下面几行**，被那个短路跳过了。
+    #    判据只能是"同一个 ID 写了两次"，不是两个计数相减。
+    if clash:
+        return False, f"⚠️ 同一个 ID 被写了多次（后写的覆盖了先写的）：{clash}"
+    return True, f"{len(w)} 次写入 / {len(ids)} 个产物，无重号"
 
 
 @_reg
@@ -531,11 +534,12 @@ def check_no_duplicate_completed(run: dict, turn: dict, skills: list[str] | None
     return not bad, "；".join(bad) if bad else f"每个技能最多一个 completed（{len(skills)} 个技能）"
 
 
-@_reg
-def check_supersede_worked(run: dict, turn: dict, skill: str) -> Result:
-    """重新委派同一技能后，旧的待答必须被取代、且不能还挂着等答复（S19）。"""
-    ts = _by_skill(turn, skill)
-    n_sup = sum(1 for t in ts if t["stage"] == "superseded")
-    n_wait = sum(1 for t in ts if t["stage"] == "waiting_for_input")
-    ok = n_sup >= 1 and n_wait == 0
-    return ok, f"superseded={n_sup} waiting={n_wait}｜{_fmt_stages(turn, skill)}"
+# ⚠️ ~~`check_supersede_worked`~~ **2026-11-05 删**（深度审计 §4.1）——
+#    它要求「重派同一技能后，旧的**待答**必须被取代」（`n_sup >= 1 and n_wait == 0`），
+#    而 `agent._supersede_old` 2026-10-29 就改成**只取代 `failed`，`waiting_for_input` 一律不碰**
+#    （理由：重派不该**静默抹掉一个用户从没回答过的问题** —— F7 实测踩过，
+#    主 agent 自己编了个答案重派，`finalize` 看到"没有待答"就什么都不做，**用户从没被问过**）。
+#
+#    也就是说这条断言**要求一个已经被否决的行为**。而且它 `grep` 全部 case **零命中**
+#    （死断言）—— 地雷形状：谁把它挂上，红了就会引导他去改实现（把待答取代掉）→
+#    把用户的问题弄丢。S19 要的语义由 `s19-supersede.yaml` 的 `no_task_stage` 表达，够了。

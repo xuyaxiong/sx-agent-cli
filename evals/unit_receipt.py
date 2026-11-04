@@ -215,6 +215,25 @@ def main() -> None:
         check(f"切得开：{kind}", len(_receipt_sections(r)) == 2, str(_receipt_sections(r))[:80])
         check(f"渲染得出：{kind}", render_receipt(r).startswith(SECTION["not_dispatched"]))
 
+    # ④' 🔴 **审计层那两张手抄表必须覆盖得住**（2026-11-05 深度审计 §4.4）
+    #     `_RECEIPT_KINDS` / `_RECEIPT_LABEL` 是**手抄** `DELIVERY` / `SECTION` 的 ——
+    #     而"手抄"第一次加新出口（`fault`，2026-11-04）就漏了：`_run.md` 里那条回执
+    #     **没有出口标记**、段标签**回落成裸 key `fault`**。没有任何守卫盯着覆盖性
+    #     （不像 `HOPS` 有 ⊆ 校验）。这里补上 —— 名单**从真对象问出来**，不手抄。
+    from evals.harness import _RECEIPT_KINDS, _RECEIPT_LABEL
+
+    all_receipts = [build_receipt(o) for o in (completed, waiting, failed, faulted)]
+    all_receipts += list(rejected.values())
+    _missing_kind = sorted({r["kind"] for r in all_receipts} - set(_RECEIPT_KINDS))
+    check("`_RECEIPT_KINDS` 覆盖得住每一个出口（漏一个 → 那条回执在 `_run.md` 里没标记）",
+          not _missing_kind, f"漏了：{_missing_kind}")
+    _used: set[str] = set()
+    for _r in all_receipts:
+        _used |= set(_r.get("sections") or {})
+    _missing_label = sorted(_used - set(_RECEIPT_LABEL))
+    check("`_RECEIPT_LABEL` 覆盖得住回执用到的每一段（漏一个 → 标签回落成裸 key）",
+          not _missing_label, f"漏了：{_missing_label}")
+
     # ⑤ 走**真代码路径**：真 `delegate` 吐出来的消息上挂着对象，记录层读得到
     import proto.agent as A
 

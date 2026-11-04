@@ -518,6 +518,11 @@ _RECEIPT_KINDS: dict[str, str] = {
     "completed": "✅ **交付回执**（执行器已写入产物库 —— 平台只说这个事实）",
     "waiting": "❓ **执行器申报要信息**（`ask_user`：平台先试答，答不上转达给用户）",
     "failed": "⚠️ **既没交付、也没说要什么**（推满轮次，交给主 agent 判）",
+    # ⚠️ **2026-11-05 补**：`fault` 是 2026-11-04 新加的出口，加的时候**漏了这两张表** ——
+    #    于是 `_run.md` 里那条回执**没有出口标记**、段标签回落成裸 key `fault`。
+    #    这是"一套，别分叉"在**审计层**的复现（第一次加新出口就漏了）——
+    #    现在由 `unit_receipt` ⑤ 的覆盖性断言盯着（漏一个当场红）。
+    "fault": "⚠️ **平台故障**（这一轮**没跑成** —— 不是执行器干不了）",
     "rejected_skill": "⛔ **被平台拒绝**：没有这个能力",
     "rejected_artifact": "⛔ **被平台拒绝**：产物 ID 不存在",
 }
@@ -540,6 +545,8 @@ _RECEIPT_LABEL: dict[str, str] = {
     "report": "**执行器的原话**（它说了什么、在问什么）",
     "agent_answer": "**主 agent 补的信息**（它说的）",
     "next": "平台给主 agent 的指示",
+    # 措辞与 `handoff.SOURCE_NOTE["fault"]` **同一句**（一套，别分叉）
+    "fault": "**平台说的** —— 不是执行器说的",
     "not_dispatched": "平台的框架话 · 这次**没有派发**",
     "available_skills": "平台列出的可用能力",
     "available_artifacts": "平台列出的现有产物",
