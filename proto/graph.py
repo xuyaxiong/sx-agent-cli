@@ -125,6 +125,11 @@ def _feed_waiting(state: State) -> tuple[list[dict], list[str]]:
     比"多问一遍"更糟（F7 就是这么丢的）。
 
     这也是**待答唯一的解除路径**：投递后要么 completed，要么还在等。
+
+    📌 **已定：这条路要改成"定向投递"**（用户 2026-11-05）—— subagent 的请求做成**弹框**
+    （一次只开一个），用户在框里答 → **只投给那个任务**；主输入框的话只给主 agent
+    （弹框继续等）。**弹框做出来之前，这里的广播仍是唯一能用的路 —— 别提前拆。**
+    分三步与两个边界见 `docs/solution.md` §0.65（Y1）。
     """
     user = _last_human(state)
     waiting = [
@@ -263,6 +268,9 @@ def node_finalize(state: State) -> dict:
     判"没问出去"其实问了 → 用户看到重复。而且它还有个更糟的后果 ——
     它让"问题会不会到用户手上"这件事**依赖 LLM**，而这是平台该保证的事。
 
+    ⚠️ **"原样"贴的是它申报的那句原话**（`Task.asked`）—— 不是执行器最后说的那段话
+    （那段混着过场，见下面 `_one` 的注）。
+
     **现在的分工**：
     - **保证**（代码）：有待答就原样贴出去，无条件
     - **礼貌**（提示词）：`prepare` 会告诉主 agent "平台负责转达，你不用重复问"
@@ -276,21 +284,38 @@ def node_finalize(state: State) -> dict:
     if not waiting:
         return {}
 
-    block = "\n\n".join(t["report"] for t in waiting)
+    # 🔴 **从对象渲染**（2026-11-05，`solution.md` §0.65 Y1 的第一步）：每条待答贴的是它
+    #    **申报的那句原话**（`Task.asked` —— `ask_user` 的参数，`absorb_outcome` 原样落下），
+    #    **不是** `report`（执行器最后说的**那段话**，混着"好的，我先来进行第一步的分析…"
+    #    之类的过场）。**用户要答的是"问题"，不是那段独白。**
+    #
+    #    ⚠️ `asked` 缺失时（`case.initial_tasks` 注入的 fixture、手写的 state）**不许静默降级**：
+    #    显式说清"这条没留下问题原话"，再把那段话附上 —— 有就说有，没有就说没有。
+    def _one(t: dict) -> str:
+        q = str(t.get("asked") or "").strip()
+        who = t.get("skill") or "?"
+        if q:
+            return f"【{who}】问：{q}"
+        return (f"【{who}】（**这一条没留下问题原话** —— 下面是它最后说的那段，"
+                f"可能混着过场）：\n{t.get('report') or '（它一个字都没说）'}")
+
+    block = "\n\n".join(_one(t) for t in waiting)
     # ⚠️ **只发内容**：`finalize: ` 那个前缀是**日志文件格式**的一部分，归记录器
     # （`trace._NOTE_HEAD`）—— 业务侧带上它，展示层就得按位置切回来（审核 F1）。
     trace.note(f"透传 {len(waiting)} 条待答（平台直接贴，不判断主 agent 问没问）",
                kind="relay")
-    # 🔴 **已知膨胀点（判据③）**：这段和**回执的【执行器说】**是**同一段话** ——
-    # 一轮之内它会进主 agent 的上下文**两次**（回执一次、这里一次）。
-    # 实测（2026-11-03）：两条 report 合计 936 字，各出现 2 次。
-    # **不能靠"去重"解决** —— 那需要判断"主 agent 说没说"，是 LLM 判断（2026-10-29 已否决）。
-    # 要优化的话，方向是**让主 agent 知道自己不必复述**，而不是平台少贴。
-    # 见 `docs/handoff-audit.md` §四 膨胀账。
-    # 🔴 同台账：**注入什么就记什么** —— 这段原来只在 `_run.md` 里有（走快照），
+    # 🔴 **（历史）已知膨胀点（判据③）**：透传这段原来和**回执的【执行器说】**是**同一段话**
+    # —— 一轮之内它会进主 agent 的上下文**两次**（回执一次、这里一次）。
+    # 实测（2026-11-03）：两条 `report` 合计 936 字，各出现 2 次。
+    # ⚠️ **2026-11-05 起这个膨胀点基本消失了**：透传改成贴 `Task.asked`（**那句问题**），
+    # 不再是 `report`（那段独白）—— 用户看到的是短问题 ✓，进上下文的也短了 ✓。
+    # （剩下的账：`report` 仍在**回执**里全文出现一次 ✓ 那是它该在的地方。）
+    # ⚠️ **不能靠"去重"解决**（当时也不行）—— 那需要判断"主 agent 说没说"，
+    # 是 LLM 判断（2026-10-29 已否决）。见 `docs/handoff-audit.md` §四 膨胀账。
+    # 🔴 **注入什么就记什么** —— 这段原来只在 `_run.md` 里有（走快照），
     # trace 里一个字都没有，复盘时看不到"平台替执行器转达了什么"。
     trace.handoff("待答透传", "平台", "用户", block,
-                  structured=f"Task.report × {len(waiting)} → AIMessage(injected_by=platform.finalize)",
+                  structured=f"Task.asked × {len(waiting)} → AIMessage(injected_by=platform.finalize)",
                   full=True)
     return {
         # 🔴 **打标记**：这条 AIMessage 的内容是**执行器的原话**，不是主 agent 说的 ——

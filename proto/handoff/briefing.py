@@ -94,6 +94,14 @@ class Task(TypedDict, total=False):
     artifacts: list[str]  # **产出**的产物 ID
     refs: list[str]  # **输入引用**的产物 ID（两个方向，别混）
     report: str  # 执行器最后一轮的原话（**覆盖写**）
+    #: 🔴 **它申报要的那条信息** —— `ask_user(question)` 参数里的**原话**（**覆盖写**）。
+    #:
+    #: 2026-11-05 加（`solution.md` §0.65 Y1 的第一步）：在这之前，这句原话**只活在当轮**
+    #: （`ExecOutcome.asked`），任务一进"待答"就丢了 ✗ —— 跨轮只剩 `report`
+    #: （执行器最后说的**那段话**，混着过场）。后果：**透传给用户的是那段散文**，
+    #: 不是这句干净的原话；而且**没有对象就做不了弹框**（"谁在问、问什么"得是结构化的）。
+    #: ⚠️ 这跟 `fault` 是同一个病、隔一个字段：**结构性事实没落进 Task，下游只能用散文**。
+    asked: str
     #: 🔴 **平台故障的原因**（非空 = 这一轮**根本没跑成**，**不是执行器干不了**；空 = 没故障）。
     #:
     #: 2026-11-05 加（深度审计 P1-1 / A3）：在这之前**故障只活在 `ExecOutcome` 上**，
@@ -333,6 +341,9 @@ def absorb_outcome(rec: dict, outcome: Any) -> None:
     ⚠️ `artifacts` 只在非空时覆盖：执行器可能这一轮没产出，不能把上一轮的抹掉。
     """
     rec["report"] = outcome.report
+    # 它申报要的那条信息（`ask_user` 的原话）—— 与 `report` 一样**覆盖写**：
+    # 这一轮没申报就清空（它已经答上了 / 已经交付了，"待答"这个状态就结束了）。
+    rec["asked"] = outcome.asked
     # 平台故障**也落进 Task**（理由见 `Task.fault`）—— 与 `report` 一样**覆盖写**：
     # 正常跑完就清空，不留上一次的故障（不然一个瞬时的故障会在台账里阴魂不散）。
     rec["fault"] = outcome.fault

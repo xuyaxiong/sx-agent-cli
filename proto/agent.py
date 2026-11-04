@@ -394,6 +394,9 @@ def delegate(
     rec: dict[str, Any] = {
         "id": tid, "skill": skill_name, "task": task,
         "stage": "running", "artifacts": [], "report": "", "agent_tried": False,
+        # 它申报要的那条信息（`ask_user` 的原话）—— 新建的 Task 还没申报；
+        # 每次 `settle` 由 `absorb_outcome` **覆盖写**（见 `Task.asked`）。
+        "asked": "",
         # 平台故障的原因（空 = 没故障）—— 新建的 Task 当然还没故障；
         # 每次 `settle` 由 `absorb_outcome` **覆盖写**（见 `Task.fault`）。
         "fault": "",

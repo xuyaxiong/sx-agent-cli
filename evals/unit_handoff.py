@@ -238,6 +238,23 @@ def main() -> None:
           _injected_label(tag))
     check("⑪ 透传 · 没标记的消息**不**被误标", _injected_label(None) == "")
 
+    # 🔴 **贴的是"它申报的那句原话"，不是执行器那段独白**（2026-11-05，`solution.md` §0.65
+    #    Y1 第一步）：`ask_user` 的参数原来**只活在当轮**，一进"待答"就丢了 ✗ ——
+    #    跨轮只剩 `report`（混着"好的，我先来进行第一步的分析…"之类过场）。
+    #    用户要答的是**问题**，不是那段独白。
+    _w = {**short_task, "skill": "lesson-prep", "asked": "这节课希望侧重哪种上法？",
+          "report": "好的，我先来进行第一步的分析，然后进入第二步——生成前确认。\n\n"
+                    "## 第一个问题\n这节课希望侧重哪种上法？"}
+    _relayed = node_finalize({**st, "tasks": [_w]})["messages"][0].content
+    check("⑪ 透传 · 贴的是**申报的原话**（`Task.asked`）",
+          "【lesson-prep】问：这节课希望侧重哪种上法？" in _relayed, _relayed)
+    check("⑪ 透传 · 执行器那段独白**不进**透传",
+          "我先来进行第一步的分析" not in _relayed, _relayed)
+    _noq = {**_w, "asked": ""}
+    _relayed2 = node_finalize({**st, "tasks": [_noq]})["messages"][0].content
+    check("⑪ 透传 · `asked` 缺失时**显式说清**（不静默降级、也不假装有）",
+          "没留下问题原话" in _relayed2 and "我先来进行第一步的分析" in _relayed2, _relayed2)
+
     # 🔴 同一刻还要写**结构化动作**（2026-11-04）：断言读它，不读 `log` 那句人话 ——
     #    见 `State.actions` 的注释。拿掉这一条 → `unit_feed_waiting` ⑨ 的守卫会红。
     fin_out = node_finalize({**st, "tasks": [short_task]})
