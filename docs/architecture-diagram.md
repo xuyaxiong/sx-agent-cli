@@ -499,6 +499,13 @@ A. 填空补白 / B. 表格记录 / C. 图示思维导图 / D. 混合」，用�
 
 #### 3.2.5 ⑨ 试答（`agent._ask_main`）—— **平台强制的一步**
 
+> 🔴 **两条路都走它**（2026-11-04 用户定 E1：*"肯定得统一啊 都先走试答啊"*）：
+> 首次派发（`delegate`）与**投递重跑**（`graph._feed_waiting`）**共用**
+> `agent.try_answer_then_rerun`（试答 → 成对记 `qa` → 重跑）。
+> 改之前投递那条路直接又登记待答 —— 用户刚答完一轮就**又被问一遍**，
+> 而主 agent 这时已经知道用户刚说的那句，很可能答得上。
+> ⚠️ 所以 `_ask_main` 的入参是**消息列表**（不是 `ToolRuntime`）—— 两条路一个给 runtime、一个只有 state。
+
 ```
 你委派出去的工作卡住了，它在请求信息。
 
@@ -571,7 +578,7 @@ A. 填空补白 / B. 表格记录 / C. 图示思维导图 / D. 混合」，用�
 > 它**全文的前提**（主 agent 整个上下文）仍然照打，排在决策块**前面** —— 前提 → 证据 → 结论。
 
 **下一步那一行跟着代码走**：`executor._judge_next` 就是出口那段**三态枚举**的穷举
-（completed → 回执给主 agent ｜ waiting_for_input → 登记待答 → 试答 → 透传 ｜
+（completed → 回执给主 agent ｜ waiting_for_input → **试答** → 答不上才登记待答 → 透传 ｜
 incomplete → 推回去 ｜ 推完轮数 → 交给用户），措辞跟分支一一对应。
 
 **断言**：`evals/unit_decision.py`（四段齐全 / 顺序 / 值不丢 / **列表不是 Python repr** /
@@ -749,9 +756,9 @@ settle(rec, outcome)          # 写字段 + 定 stage —— 状态迁移只有�
 | H6 | **待答不丢**（无条件透传） | `graph.node_finalize` | 问题静默丢失 |
 | H7 | LLM 调用失败 → **保守默认值** | `llm.safe_structured` | 一次抖动炸掉整轮 |
 | H8 | **并行不互相覆盖** | `graph._merge_tasks`（按 id 合并的 reducer） | 并行 delegate 只剩最后一个 Task |
-| H9 | 主 agent 试答**只做一次** | `agent.delegate` 线性控制流 | 反复试答 |
+| H9 | 主 agent 试答**每轮最多一次**（不反复试答） | `agent.try_answer_then_rerun`（线性控制流，两条路共用） | 反复试答｜⚠️ **2026-11-04 E1 前写的是「只做一次」** —— 现在一个 Task 可能**两次**（首次派发一次、投递重跑又一次），真跑实测见过 |
 | H10 | **task id 不撞车** | `tool_call_id` **尾部 8 位** | 取前几位会撞（实测 `t_call_a`） |
-| H11 | 试答是**强制的** | `delegate` 工具内部 | LLM 跳过这一步直接问用户 |
+| H11 | 试答是**强制的**（**两条路都强制**，E1） | `agent.try_answer_then_rerun`（`delegate` 与 `graph._feed_waiting` 共用） | LLM 跳过这一步直接问用户 |
 | H12 | **图结构固定** | `graph.build` | 流程漂移 |
 | H13 | 未知技能名**直接拒绝，不建 Task** | `agent.delegate` | 挂一个跑不起来的 Task |
 | H14 | 产物引用**当场校验**，不存在就拒绝派发 | `agent.delegate` | 执行器读不到会自己找补，错误埋进产物 |

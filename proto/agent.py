@@ -17,7 +17,6 @@
 
 from __future__ import annotations
 
-import time
 from typing import Any
 
 from langchain.agents import create_agent
@@ -28,8 +27,7 @@ from pydantic import BaseModel, Field
 
 from proto import trace
 from proto.config import get_model
-from proto.executor import run_task
-from proto.handoff import SECTION  # 交接的**段名**（唯一来源）
+from proto import executor  # ⚠️ 走模块属性，见 delegate 的注释
 from proto.handoff.ask import build_prompt as ask_prompt  # 试答
 from proto.handoff.briefing import absorb_outcome, render_briefing, settle  # 委托单
 from proto.handoff.receipt import build_receipt, build_rejection, render_receipt  # 回执
@@ -135,13 +133,17 @@ class _AgentAnswer(BaseModel):
     answer: str = Field(default="", description="can_answer=true 时给出补充内容，原话照搬不要改写")
 
 
-def _ask_main(runtime: ToolRuntime, skill_name: str, task: str, outcome: Any) -> str:
+def _ask_main(messages: list, skill_name: str, task: str, outcome: Any) -> str:
     """**平台强制的一步**：让主 agent 用自己的上下文试着补上缺的信息。
 
     ⚠️ **必须把"已经做到什么程度 / 还缺什么"一起给它**（信息交接原则）——
     只知道"它说缺课时"，主 agent 判不出该不该补；
     知道"已完成学习目标和预习任务，只差当堂检测（需要课时才能写）"，
     它就能判断这个信息在不在自己上下文里、值不值得去打扰用户。
+
+    ⚠️ 入参是**消息列表**而不是 `ToolRuntime`（2026-11-04 抽 `try_answer_then_rerun` 时改）：
+    这一步**两条路都要用** —— `delegate` 有 runtime、`graph._feed_waiting` 只有 state，
+    而这里真正要的只是 `messages`（原来从 runtime 取的也只有这一个东西）。
     """
     # 🔴 **不截断**（用户 2026-11-02 的「交接三问」之二）：这一步是个**独立的结构化调用** ——
     # 它**只看得见这个提示词里的东西**。信息若落在长消息的后半段，它就答不上来、
@@ -149,7 +151,7 @@ def _ask_main(runtime: ToolRuntime, skill_name: str, task: str, outcome: Any) ->
     # 主 agent 的上下文本来就小（隔离生效），整份给**全文**是便宜的。
     # ⚠️ **别退回"最近 N 条"**：这一步问的就是"**你的上下文里**有没有"，
     # 砍掉前文等于让它答不上来 —— 那是个**无声**的范围限制，比截断更难发现。
-    msgs = runtime.state.get("messages") or []
+    msgs = messages or []
     prompt = ask_prompt(skill_name, task, outcome, msgs)
     # 交接关键日志：这一步把**主 agent 的全部上下文**又发了一遍（判据③：膨胀代价看得见）
     trace.handoff("试答", "平台", "主 agent", prompt,
@@ -169,7 +171,9 @@ def _ask_main(runtime: ToolRuntime, skill_name: str, task: str, outcome: Any) ->
     # 这里只说清"它看的是什么"，不重复贴一遍。
     ans = r.answer.strip()
     trace.decision(
-        "试答（LLM）· 平台强制的一步（在 delegate 内部）",
+        # ⚠️ 不再写"在 delegate 内部"（2026-11-04 E1）：这一步**两条路都会走**
+        # （首次派发 / 投递重跑），写死位置会变成假话。
+        "试答（LLM）· 平台强制的一步",
         q="**主 agent 的上下文里**，有没有执行器要的那个信息？（有就不打扰用户）",
         given=[
             f"执行器问的那句（原话，{len(outcome.report)} 字）",
@@ -187,6 +191,37 @@ def _ask_main(runtime: ToolRuntime, skill_name: str, task: str, outcome: Any) ->
         ),
     )
     return ans if r.can_answer else ""
+
+
+def try_answer_then_rerun(
+    rec: dict, skill: Any, outcome: Any, *, messages: list
+) -> tuple[Any, str]:
+    """执行器说「缺信息」→ **平台强制主 agent 先用自己上下文试答** → 答得上就重跑一遍。
+
+    🔴 **两条路共用**（2026-11-04 用户定 E1：*"肯定得统一啊 都先走试答啊"*）：
+    首次派发（`delegate`）和**投递重跑**（`graph._feed_waiting`）走**同一套**处置 ——
+    原来投递那条路直接又登记待答：用户刚答完一轮就**又被问一遍**，而主 agent 这时
+    **已经知道用户刚说的那句**、很可能答得上。同一个状态两套处理，正是要治的病。
+
+    返回 `(最终 outcome, 主 agent 的试答)`：
+      - 试答为空 → 原样返回（调用方去登记待答）
+      - 试答非空 → **成对**记进 `qa`（`q` 是它问的那句原话）→ 重跑 → 返回新 outcome
+
+    ⚠️ **只做这一步，不决定出口** —— completed / 仍待答 / failed 由调用方按最终 outcome
+    分派（三个出口的措辞各不相同，混进来就又长出一个上帝函数）。
+    """
+    answer = _ask_main(messages, skill.name, rec.get("task") or "", outcome)
+    if not answer:
+        return outcome, ""
+    rec["agent_tried"] = True
+    # 🔴 **成对记**（`by="主 agent"`）：只记答案的话，下一次重入时 `report` 已经被
+    # 新问题覆盖，这条答案就没了指涉 —— 同 `qa` 那段注释。问题**就是这一刻的
+    # `outcome.report`**，平台原样截下，不问 LLM。
+    rec["qa"] = [*(rec.get("qa") or []),
+                 {"by": "主 agent", "q": outcome.report, "a": answer}]
+    # 试答后重跑也是**重入**：走同一份交接书（带上刚才那一轮的进度 / 它问过什么）
+    o2 = executor.run_task(skill, render_briefing(rec), rec.get("user_turns"))
+    return o2, answer
 
 
 def _cmd(
@@ -408,7 +443,7 @@ def delegate(
 
     # ① 派发 —— run_task 内部已含「出口限制」：既没完成也没提问会被推回去继续
     # 第三个参数是用户原话（给执行器的 `read_user_turn` 用）—— 交接书里只有清单，全文按需取
-    outcome = run_task(skill, render_briefing(rec), rec.get("user_turns"))
+    outcome = executor.run_task(skill, render_briefing(rec), rec.get("user_turns"))
     absorb_outcome(rec, outcome)
 
     # ② 按**三态枚举**分派 —— 穷举，没有第四种（用户「封闭原则」）
@@ -426,23 +461,14 @@ def delegate(
         )
 
     if outcome.status == "waiting_for_input":
-        # ③ 在请求信息 → 平台强制先让主 agent 试答
-        answer = _ask_main(runtime, skill_name, task, outcome)
-        if answer:
-            rec["agent_tried"] = True
-            # 🔴 **成对记**（`by="主 agent"`）：只记答案的话，下一次重入时
-            # `report` 已经被新问题覆盖，这条答案就没了指涉 —— 同 `qa` 那段注释。
-            # 问题**就是这一刻的 `outcome.report`**，平台原样截下，不问 LLM。
-            rec["qa"] = [*(rec.get("qa") or []),
-                         {"by": "主 agent", "q": outcome.report, "a": answer}]
-            # 试答后重跑也是**重入**：走同一份交接书（带上刚才那一轮的进度 / 它问过什么）
-            o2 = run_task(skill, render_briefing(rec), rec.get("user_turns"))
-            if o2.status == "completed":
-                settle(rec, o2)
-                return _out(rec, o2, agent_answer=answer)
-            outcome = o2  # 补了还是不行 → 用新的结果去问用户（三态可能变成 incomplete）
+        # ③ 在请求信息 → 平台强制先让主 agent 试答（**两条路共用这一步**，
+        #    见 `try_answer_then_rerun` 的 docstring —— 投递重跑那条也走它）
+        outcome, answer = try_answer_then_rerun(
+            rec, skill, outcome, messages=runtime.state.get("messages") or []
+        )
 
         if outcome.status == "completed":
+            # 试答补上了 → 重跑完成（`agent_answer` 让回执把"你补的信息"也带上）
             settle(rec, outcome)
             return _out(rec, outcome, agent_answer=answer)
 

@@ -62,8 +62,8 @@ class _CompletedNoArtifact:
 def _capture() -> list[tuple[str, list | None]]:
     """把 `run_task` 换成记录器，返回它每次收到的 **（提示词, 用户原话）**。
 
-    `_feed_waiting` 里是**函数内** `from proto.executor import run_task`，
-    所以改模块属性就改得到（值导入的坑，见 `_child.py` 顶部）。
+    ⚠️ `run_task` 是**模块属性**调用（`executor.run_task(...)`）—— 两条路都是，
+    所以改这一处就够（原来是值导入，得两处各改一次）。
     """
     seen: list[tuple[str, list | None]] = []
 
@@ -72,6 +72,11 @@ def _capture() -> list[tuple[str, list | None]]:
         return _Waiting()
 
     proto.executor.run_task = fake  # type: ignore[assignment]
+    # 🔴 **试答那一步也要打桩**（2026-11-04 E1 之后，投递路径也会走它）：
+    #    不打桩的话，每个"仍待答"的 section 都会**真调一次模型** ——
+    #    **实测踩过**：忘了打桩 → 一个 section 多等 4.4 秒、还真花 token（单测必须不调 LLM）。
+    #    要测"试答答得上"那条，自己在那一节里改成返回一句答案（见 ⑧）。
+    proto.agent._ask_main = lambda *a, **k: ""  # type: ignore[assignment]
     return seen
 
 
@@ -211,6 +216,35 @@ def main() -> None:
           "全文见" not in led, repr(led[-120:]))
     check("台账说清了「全文不在你的上下文里」", "不在你的上下文里" in led, repr(led[-120:]))
     check("但**该标的还在**：切了多少字照标", "【平台截断" in led)
+
+    print("\n⑧ E1：投递重跑后**还是缺信息** → 也先让主 agent 试答（两条路统一）")
+    # 🔴 用户 2026-11-04：*"肯定得统一啊 都先走试答啊"*。
+    #    原来投递那条路直接又登记待答 —— 用户刚答完一轮就**又被问一遍**，
+    #    而主 agent 这时**已经知道用户刚说的那句**，很可能答得上。
+    #    ⚠️ 这条守的是"两条路走同一个函数"（`agent.try_answer_then_rerun`）：
+    #    拿掉投递路径那一步 → 这里红。
+    seen8 = _capture()
+    proto.agent._ask_main = lambda *a, **k: "课时按两课时算"  # type: ignore[assignment]
+    try:
+        state8 = {
+            "messages": [HumanMessage("两课时")],
+            "tasks": [{
+                "id": "t1", "skill": "quiz", "task": "出随堂小测",
+                "stage": "waiting_for_input", "artifacts": [], "refs": [],
+                "report": "用几个课时？", "progress": "", "missing": [],
+                "qa": [], "user_turns": [],
+            }],
+        }
+        out8, logs8 = graph._feed_waiting(state8)
+    finally:
+        proto.agent._ask_main = lambda *a, **k: ""  # type: ignore[assignment]
+    check("试答之后**又重跑了一次**执行器（run_task 被调 2 次）", len(seen8) == 2, f"{len(seen8)} 次")
+    check("试答**成对记进 `qa`**（`by=主 agent`；`q` 是**那一刻它问的那句** —— 即 outcome 的 report）",
+          any(x.get("by") == "主 agent" and x.get("q") == _Waiting.report
+              for x in out8[0]["qa"]),
+          repr(out8[0]["qa"]))
+    check("日志里说破了这一跳（不然读的人以为平台凭空多跑了一轮）",
+          any("试答" in ln for ln in logs8), repr(logs8))
 
     print("\n" + "═" * 78)
     print(f"{'全部通过' if not FAIL else '有失败'}：{len(PASS)}/{len(PASS) + len(FAIL)}")

@@ -532,7 +532,9 @@ def _on_event(ev: dict) -> None:
         _on_dump(ev)
     elif t == "section":
         if k == "ask_main":
-            _PENDING = ["decide", ["【试答 · LLM 决策】平台强制的一步（在 `delegate` 内部）",
+            # ⚠️ 不写"在 `delegate` 内部"（2026-11-04 E1）：这一步**两条路都会走**
+            #    （首次派发 / 投递重跑），写死位置就是假话。
+            _PENDING = ["decide", ["【试答 · LLM 决策】平台强制的一步",
                                    "参与决策的全部信息（发给 LLM 的全文）↓"], ev["ts"]]
         elif k in _ROLE_BY_KIND:
             _emit(_ROLE_BY_KIND[k], str(ev["title"]), stamp=ev["ts"], cap=True)

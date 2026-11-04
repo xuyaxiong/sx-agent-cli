@@ -22,7 +22,6 @@
 from __future__ import annotations
 
 import operator
-import time
 from typing import Annotated, Any, NotRequired, TypedDict
 
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage
@@ -33,6 +32,7 @@ from langgraph.graph.message import add_messages
 
 from proto import trace
 from proto.agent import build_agent
+from proto.agent import try_answer_then_rerun  # 试答→重跑（两条路共用，E1）
 from proto.handoff.briefing import render_briefing, settle
 from proto.handoff.ledger import render_ledger
 # 🔴 **顶层 import，但用"模块 + 属性"形式**（2026-11-04 复审 N3 修）：
@@ -155,9 +155,22 @@ def _feed_waiting(state: State) -> tuple[list[dict], list[str]]:
         # 这一趟**没有回执**（回执是 `delegate` 的工具返回），全文不在主 agent 上下文里。
         # 不记这个事实的话，台账会指着一个**存在但内容不对**的出处（2026-11-04 复审 E2）。
         rec["run_by"] = "feed"
+        # 🔴 **E1（用户 2026-11-04 定："肯定得统一啊 都先走试答啊"）**：
+        #    投递重跑后**还是缺信息**，也要先让主 agent 用自己的上下文试答一次 ——
+        #    它这时已经知道**用户刚答的那句**，很可能答得上；直接又登记待答的话，
+        #    用户刚答完一轮就**又被问一遍**。与首次派发走**同一个函数**。
+        if outcome.status == "waiting_for_input":
+            outcome, answer = try_answer_then_rerun(
+                rec, skill, outcome, messages=state.get("messages") or []
+            )
+            if answer:
+                logs.append(
+                    f"prepare: 🔁 {t['id']} 仍缺信息 → 主 agent 试答（{len(answer)} 字）后重跑"
+                )
         # ⚠️ 状态迁移走 `settle()`（**唯一一处**）—— 三条分支只决定"日志怎么说"。
         #    原来这里手写 `rec.update(stage="completed", artifacts=outcome.artifacts)`，
         #    会把"这一轮没产出就不抹掉上一轮产物"的保护抵消（2026-11-03 审核实测踩到）。
+        #    ⚠️ 位置在**试答之后**：落账要用**最终**那个 outcome（试答重跑会换掉它）。
         settle(rec, outcome)
         if outcome.status == "completed":
             logs.append(
