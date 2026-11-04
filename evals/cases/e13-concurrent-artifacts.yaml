@@ -33,6 +33,8 @@ checks:
   - check: every_task_has_artifact
   # 每个 task 的产物，只能来自它自己那个执行器
   - check: artifact_no_cross_attribution
+  # 🔬 **测试有效性**：产物确实是**并发**写的（>1 个线程）—— 不然「没撞车」是假阴性 ✓
+  - check: artifact_writes_multithreaded
   - check: no_exception
 # ⚠️ 原来还断言 `artifact_count: 3` —— **错的**：执行器被推回去时会**重写一份新产物**
 #   而不是续写，产物数天然会多于 3（基线实测 4–5 个）。

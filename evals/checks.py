@@ -173,30 +173,11 @@ def check_artifact_no_cross_attribution(run: dict, turn: dict) -> Result:
     return not bad, "；".join(bad) if bad else "没有串台"
 
 
-@_reg
-def check_artifact_writes_timing(run: dict, turn: dict, max_gap_s: float = 0.1) -> Result:
-    """🔬 **测试有效性**：产物写入有没有真的**同时**发生。
-
-    ⚠️ 实测教训：只数"有几个线程"是**不够**的 —— 第一次跑这条绿了，
-    但看时间戳发现写入间隔 **4–205 秒**，竞态窗口在**微秒级**，等于根本没测到。
-    并发 ≠ 多线程，得看时间。
-    """
-    w = run.get("artifact_writes") or []
-    if len(w) < 2:
-        return False, f"只有 {len(w)} 次写入，谈不上并发"
-    ts = sorted(x["t"] for x in w)
-    gaps = [b - a for a, b in zip(ts, ts[1:])]
-    gap = min(gaps)
-    threads = len({x["thread"] for x in w})
-    return gap <= max_gap_s, (
-        f"{len(w)} 次写入 / {threads} 个线程，**最小间隔 {gap:.2f}s**（要 ≤{max_gap_s}s 才算真并发）"
-    )
-
-
-
-# ──────────────────────────── 委派与兜底 ────────────────────────────
-
-
+# ⚠️ ~~`check_artifact_writes_timing`~~ **2026-11-05 删**（零 case 用）：
+#    它断"两次写入的最小间隔 ≤ `max_gap_s`（默认 0.1 秒）"＝"真并发" —— 而
+#    `e13-concurrent-artifacts` 的注释里记着**实测写入间隔 4–205 秒** ✗：
+#    阈值跟现实对不上，挂上去只会红 ✗。"是不是并发写的"由
+#    `artifact_writes_multithreaded`（>1 个线程 ✓）压着就够了 ✓。
 @_reg
 def check_delegate_calls_max(run: dict, turn: dict, n: int) -> Result:
     """到该轮为止，主 agent 一共发了几次 `delegate` —— 验"不重复委派"。
@@ -256,48 +237,9 @@ def check_platform_fed_answer(run: dict, turn: dict) -> Result:
     return bool(hits), f"投递了：{hits}" if hits else "⚠️ 没看到投递"
 
 
-@_reg
-def check_finalize_rescued(run: dict, turn: dict) -> Result:
-    """旧名保留（语义已变）：现在是"平台有没有透传"。"""
-    return check_platform_relayed(run, turn)
-
-
-@_reg
-def check_no_finalize_rescue(run: dict, turn: dict) -> Result:
-    """旧名保留（语义已变）：现在是"有没有产生待答"。"""
-    return check_no_platform_relay(run, turn)
-
-
-# ──────────────────────────── 隔离与体积 ────────────────────────────
-
-
-@_reg
-def check_main_agent_no_artifact_read(run: dict, turn: dict, allow: int = 0) -> Result:
-    """**主 agent 不许把产物正文读进自己的上下文** —— 转交只需传 ID。
-
-    比"主上下文体积上限"精确：体积会随它读技能原文、对话长短浮动，
-    而这条直接判**它有没有读产物正文**（工具调用的参数里带着 `artifact_id`）。
-
-    ⚠️ `allow` 留给"用户明确要求看内容"的场景；默认 0（一次都不该读）。
-    """
-    reads = [
-        c
-        for t in run["turns"][: turn["turn"]]
-        for c in (t.get("tool_calls") or [])
-        if c.get("name") == "read_artifact"
-    ]
-    if len(reads) <= allow:
-        return True, f"没有读产物正文（{len(reads)} 次，上限 {allow}）"
-    return False, f"读了 {len(reads)} 次产物正文：{[c.get('args') for c in reads]}"
-
-
-@_reg
-def check_main_ctx_under(run: dict, turn: dict, n: int) -> Result:
-    """主 agent 上下文体积上限 —— 隔离效果的现场读数。"""
-    got = turn.get("main_ctx_chars", 0)
-    return got < n, f"主上下文 {got} 字（上限 {n}）"
-
-
+# ⚠️ ~~`check_finalize_rescued`~~ / ~~`check_no_finalize_rescue`~~ **2026-11-05 删**：
+#    它们是 `platform_relayed` / `no_platform_relay` 的**旧名别名** ✗（零 case 用）——
+#    同一个语义两处定义，就是"一套，别分叉"要防的 ✓ 删别名，留正主。
 @_reg
 def check_reply_chars_under(run: dict, turn: dict, n: int) -> Result:
     got = len(turn.get("reply") or "")
@@ -419,29 +361,10 @@ def check_task_refs_contain(run: dict, turn: dict, skills: list[str]) -> Result:
 # ──────────────────────────── 产物写入流水（并发竞态） ────────────────────────────
 
 
-@_reg
-def check_artifact_write_no_collision(run: dict, turn: dict) -> Result:
-    """**每次 `store_artifact` 都要拿到唯一 ID**。
-
-    `store_artifact` 用 `len(ARTIFACTS)+1` 生成 ID —— 主 agent 并行发多个 `delegate` 时
-    ToolNode 是并发执行工具调用的，两个执行器同时算 `len+1` 会拿到**同一个 ID**，
-    后者覆盖前者。**同一个 ID 被写了两次，就是撞了。**
-    """
-    w = run.get("artifact_writes") or []
-    ids = run.get("artifact_ids") or []
-    by_id: dict[str, list] = {}
-    for x in w:
-        by_id.setdefault(x["aid"], []).append(x)
-    clash = {k: [x["title"] for x in v] for k, v in by_id.items() if len(v) > 1}
-    # ⚠️ **2026-11-05 修（深度审计 §4.2）**：原来先算 `dup = 写入次数 - 产物数`，
-    #    `dup <= 0` 就返回"无覆盖" —— 撞了之后**又写了新产物**时，两个差值正好被抹平
-    #    → **漏报**。而按 ID 分组的检查**就在下面几行**，被那个短路跳过了。
-    #    判据只能是"同一个 ID 写了两次"，不是两个计数相减。
-    if clash:
-        return False, f"⚠️ 同一个 ID 被写了多次（后写的覆盖了先写的）：{clash}"
-    return True, f"{len(w)} 次写入 / {len(ids)} 个产物，无重号"
-
-
+# ⚠️ ~~`check_artifact_write_no_collision`~~ **2026-11-05 删**（零 case 用）：
+#    它断"每次 `store_artifact` 拿到唯一 ID"—— 而那个竞态**端到端测不到**
+#    （实测写入间隔 4–205 秒，窗口在微秒级 ✗）。**已经由 `unit_artifact_race.py` 压着** ✓
+#    （那边还带"对照组必须炸"的有效性自检 ✓）—— 留在这里是**第二份定义** ✗。
 @_reg
 def check_artifact_writes_multithreaded(run: dict, turn: dict) -> Result:
     """**测试有效性断言**：产物确实是并发写的。
@@ -494,62 +417,8 @@ def check_fault_fired(run: dict, turn: dict) -> Result:
                    f"（structured {st.get('fired', 0)} ＋ stream {sr.get('fired', 0)}）")
 
 
-@_reg
-def check_run_task_count_over(run: dict, turn: dict, skill: str, n: int) -> Result:
-    """🔬 **测试有效性**：这个技能真的被跑了几次（首跑 + 每次投递各算一次）。
-
-    ⚠️ **它断的是"模型会不会重入" —— 那是模型的自由选择，所以它脆。**
-    原来 `t3-split-answers` 用它（`n: 3`）压"答复投递"那条路，结果：
-    主 agent 自己把信息收齐了才派发，执行器**一次就干完** → 路径压根没被走到
-    → **基线臂和实验臂逐字相同地都挂这一条**（2026-11-02 实测）。
-
-    **正解不是调 n，是让平台把路造出来**：case 用 `initial_tasks` 注入一个
-    `waiting_for_input` 的 Task（见 `_child.py`），那条路就**必然**被走到；
-    要断"平台确实投递了"就用 `platform_fed_answer` —— 那条断的是**平台行为**，稳。
-    """
-    got = sum(1 for x in (run.get("run_tasks") or []) if x.get("skill") == skill)
-    return got >= n, f"{skill} 跑了 {got} 次（要 ≥{n} 才算压到重入路径）"
-
-
-@_reg
-def check_llm_calls_under(run: dict, turn: dict, n: int) -> Result:
-    got = (run.get("usage") or {}).get("llm_calls", 0)
-    return got <= n, f"LLM 调用 {got} 次（上限 {n}）"
-
-
-# ──────────────────────────── 回复文本 ────────────────────────────
-
-
-# ⚠️ ~~`check_reply_contains` / `check_reply_excludes`~~ **2026-11-05 删**：
-#    它们在**模型说的话**里找词（`s in turn["reply"]`）—— 用户原话：
-#    *"评测层那几个根据字符匹配的断言本质上没任何效果 都是自欺欺人 …… 你是在断言
-#    llm 吐出来的东西啊 这个不现实"*。
-#    **过了不代表对**（换个说法就漏）、**挂了不代表错**（同义表达就误伤），
-#    而且它们红了会引导人去改**提示词**（去凑那几个词）—— 那是把病治到模型身上。
-#    真要判"回复里有没有 X"，那是**语义判断** → 走软 rubric（评分模型判、判断留档）。
-#    🔴 **守卫**：`unit_feed_waiting` ⑪ —— `checks.py` 里不许再出现"读 `turn["reply"]`
-#    找内容"的断言（AST 扫，名字也不许再出现）。
-
-
-# ⚠️ ~~`check_reply_nonempty`~~ **2026-11-05 删**（用户："没用就删"）：
-#    它断的是"**模型说没说话**"（`turn["reply"]` 非空）—— 同族（拿模型输出当判据 ✗），
-#    而且**历史上从来没红过**（一次都没抓到过东西）。真出现"一个字没说"，
-#    用户那边看到的是一轮空回复 ✓，不需要一条专门断模型输出的断言。
-
-
-# ⚠️ ~~`check_no_duplicate_completed`~~ **2026-11-05 删**（随 `s01b-dedup-at-dispatch`
-#    一起 —— 用户："删了呗"）：那条 case 删掉之后它**没人用了**（死断言 = 地雷：
-#    谁挂上它、红了会引导他去改实现）。**"同一件事不许做成两份成品"这条性质没丢** ——
-#    `every_task_has_artifact` / `artifact_no_cross_attribution` 仍在压产物归属 ✓。
-#    （判据同 `check_supersede_worked`：**零 case 用的断言要删，别留着当地雷**。）
-
-
-# ⚠️ ~~`check_supersede_worked`~~ **2026-11-05 删**（深度审计 §4.1）——
-#    它要求「重派同一技能后，旧的**待答**必须被取代」（`n_sup >= 1 and n_wait == 0`），
-#    而 `agent._supersede_old` 2026-10-29 就改成**只取代 `failed`，`waiting_for_input` 一律不碰**
-#    （理由：重派不该**静默抹掉一个用户从没回答过的问题** —— F7 实测踩过，
-#    主 agent 自己编了个答案重派，`finalize` 看到"没有待答"就什么都不做，**用户从没被问过**）。
-#
-#    也就是说这条断言**要求一个已经被否决的行为**。而且它 `grep` 全部 case **零命中**
-#    （死断言）—— 地雷形状：谁把它挂上，红了就会引导他去改实现（把待答取代掉）→
-#    把用户的问题弄丢。S19 要的语义由 `s19-supersede.yaml` 的 `no_task_stage` 表达，够了。
+# ⚠️ ~~`check_run_task_count_over`~~ **2026-11-05 删**（零 case 用）：
+#    它**自己的 docstring 就写着它脆** ✗ —— *"它断的是'模型会不会重入'，那是模型的
+#    自由选择"*，而"正解是让平台造路（`initial_tasks` 注入一个待答 Task）" ✓。
+#    既然正解已经落地（`t3` / `e-late-answer` / `s08` / `s19` 都在注入 ✓），
+#    这条**脆的旧工具**就该退场 —— 留着只会有人再拿它写脆 case ✗。

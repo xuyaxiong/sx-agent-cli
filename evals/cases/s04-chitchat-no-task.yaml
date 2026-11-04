@@ -10,3 +10,5 @@ checks:
     n: 0
   - check: delegate_calls_max
     n: 0
+  # 闲聊轮：没有待答 → **不该有透传**（平台事实 ✓）
+  - check: no_platform_relay
