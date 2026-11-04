@@ -241,32 +241,47 @@ def check_delegate_calls_max(run: dict, turn: dict, n: int) -> Result:
     return got <= n, f"delegate 调用 {got} 次（上限 {n}）"
 
 
+def _actions(run: dict, turn: dict, did: str) -> list[dict]:
+    """到这一轮为止，平台做过哪些 `did` 动作 —— **读结构化字段**（`State.actions`）。
+
+    ⚠️ 别退回"在 `turn["log"]` 里找那句话"：那是渲染产物，措辞一改断言就静默给错结论。
+    """
+    return [
+        a
+        for t in run["turns"][: turn["turn"]]
+        for a in (t.get("actions") or [])
+        if a.get("did") == did
+    ]
+
+
 @_reg
 def check_platform_relayed(run: dict, turn: dict) -> Result:
     """**平台把待答透传给用户了** —— 这是 F7 修复的核心动作。
 
     2026-10-29 改：`finalize` 不再用 LLM 判断"主 agent 问没问"，
-    **有待答就无条件原样贴出去**。这条断言就是在日志里抓这个动作。
+    **有待答就无条件原样贴出去**。
+
+    🔴 **读 `actions`（对象），不读 `log`（渲染好的句子）**（2026-11-04）：
+    原来这里是 `if "finalize: 透传" in ln` —— 改一句文案，这条断言就**静默**报
+    "没看到透传"（判据一：渲染产物不许被反解析回结构）。
     """
-    hits = [ln for t in run["turns"][: turn["turn"]] for ln in t.get("log", []) if "finalize: 透传" in ln]
+    hits = _actions(run, turn, "relay")
     return bool(hits), f"透传了：{hits}" if hits else "⚠️ 没看到透传 —— 待答可能没到用户手上"
 
 
 @_reg
 def check_no_platform_relay(run: dict, turn: dict) -> Result:
-    hits = [ln for t in run["turns"][: turn["turn"]] for ln in t.get("log", []) if "finalize: 透传" in ln]
+    hits = _actions(run, turn, "relay")
     return not hits, f"不该有透传，实际：{hits}" if hits else "没有待答，未透传"
 
 
 @_reg
 def check_platform_fed_answer(run: dict, turn: dict) -> Result:
-    """**平台把用户原话投给待答任务了** —— 待答的解除走的是平台，不是主 agent 重派。"""
-    hits = [
-        ln
-        for t in run["turns"][: turn["turn"]]
-        for ln in t.get("log", [])
-        if "把用户这条消息**原话**投过去" in ln
-    ]
+    """**平台把用户原话投给待答任务了** —— 待答的解除走的是平台，不是主 agent 重派。
+
+    同 `check_platform_relayed`：读 `actions`，不读日志串。
+    """
+    hits = _actions(run, turn, "feed")
     return bool(hits), f"投递了：{hits}" if hits else "⚠️ 没看到投递"
 
 

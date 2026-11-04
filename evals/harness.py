@@ -451,7 +451,8 @@ def snapshot(state: dict, user: str, prev_len: int, idx: int, wall_s: float) -> 
             for m in new
         ],
         "new_msg_kinds": [type(m).__name__ for m in new],
-        "log": state.get("log") or [],
+        "log": state.get("log") or [],          # 渲染记录（给人看 / `_run.md`）
+        "actions": state.get("actions") or [],  # 🔴 结构化事实（**断言读它**，别读 log）
         "wall_s": wall_s,
     }
 
@@ -595,8 +596,8 @@ def _turn_summary(turns: list[dict], i: int) -> list[str]:
         out.append("- 上一轮：无（首轮）")
     else:
         waiting = [x for x in (prev.get("tasks") or []) if x.get("stage") == "waiting_for_input"]
-        prev_lines = prev.get("log") or []
-        relayed = [ln for ln in prev_lines if "finalize: 透传" in ln]
+        # 🔴 读 `actions`（对象），不读 `log`（句子）—— 见 `State.actions` 的注释
+        relayed = [a for a in (prev.get("actions") or []) if a.get("did") == "relay"]
         if waiting:
             who = "、".join(f"`{x['id']}`（{x['skill']}）" for x in waiting)
             out.append(
@@ -611,10 +612,15 @@ def _turn_summary(turns: list[dict], i: int) -> list[str]:
         else "- 本轮输入：**测试脚本预置**（`evals/cases/*.yaml` 的 `turns` 里写死的字符串）"
         "，**不是真人即时输入**"
     )
-    own = (t.get("log") or [])[len(prev.get("log") or []) :] if prev else (t.get("log") or [])
-    fed = [ln for ln in own if "把用户这条消息" in ln]
+    # ⚠️ 这里原来是从日志句子里 `split('→')[-1]` 切出"平台动作"那句话 —— 反解析（判据一）。
+    #    现在读对象，自己渲染一句。
+    own = (
+        (t.get("actions") or [])[len(prev.get("actions") or []) :] if prev else (t.get("actions") or [])
+    )
+    fed = [a for a in own if a.get("did") == "feed"]
     if fed:
-        out.append(f"- 平台动作：{fed[0].split('→')[-1].strip()}")
+        who = "、".join(f"`{x}`" for x in fed[0]["tasks"])
+        out.append(f"- 平台动作：把用户原话**原样**投给了 {len(fed[0]['tasks'])} 个待答任务（{who}）")
     elif prev is not None and any(x.get("stage") == "waiting_for_input" for x in (prev.get("tasks") or [])):
         out.append("- 平台动作：⚠️ 上一轮有待答，但本轮没看到投递记录")
     out.append("")

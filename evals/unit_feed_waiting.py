@@ -20,6 +20,8 @@
 
 from __future__ import annotations
 
+import ast
+import io
 import sys
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -245,6 +247,67 @@ def main() -> None:
           repr(out8[0]["qa"]))
     check("日志里说破了这一跳（不然读的人以为平台凭空多跑了一轮）",
           any("试答" in ln for ln in logs8), repr(logs8))
+
+    print("\n⑨ 平台动作是**对象**，断言**读对象**（CLAUDE.md 那条已知违反的收尾）")
+    # 🔴 2026-11-04：`checks.py` / `harness._turn_summary` 原来在 `state["log"]` 的**渲染串**上
+    #    做子串匹配（`"finalize: 透传" in ln`）—— 改一句文案，断言就**静默给出错误结论**
+    #    （判据一：渲染产物不许被反解析回结构）。现在平台在**发生那一刻**写 `actions`
+    #    （对象），断言读它；`log` 那句人话仍在同一个调用点写（给人看 / `_run.md`）。
+    seen9 = _capture()
+    state9 = {
+        "messages": [HumanMessage("两课时")],
+        "tasks": [{
+            "id": "t1", "skill": "quiz", "task": "出随堂小测",
+            "stage": "waiting_for_input", "artifacts": [], "refs": [],
+            "report": "用几个课时？", "progress": "", "missing": [],
+            "qa": [], "user_turns": [],
+        }],
+    }
+    out9 = graph.node_prepare(state9)
+    acts9 = out9.get("actions") or []
+    check("投递那一跳写了**结构化动作**（`did=feed`）",
+          [a.get("did") for a in acts9] == ["feed"], repr(acts9))
+    check("动作里带**投给了谁**（Task id，不是从句子尾巴切的）",
+          acts9 and acts9[0].get("tasks") == ["t1"], repr(acts9))
+    check("动作里带**多少字**（用户原话长度）",
+          acts9 and acts9[0].get("chars") == len("两课时"), repr(acts9))
+    check("同一刻那句**人话仍在** `log` 里（给人看的，没被删）",
+          any("投过去" in ln for ln in (out9.get("log") or [])), repr(out9.get("log")))
+
+    # 守卫：断言层不许再回头去解析 `log`（AST 扫字符串常量，不看注释）
+    def _log_refs(path: str) -> list[str]:
+        tree = ast.parse(io.open(path, encoding="utf-8").read())
+        out: list[str] = []
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if any(isinstance(n, ast.Constant) and n.value == "log" for n in ast.walk(fn)):
+                out.append(fn.name)
+        return sorted(set(out))
+
+    check("`checks.py` 里**一次都不许**引用 `log`（断言只读对象）",
+          not _log_refs("evals/checks.py"), repr(_log_refs("evals/checks.py")))
+    check("`harness.py` 里 `log` 只许出现在「快照复制 / `_run.md` 渲染」两处",
+          _log_refs("evals/harness.py") == ["dump_run_record", "snapshot"],
+          repr(_log_refs("evals/harness.py")))
+
+    # 闭环：那三条断言**真的读得到**动作（合成一份 run record，纯函数、秒级）
+    from evals.checks import CHECKS
+
+    def _run(actions: list[dict]) -> dict:
+        turn = {"turn": 1, "actions": actions, "log": ["（这里故意不写那句人话）"]}
+        return {"turns": [turn]}
+
+    relayed = [{"by": "platform.finalize", "did": "relay", "tasks": ["t1"], "chars": 10}]
+    fed = [{"by": "platform.prepare", "did": "feed", "tasks": ["t1"], "chars": 3}]
+    t1 = {"turn": 1}
+    check("`platform_relayed`：有 relay 动作 → 过（**不看 log**）",
+          CHECKS["platform_relayed"](_run(relayed), t1)[0] is True)
+    check("`platform_relayed`：没有 → 不过（原来靠日志串，现在是靠对象）",
+          CHECKS["platform_relayed"](_run(fed), t1)[0] is False)
+    check("`no_platform_relay`：没有 relay → 过", CHECKS["no_platform_relay"](_run(fed), t1)[0] is True)
+    check("`platform_fed_answer`：有 feed 动作 → 过（**不看 log**）",
+          CHECKS["platform_fed_answer"](_run(fed), t1)[0] is True)
 
     print("\n" + "═" * 78)
     print(f"{'全部通过' if not FAIL else '有失败'}：{len(PASS)}/{len(PASS) + len(FAIL)}")

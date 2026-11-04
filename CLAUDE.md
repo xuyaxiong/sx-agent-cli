@@ -32,11 +32,15 @@
 （818 行）。现在**契约是事件、不是文本**（`proto/trace.py` 的事件总线：记录器与展示层各自渲染，
 谁也不读对方的产物）。⚠️ 改它之前仍要问一句"这是不是又在从渲染文本里读结构"。
 
-⚠️ **已知的违反（认账，未修）**：`evals/checks.py` 的三条断言
-（`check_platform_relayed` / `check_no_platform_relay` / `check_platform_fed_answer`）
-与 `evals/harness.py:_turn_summary` 仍在 `state["log"]` 的**渲染串**上做子串匹配
-（`"finalize: 透传" in ln`）。文案一改，**断言会静默给出错误结论** —— 比显示错更坏，
-它看起来像"功能坏了"。**别在它上面调字符串**，要修就先把事实变成结构。
+✅ **也已修（2026-11-04）**：`evals/checks.py` 的三条断言与 `evals/harness.py:_turn_summary`
+原来在 `state["log"]` 的**渲染串**上做子串匹配（`"finalize: 透传" in ln`）—— 文案一改，
+**断言就静默给出错误结论**（比显示错更坏：它看起来像"功能坏了"）。
+现在平台在**发生那一刻**写结构化动作（`State.actions`：谁做的 / 做了什么 / 涉及哪些 Task / 多少字），
+**断言与报告读对象**；`log` 那句人话仍在同一个调用点写（给人看 / `_run.md`）。
+守卫：`unit_feed_waiting` ⑨ —— `checks.py` 里**零** `log` 引用、`harness.py` 里只许在
+「快照复制 / `_run.md` 渲染」两处。
+
+✅ **目前没有已知违反。** 下一个要警惕的形状还是它：**谁在解析别处渲染出来的文本**。
 
 ## 🔴 判据二：改任何一处之前，先拿这些判据问一遍"这里算不算违反"
 

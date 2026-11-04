@@ -63,7 +63,21 @@ class State(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]
     #: 只记录"主 agent 决定委派出去的工作"。不委派就是空 —— 这是 Task 概念在新设计里的落点
     tasks: NotRequired[Annotated[list[dict[str, Any]], _merge_tasks]]
+    #: 平台这一轮干了什么 —— **给人看的渲染记录**（`_run.md`、CLI 的 delta）。
+    #: ⚠️ **不许拿它做判据**（断言 / 报告都不许）—— 它是渲染产物，改一句文案就静默失配。
     log: NotRequired[Annotated[list[str], operator.add]]
+    #: **平台动作** —— 结构化的事实（谁做的 / 做了什么 / 涉及哪些 Task / 多少字）。
+    #:
+    #: 🔴 **为什么要单开一个字段**（2026-11-04）：`log` 是**渲染给人看的**，而断言原来
+    #: 在它上面做子串匹配（`"finalize: 透传" in ln`）—— 改一句文案，断言就**静默给出
+    #: 错误结论**（`check_platform_relayed` 会报"没看到透传"）。判据见 CLAUDE.md 判据一：
+    #: **渲染产物不许被反解析回结构**。
+    #:
+    #: 对象在**发生那一刻**由平台自己写（它手里就有事实），断言 / 报告**读对象**；
+    #: `log` 那句人话仍在**同一个调用点**写 —— 两者同源（同一批事实），各司其职。
+    #: ⚠️ **别加进 `AgentState`**：子图会把声明过的字段原样回吐给父图，
+    #: 而这里的 reducer 是 `operator.add` —— 每轮翻一倍（`log` 那条指数膨胀的教训）。
+    actions: NotRequired[Annotated[list[dict[str, Any]], operator.add]]
 
 
 class AgentState(TypedDict):
@@ -217,10 +231,20 @@ def node_prepare(state: State) -> dict:
     # 主 agent 的东西，复盘时最该看到的就是它。见 `trace.handoff`。
     trace.handoff("台账", "平台", "主 agent", text,
                   structured=f"Task × {len(tasks)} → render_ledger", full=True)
+    # 🔴 投递那一跳的**结构化事实**（断言读它）：判据是 `run_by == "feed"` ——
+    # 那是 `_feed_waiting` 在**真投出去之前**打的标记；能力不存在被**跳过**的不会带上它，
+    # 所以"投给了谁"是准的（不靠解析 `logs` 里那句话）。
+    fed = [t["id"] for t in updated if t.get("run_by") == "feed"]
+    user = _last_human(state)
+    actions = (
+        [{"by": "platform.prepare", "did": "feed", "tasks": fed, "chars": len(user)}]
+        if fed else []
+    )
     return {
         "messages": [SystemMessage(content=text)],
         "tasks": updated,  # reducer 按 id 合并
         "log": logs + [f"prepare: 注入台账（{len(tasks)} 项，其中待答 {len(waiting)} 条）"],
+        "actions": actions,
     }
 
 
@@ -276,6 +300,11 @@ def node_finalize(state: State) -> dict:
         # 而不是"看内容像不像执行器的话"（那是反结构化，见 `proto/handoff` 的 docstring）。
         "messages": [AIMessage(content=block, additional_kwargs={"injected_by": "platform.finalize"})],
         "log": [f"finalize: 透传 {len(waiting)} 条待答（原样贴执行器的话，无条件）"],
+        # 🔴 **同一刻记下结构化事实**（断言读它，不读上面那句人话）—— 见 `State.actions`
+        "actions": [{
+            "by": "platform.finalize", "did": "relay",
+            "tasks": [t["id"] for t in waiting], "chars": len(block),
+        }],
     }
 
 

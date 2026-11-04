@@ -1020,7 +1020,8 @@ class AgentState(TypedDict):     # 主 agent 子图 —— **故意不含 log**
 | `artifacts_chars` / `artifacts` | 产物库正文总量 / `{aid: 字数}` |
 | `delegate_calls` / `tool_calls` | 本轮的工具调用（名字 / 名字+参数摘要） |
 | `messages` / `new_msg_kinds` | 本轮全部新消息（**原文不截断**） |
-| `log` | `state["log"]` |
+| `log` | `state["log"]`（**渲染记录**，给人看 / `_run.md` —— ⚠️ 断言不许读它） |
+| `actions` | `state["actions"]`（🔴 **平台动作的结构化事实**：`{by, did, tasks, chars}` —— 断言 / 报告读它） |
 
 **落盘**：`runs/<tag>/` 下 `_console.log`（终端全文，去色）· `artifacts/<tag>__r1/`
 （产物原文 + `_index.md` + `_run.md`）· `results.json`（顶层 14 个键）。

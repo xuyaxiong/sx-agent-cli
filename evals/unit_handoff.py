@@ -220,6 +220,18 @@ def main() -> None:
           _injected_label(tag))
     check("⑪ 透传 · 没标记的消息**不**被误标", _injected_label(None) == "")
 
+    # 🔴 同一刻还要写**结构化动作**（2026-11-04）：断言读它，不读 `log` 那句人话 ——
+    #    见 `State.actions` 的注释。拿掉这一条 → `unit_feed_waiting` ⑨ 的守卫会红。
+    fin_out = node_finalize({**st, "tasks": [short_task]})
+    acts = fin_out.get("actions") or []
+    check("⑪ 透传 · 写了结构化动作（`did=relay` + 涉及哪些 Task + 多少字）",
+          [a.get("did") for a in acts] == ["relay"]
+          and acts[0].get("tasks") == [short_task["id"]]
+          and acts[0].get("chars") == len(fin_out["messages"][0].content),
+          repr(acts))
+    check("⑪ 透传 · 同一刻那句**人话仍在** `log` 里（给人看的，没被删）",
+          any("透传" in ln for ln in (fin_out.get("log") or [])), repr(fin_out.get("log")))
+
     # ── ⑭ 平台故障那条链：`run_task` **兜住**（不是炸整轮）→ 回执说清「原样再派」──
     # 🔴 2026-11-04 复审 N2/R8：`stream_agent` 重试过仍失败 → 原来异常一路穿出去炸整轮
     #    （用户白等 3 分钟 + 一屏栈）。现在 `run_task` 接住、记成 `fault`，交回主 agent 决定。
