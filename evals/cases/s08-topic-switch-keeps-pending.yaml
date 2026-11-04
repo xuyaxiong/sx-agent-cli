@@ -1,12 +1,29 @@
 id: s08-topic-switch-keeps-pending
-family: 边界
+family: 台账
 why: >
-  旧版这里死循环（把换话题当成答复，重跑执行器又挂起）。
-  现在平台会把用户原话投给待答任务 —— 这条测的是「**不丢、不阻塞、不硬做**」。
+  **换了话题，旧的待答不能被静默丢掉**（F7 的另一面）：用户没回答它、而是说了件新事，
+  那条待答得**原样挂着**（且平台已经把它透传给用户了）。
 realism: 实测发生过
-tier: full
+tier: smoke
+# 🔴 **平台造路**（2026-11-05 改）：原来靠"执行器会提问"把待答造出来 —— 模型的自由
+#    选择 ✗（实测这条 `task_stages` 在 14 次里挂过 5 次）。现在直接注入，必然被走到 ✓。
+initial_tasks:
+  - id: t-injected
+    skill: quiz
+    task: 出随堂小测（三年级数学《分数的初步认识》，第一课时）
+    stage: waiting_for_input
+    artifacts: []
+    refs: []
+    report: 难度要哪一档？（基础 / 提升 / 挑战）
+    asked: 难度要哪一档？（基础 / 提升 / 挑战）
+    qa: []
+    agent_tried: false
+    user_turns:
+      - n: 1
+        text: 帮我出个随堂小测，人教版三年级数学《分数的初步认识》第一课时
 turns:
   - "帮我出个随堂小测，人教版三年级数学《分数的初步认识》第一课时"
+  # 换了话题（**没**回答它）—— 而且这条**不带标识**（不是回答）✓
   - "算了，先帮我备一节课"
 checks:
   - check: task_stages
@@ -15,17 +32,17 @@ checks:
   # 平台必须把问题透传给用户（F7 的保证）
   - check: platform_relayed
     at: 1
-  # 新需求照常处理（备课要课题和课时，都给了 → 直接完成）
-  - check: task_stages
-    at: 2
-    stages: {lesson-prep: completed}
-  # 旧的待答**没被静默丢掉** —— 要么还挂着（且被透传），要么已被答复解决
+  # 🔴 **旧的待答没被静默丢掉** —— 这才是这条 case 的题眼（平台事实 ✓）
   - check: no_task_stage
     at: 2
     stages: {quiz: [superseded, failed]}
+  - check: task_stages
+    at: 2
+    stages: {quiz: waiting_for_input}
   - check: no_exception
-# ⚠️ 原来断言 `at: 2, quiz: waiting_for_input` —— **太严**，实测挂了：
-#    执行器收到「算了，先帮我备一节课」后**没有重新问，而是自己挑了「基础档」硬做**，
-#    还把"备课"揉进了小测任务里。平台机制没错（问题透传了、答复投递了），
-#    是**执行器不遵守自己技能里的「不知道就先问」**。
-#    已在 executor.py 的 `_PLATFORM_RULE` 里补了针对性规则（见 docs/discussion-log.md F10）。
+# ⚠️ **删了一条**（2026-11-05）：原来还断 `at: 2, stages: {lesson-prep: completed}` ——
+#    那断的是"**主 agent 会不会把新需求派出去**"，是模型的自由选择 ✗（本 case 14 次里
+#    它挂过）。**硬断言只许断平台事实**；"它有没有派"要看真跑观感，不在这里钉。
+# ⚠️ 另有一条历史注记（保留）：原来断 `at: 2, quiz: waiting_for_input` 时**太严**实测挂了 ——
+#    执行器收到「算了，先帮我备一节课」后没重新问、而是自己挑了「基础档」硬做。
+#    平台机制没错（问题透传了、答复投递了），是执行器不守自己技能里的「不知道就先问」。

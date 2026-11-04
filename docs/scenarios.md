@@ -98,6 +98,12 @@
 > case 改名 `s07-no-artifact-task`，用一个**纯分析技能**压它 ——
 > 断的仍是「**无产物照样能判完成**」，**不再**断"配置块原样转达"（平台不保证那条）。
 >
+> 🔴 **2026-11-05 这条 case 也删了 —— 前提彻底没了**：它断的是「**无产物照样能判完成**」，
+> 而判定退休后三态**由结构定**（`executor._structural_status`）：`completed` **必然有产物** ✗
+> （`completed_in_reply` 那一档同时被删 ✗）。"没有产物"现在**结构上就是** `incomplete`
+> → 推回去让它交付 ✓ —— 这条 scenario 描述的状态**不可达**了。
+> （**性质没丢**：正文交付仍是反模式 ✓，平台只保证产物 ✓ —— 见 §0.7。）
+>
 > 同批删掉的：`r1-protocol-delivery` / `r2-body-delivery`（前提已不成立 ——
 > 真技能 `zhiwo` **已改成 `write_artifact` 落产物**）、内置玩具技能 `courseware-config`、
 > `evals/fixture-skills/`。详见 `solution.md` §0.7。

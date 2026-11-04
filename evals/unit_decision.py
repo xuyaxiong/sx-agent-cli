@@ -154,6 +154,51 @@ def main() -> None:
     check("事件里的键**覆盖** `DECISION`", bool(evs) and set(trace.DECISION) <= set(evs[-1]),
           f"事件键={sorted(evs[-1]) if evs else '（没发）'}，DECISION={list(trace.DECISION)}")
 
+
+    print("\n⑨ `safe_structured`：抖动 → 重试一次 → **保守默认**（不炸整轮）")
+    # 🔴 2026-11-05 从 `e11-fault-injection` **搬进来的**：那条 case 注入的故障打在
+    #    "试答"的结构化调用上，**只有"执行器主动提问"才会走到那一步** ✗ —— 模型不问
+    #    就没处可打（`fault_fired` 实测 7 次里 1 次报"触发 0 次"）。**时红时绿的测试
+    #    就是噪音**，所以把覆盖搬到这里：确定、不调 LLM、秒级 ✓。
+    #    （流的抖动由 `e12-fault-stream` 覆盖 —— 那个注入点**必然**发生 ✓）
+    from proto import llm as llm_mod
+    from proto.llm import safe_structured
+
+    class _Schema:
+        pass
+
+    class _Boom:
+        calls = 0
+
+        def with_structured_output(self, schema):  # noqa: ANN001
+            return self
+
+        def invoke(self, prompt):  # noqa: ANN001
+            _Boom.calls += 1
+            raise TimeoutError("（模拟）grammar 编译超时")
+
+    class _Empty:
+        def with_structured_output(self, schema):  # noqa: ANN001
+            return self
+
+        def invoke(self, prompt):  # noqa: ANN001
+            return None                     # 模型吐了空（不抛）
+
+    _orig = llm_mod.get_model
+    try:
+        llm_mod.get_model = lambda: _Boom()          # type: ignore[assignment]
+        got = safe_structured(_Schema, "p", "保守默认", tag="测试",
+                              log_prompt=False, log_response=False)
+        llm_mod.get_model = lambda: _Empty()         # type: ignore[assignment]
+        got2 = safe_structured(_Schema, "p", "保守默认", tag="测试",
+                               log_prompt=False, log_response=False)
+    finally:
+        llm_mod.get_model = _orig                    # type: ignore[assignment]
+    check("两次都失败 → 返回**保守默认值**（不抛、不炸整轮）", got == "保守默认", repr(got))
+    check("**重试了一次**（模型被调 2 次）", _Boom.calls == 2, f"{_Boom.calls} 次")
+    check("**返回 `None` 也算失败** → 走默认值（不把 None 交给调用方）",
+          got2 == "保守默认", repr(got2))
+
     print("\n" + "═" * 78)
     print(f"{'全部通过' if not FAIL else '有失败'}：{len(PASS)}/{len(PASS) + len(FAIL)}")
     for name in FAIL:
