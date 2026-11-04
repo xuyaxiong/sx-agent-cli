@@ -80,7 +80,7 @@ def _sample() -> None:
 def main() -> None:
     got = _capture(_sample)
     print("① 四段齐全、顺序 = 用户定的那个顺序（前提 → 问题 → 结果 → 下一步）")
-    heads = [f"{trace.DECISION_HEAD} · ", *[f"    {v}：" for v in trace.DECISION.values()]]
+    heads = [f"{trace._DECISION_HEAD} · ", *[f"    {v}：" for v in trace.DECISION.values()]]
     for h in heads:
         check(f"`{h.strip()}` 在", h in got, repr(got[:120]))
     pos = [got.find(f"    {v}：") for v in trace.DECISION.values()]
@@ -107,6 +107,12 @@ def main() -> None:
     code = "\n".join(ln for ln in src.splitlines() if not ln.strip().startswith("#"))
     for gone in ("DECISION_HEAD", "轮判定：status=", "判定输入："):
         check(f"`chat.py` 的**代码**里不再出现 `{gone}`", gone not in code)
+    # 🔴 记录层的**落盘格式**（`_DECISION_HEAD` / `_STREAM_MARK`）也不许伸手（2026-11-04 复审 N1）：
+    # 名字私有之后，写出来就是"我在读记录层的产物"的信号 —— 这条把它变成**会红**的规矩。
+    # ⚠️ `brief_args` **不在**这张名单里：它是**两层共用**的渲染助手（展示层也要把工具参数
+    #    渲染成同一副面孔），公开是对的 —— 名单只收"记录层自己的格式"。
+    for gone in ("_DECISION_HEAD", "_STREAM_MARK", "render_message"):
+        check(f"`chat.py` 的**代码**里不出现记录层的 `{gone}`", gone not in code)
     check("`trace.decision` 发的是结构化决策事件（字段原样在 ev 里）",
           '"type": "decision"' in io.open("proto/trace.py", encoding="utf-8").read())
 

@@ -32,6 +32,8 @@
 
 from __future__ import annotations
 
+from typing import Literal
+
 # ──────────────────────────── 段名 ────────────────────────────
 
 #: **段名** —— 渲染器从这里取，记录层也从这里切。**这是唯一的来源。**
@@ -88,6 +90,27 @@ SOURCE_NOTE: dict[str, str] = {
 
 #: 来源那一行的前缀 —— `来源：` 后面接 `SOURCE_NOTE[key]`。
 SOURCE_LABEL = "来源："
+
+
+# ──────────────────────────── 状态词汇 ────────────────────────────
+#
+# 🔴 **为什么收在这里**（2026-11-04 复审 N4）：同一套状态原来在**四处**各写一遍字符串
+# （`executor.OutcomeStatus` · `judgement._Judgement.status` · `briefing._STATUS_TO_STAGE`
+# 的键 · `ledger.STAGE_MARK` 的键）—— `settle()` 收敛的是**写法**，**词汇**还靠人守同名：
+# 改一处状态名，其余三处**静默分叉**。这正是 `registry` 在技能表上刚治过的病的翻版。
+# 词汇表本来就是本模块的职责（段名 / 来源标注 / 出口分类都在这），状态名一并在这一份里。
+#
+# ⚠️ 覆盖性由 `unit_handoff` 的守卫盯着（三态 ↔ 映射键、五态 ↔ `STAGE_MARK` 键），
+#    不是靠"记得改另外三处"。
+
+#: **执行器三态** —— 判定的结论（`_Judgement.status`）与 `ExecOutcome.status` 用的是它。
+OutcomeStatus = Literal["completed", "waiting_for_input", "incomplete"]
+
+#: **Task 五态** —— 台账 / 展示用的任务状态机（`Task.stage`）。
+#: 与三态**前三个同名**；唯一的映射是 `incomplete → failed`（判定说"还没做完"，
+#: 推满轮次后任务记"失败"）。另两个（`running` / `superseded`）不在三态里：
+#: 一个是"刚建、还没跑完"，一个是"同技能被重新委派、不用管了"。
+TaskStage = Literal["running", "completed", "waiting_for_input", "failed", "superseded"]
 
 
 def section_head(key: str) -> list[str]:

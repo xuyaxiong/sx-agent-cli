@@ -187,8 +187,17 @@ def main() -> None:
     injected = node_prepare(st)["messages"][0].content
     check("② 台账 · 长内容被截了（它是每轮重复注入的索引，允许短）", LONG not in injected)
     check("② 台账 · **但截了必须说**：带了平台截断标记", "【平台截断" in injected)
-    check("② 台账 · 说明了还差多少字 / 去哪看全文",
-          "全文见那次的回执" in injected)
+    # 🔴 **E2（2026-11-04 复审）："全文在哪"两条路不一样** —— `delegate` 那趟的全文在
+    #    **回执**里（主 agent 自己的工具返回，就在它上下文里）；`feed`（用户答复后
+    #    平台投递重跑）那趟**没有回执**，全文压根不在它上下文里。
+    #    原来两条路都写"全文见那次的回执"—— 投递那条路指过去，只会翻到**上一轮**的回执
+    #    （内容还是旧的），把旧的当成当前的：**指向"存在但内容不对"的出处比指不到更坏**。
+    check("② 台账 · 说明了还差多少字", "还有" in injected and "字" in injected)
+    check("② 台账 · `delegate` 那轮：指向回执",
+          "全文见那次的回执" in
+          node_prepare({**st, "tasks": [{**st["tasks"][0], "run_by": "delegate"}]})["messages"][0].content)
+    check("② 台账 · `feed`／没记 run_by 时：**不许**指向回执，要说清「你手上没有」",
+          "回执" not in injected and "不在你的上下文里" in injected)
     short_task = {**st["tasks"][0], "report": "很短", "progress": "也很短", "missing": ["短"]}
     check("② 台账 · 短内容**不该**被标截断",
           "【平台截断" not in node_prepare({**st, "tasks": [short_task]})["messages"][0].content)
@@ -210,6 +219,33 @@ def main() -> None:
           "透传" in _injected_label(tag) and "不是主 agent" in _injected_label(tag),
           _injected_label(tag))
     check("⑪ 透传 · 没标记的消息**不**被误标", _injected_label(None) == "")
+
+    # ── ⑬ 状态词汇**只有一份**（N4：三态 ↔ 映射键、五态 ↔ STAGE_MARK 键，必须刚好对上）──
+    # 🔴 2026-11-04 复审 N4：同一套状态原来在四处各写一遍字符串 —— `settle()` 收敛了**写法**，
+    # **词汇**还靠人守同名：改一处状态名，其余三处**静默分叉**。
+    # 现在词汇表在 `handoff/__init__`，这条守卫把"刚好覆盖"变成**会红**的规矩。
+    print("\n⑬ 状态词汇只有一份：词汇表 ↔ 各处的键，刚好对上")
+    from typing import get_args
+
+    from proto.handoff import OutcomeStatus, TaskStage
+    from proto.handoff.briefing import Task, _STATUS_TO_STAGE
+    from proto.handoff.ledger import STAGE_MARK
+
+    statuses, stages = set(get_args(OutcomeStatus)), set(get_args(TaskStage))
+    check("三态 ↔ `_STATUS_TO_STAGE` 的键**刚好**相等",
+          set(_STATUS_TO_STAGE) == statuses,
+          f"映射键={sorted(_STATUS_TO_STAGE)}；三态={sorted(statuses)}")
+    check("映射出来的值都是**合法的 TaskStage**",
+          set(_STATUS_TO_STAGE.values()) <= stages,
+          f"越界：{sorted(set(_STATUS_TO_STAGE.values()) - stages)}")
+    check("五态 ↔ `STAGE_MARK` 的键**刚好**相等",
+          set(STAGE_MARK) == stages, f"标记键={sorted(STAGE_MARK)}；五态={sorted(stages)}")
+    # ⚠️ TypedDict 的 `__annotations__` 在 3.12 下是 `ForwardRef`（字符串的壳）——
+    #    要 `get_type_hints` 解开再比，不然比的是壳。
+    from typing import get_type_hints
+
+    check("`Task.stage` 的标注就是 `TaskStage`（不是又一个 str）",
+          get_type_hints(Task)["stage"] == TaskStage, repr(get_type_hints(Task)["stage"]))
 
     # ── ⑫ 交接包里**每个渲染器都调得通** ──
     # 🔴 这条是 2026-11-03 搬家时**真踩到**的坑：`_judge_material` 抽进 `handoff/judgement.py` 时

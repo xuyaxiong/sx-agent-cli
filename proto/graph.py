@@ -35,6 +35,14 @@ from proto import trace
 from proto.agent import build_agent
 from proto.handoff.briefing import render_briefing, settle
 from proto.handoff.ledger import render_ledger
+# 🔴 **顶层 import，但用"模块 + 属性"形式**（2026-11-04 复审 N3 修）：
+#    `_feed_waiting` 里原来是**函数内** `from proto.executor import run_task` ——
+#    那**不是**为了破环（executor 从不 import graph），而是**晚绑定**：
+#    `harness.install()` 的记录器靠改 `proto.executor.run_task` 打桩，
+#    函数形式的 import 会在 import 那一刻把函数**绑死**，桩就不生效了。
+#    ⚠️ **实测踩过**：把函数内 import 直接提到顶层（`from proto.executor import run_task`）
+#    → `unit_feed_waiting` 打到真 LLM、卡住 180 秒。所以这里**必须**走属性访问。
+from proto import executor
 from proto.registry import registry  # 技能注册表（唯一持有者）
 
 
@@ -104,8 +112,6 @@ def _feed_waiting(state: State) -> tuple[list[dict], list[str]]:
 
     这也是**待答唯一的解除路径**：投递后要么 completed，要么还在等。
     """
-    from proto.executor import run_task
-
     user = _last_human(state)
     waiting = [
         t for t in (state.get("tasks") or []) if t.get("stage") == "waiting_for_input"
@@ -142,7 +148,13 @@ def _feed_waiting(state: State) -> tuple[list[dict], list[str]]:
                       structured=f"Task.qa 追加 1 对（累计 {len(rec['qa'])} 对）")
         # ⚠️ `refs` 要一起带上：不重建可读产物清单，执行器在续跑时就"看不见"前序产物了
         # 用户原话也一起带上（快照在 Task 上，所以这条重入路径**自动**有它）
-        outcome = run_task(skill, render_briefing(rec), rec.get("user_turns"))
+        # ⚠️ **属性访问**（`executor.run_task`）而不是 `from … import run_task` ——
+        #    这样 `harness.install()` 改 `proto.executor.run_task` 打的桩才生效（见文件顶部的注释）。
+        outcome = executor.run_task(skill, render_briefing(rec), rec.get("user_turns"))
+        # 🔴 **这轮是平台起的**（不是主 agent 派发的）—— 台账据此说清"全文在哪"：
+        # 这一趟**没有回执**（回执是 `delegate` 的工具返回），全文不在主 agent 上下文里。
+        # 不记这个事实的话，台账会指着一个**存在但内容不对**的出处（2026-11-04 复审 E2）。
+        rec["run_by"] = "feed"
         # ⚠️ 状态迁移走 `settle()`（**唯一一处**）—— 三条分支只决定"日志怎么说"。
         #    原来这里手写 `rec.update(stage="completed", artifacts=outcome.artifacts)`，
         #    会把"这一轮没产出就不抹掉上一轮产物"的保护抵消（2026-11-03 审核实测踩到）。

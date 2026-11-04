@@ -22,7 +22,6 @@ from __future__ import annotations
 import itertools
 import time
 from dataclasses import dataclass, field
-from typing import Literal
 
 from langchain.agents import create_agent
 from langchain.tools import tool
@@ -31,6 +30,7 @@ from pydantic import BaseModel, Field
 
 from proto import trace
 from proto.config import get_model
+from proto.handoff import OutcomeStatus as _OutcomeStatus  # 状态词汇（唯一一份）
 from proto.handoff.judgement import (  # 判定：schema + 输入模板（搬去 handoff 包）
     _Judgement,
     _judge_material,
@@ -75,8 +75,10 @@ MAX_REACT_ROUNDS = 3
 _RUN_SEQ = itertools.count(1)
 
 
-#: 出口三态 —— **和 `_Judgement.status` 同一个状态空间**，一一对应
-OutcomeStatus = Literal["completed", "waiting_for_input", "incomplete"]
+#: 出口三态 —— **词汇表在 `proto/handoff`**（2026-11-04 复审 N4：原来这里和
+#: `_Judgement.status` 各写一遍同一串字面量，改一处就静默分叉）。
+#: 这里再导出一次只是为了不打断既有引用（`ExecOutcome.status` 的标注用它）。
+OutcomeStatus = _OutcomeStatus
 
 
 @dataclass

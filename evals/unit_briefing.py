@@ -63,6 +63,7 @@ EXCLUDED: dict[str, str] = {
     "skill": "能力名 —— 技能指令已经整份注入了，名字没有增量信息",
     "stage": "平台状态机内部字段；'这是重入'这层意思由【续跑提示】承载",
     "agent_tried": "布尔标记（只写不读，跑批报告用）；它要传达的信息由 `qa` 里 `by=\"主 agent\"` 那条承载",
+    "run_by": "平台内部字段（**台账**用它决定'全文在哪'，见 `ledger._SRC`），执行器不需要",
 }
 
 #: 通用循环**查不了**的字段 —— 由下面的专门分块断言（不是排除，是换一种查法）
@@ -103,6 +104,8 @@ def _full_task() -> dict:
              "a": "填空补白"},
         ],
         "agent_tried": True,
+        # 这轮是谁起的 —— 台账据此说"全文在哪"（`delegate` 有回执 / `feed` 没有）
+        "run_by": "delegate",
         # 🔴 平台**不挑**哪几轮给全文（2026-11-03）：每一轮都只进**索引**一行
         # （序号 · 字数 · 开头），全文按需 `read_user_turn`。
         # ⚠️ 这三轮都**长于 40 字** —— 否则"开头"就是全文，④ 的负向断言测不出东西。
@@ -140,6 +143,16 @@ def main() -> None:
         # `stage` 的值是 waiting_for_input，正文里不该出现这个英文状态名
         ok = value not in text
         check(f"`{key}` 没泄漏", ok, "" if ok else f"出现了：{value!r}")
+
+    print("\n②′ 产物**取不到**时不许静默跳过（R6：与回执同一副面孔）")
+    # 🔴 2026-11-04 复审 R6：原来 `_index` 用 `if (a := …)` 把取不到的 ID 悄悄删掉 ——
+    #    同一份坏数据，执行器看到的是"少了一行"，主 agent 在回执里看到的是"这行有问题"。
+    dangling = {**task, "artifacts": ["art_999"], "refs": ["art_998"]}
+    dt = render_briefing(dangling)
+    check("产出的产物：缺失**显式写出**（不是少一行）",
+          "art_999（**产物库里没有这一条**）" in dt, repr([ln for ln in dt.splitlines() if "art_9" in ln]))
+    check("可读产物：同样显式写出",
+          "art_998（**产物库里没有这一条**）" in dt, repr([ln for ln in dt.splitlines() if "art_9" in ln]))
 
     print("\n③ 重入该有的提示语都在")
     check("说了这是上一轮的情况", "上一轮的情况" in text)

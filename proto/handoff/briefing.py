@@ -39,7 +39,18 @@ from __future__ import annotations
 
 from typing import Any, TypedDict
 
-from proto.handoff import BODY, body_lines, bullet_lines, section_head
+# ⚠️ 顶层 import（2026-11-04 复审 N3）：这两个原来都在**函数内**，纯习惯 ——
+# 无环（`artifacts` 只依赖 langchain 的工具装饰器；`trace` 只依赖 `config`）。
+from proto import artifacts as artifacts_mod
+from proto import trace
+from proto.handoff import (
+    BODY,
+    OutcomeStatus,
+    TaskStage,
+    body_lines,
+    bullet_lines,
+    section_head,
+)
 
 # ──────────────────────────── schema：委托单上有什么 ────────────────────────────
 
@@ -79,7 +90,7 @@ class Task(TypedDict, total=False):
     id: str
     skill: str
     task: str  # 主 agent 写的"这次要什么"（**它说的，可能加了料**）
-    stage: str  # running / completed / waiting_for_input / failed / superseded
+    stage: TaskStage  # 五态，词汇表在 `handoff/__init__`
     artifacts: list[str]  # **产出**的产物 ID
     refs: list[str]  # **输入引用**的产物 ID（两个方向，别混）
     report: str  # 执行器最后一轮的原话（**覆盖写**）
@@ -88,6 +99,16 @@ class Task(TypedDict, total=False):
     qa: list[QA]
     user_turns: list[Turn]  # 派发那一刻的快照
     agent_tried: bool  # 平台强制试答过没有
+    #: 这个 Task **最近一次运行是谁起的** —— `"delegate"`（主 agent 派发的）
+    #: / `"feed"`（用户答复后平台投递重跑的）。
+    #:
+    #: 🔴 **为什么要记**（2026-11-04 复审 E2）：台账截断时要说清"全文在哪"，
+    #: 而这两条路的答案**不一样** —— `delegate` 那一趟的全文在**回执**里（主 agent
+    #: 自己的工具返回，就在上下文里）；投递重跑那一趟**没有回执**（平台直接调的
+    #: `run_task`），全文压根不在主 agent 上下文里。
+    #: 原来台账对两条路都写"全文见那次的回执"—— 投递那条路指过去，主 agent 会翻到
+    #: **上一轮**的回执（内容还是旧的），把旧的当成当前的：**这比"找不到"更坏**。
+    run_by: str  # "delegate" | "feed"
 
 
 # ──────────────────────────── 渲染：注入前那一瞬才拼 ────────────────────────────
@@ -168,7 +189,6 @@ def render_briefing(task: dict) -> str:
     *"你显示给我看的，就是传给 llm 看的"*）—— 日志里 `📥 INJECT` dump 的是
     这个函数的返回值本身，不是它的改写。
     """
-    from proto import artifacts as artifacts_mod
 
     blocks: list[str] = []
 
@@ -242,7 +262,6 @@ def render_briefing(task: dict) -> str:
         if folded:
             # 折叠**也要报一刀**（同 `trace.cut`）：标记在**文本里**（读的人看得见），
             # 这一行在**日志里**（复盘的人看得见）—— 两者都要有。
-            from proto import trace
 
             trace.note(
                 f"🔁 折叠重复 · 交接书：它最后说的那句 == 上面「问 {len(qa)}」"
@@ -267,12 +286,26 @@ def render_briefing(task: dict) -> str:
         blocks.append("\n".join(block))
 
     def _index(aids: list[str]) -> list[str]:
-        return [
-            f"- {aid}《{a['title']}》（{len(a['content'])} 字）"
-            f"—— {a.get('summary') or '（无梗概）'}"
-            for aid in aids
-            if (a := artifacts_mod.get(aid))
-        ]
+        """产物 ID 列表 → 清单行（**含缺失**）。
+
+        🔴 **缺失要显式写出来，不许静默跳过**（2026-11-04 复审 R6）：原来这里用
+        `if (a := …)` 把取不到的 ID **悄悄从清单里删掉**，而**同一件事**在回执那边
+        （`receipt.py`）写的是「**产物库里没有这一条**」。同一份坏数据，执行器在交接书里
+        看到的是"少了一行"、在主 agent 那边看到的是"这行有问题" —— 两副面孔，
+        而且前者是**静默降级**（正是这套代码自己反对的：没有就是没有，不写"（无）"这种废话，
+        但**有 ID 而取不到**是异常，必须说）。
+        """
+        out: list[str] = []
+        for aid in aids:
+            a = artifacts_mod.get(aid)
+            if not a:
+                out.append(f"- {aid}（**产物库里没有这一条**）")
+                continue
+            out.append(
+                f"- {aid}《{a['title']}》（{len(a['content'])} 字）"
+                f"—— {a.get('summary') or '（无梗概）'}"
+            )
+        return out
 
     produced = _index([a for a in (task.get("artifacts") or []) if a])
     if produced:
@@ -313,7 +346,9 @@ def absorb_outcome(rec: dict, outcome: Any) -> None:
 
 #: 执行器三态 → `Task.stage` —— **只有这一处**映射（`ExecOutcome.status` 是封闭枚举，
 #: 所以这里是穷举的：`completed` / `waiting_for_input` / **其余一律 failed**）。
-_STATUS_TO_STAGE: dict[str, str] = {
+#: 键 = `OutcomeStatus`、值 = `TaskStage` —— **两边都是词汇表里的类型**，
+#: 打错一个键名 mypy 会报；"键是不是刚好覆盖三态"由 `unit_handoff` 的守卫盯着（N4）。
+_STATUS_TO_STAGE: dict[OutcomeStatus, TaskStage] = {
     "completed": "completed",
     "waiting_for_input": "waiting_for_input",
     "incomplete": "failed",

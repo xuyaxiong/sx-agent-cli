@@ -96,7 +96,10 @@ def main() -> None:  # noqa: C901
                           "progress": "做了一半" * 40, "missing": ["课时"], "report": "问课时" * 40}])
     row("③ 台账（平台→主 agent）",
         BAD if "判定说" not in led else OK,          # ← 已做到/还缺 没标"判定说"
-        OK if ("平台截断" in led and "全文见那次的回执" in led) else BAD,
+        # ②截断/出处：切了要标 + **说清全文在哪**。⚠️ 答案**由 `run_by` 决定**（E2）：
+        # 这个 Task 没记 `run_by` → 走 fail-safe「不在你的上下文里」；
+        # 两条路各自的断言在 `unit_handoff` ②（delegate→回执 / feed→没有回执）。
+        OK if ("平台截断" in led and "不在你的上下文里" in led) else BAD,
         OK if "全量注入" in _src("proto/handoff/ledger.py") or "全量注入" in _src("proto/graph.py") else BAD,
         OK,   # Task 列表（结构化）→ render_ledger
         OK)

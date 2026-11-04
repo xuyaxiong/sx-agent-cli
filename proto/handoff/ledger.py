@@ -15,6 +15,11 @@
 
 from __future__ import annotations
 
+# ⚠️ 顶层 import（2026-11-04 复审 N3）：这里原来是**函数内** import —— 无环，纯习惯。
+# `trace` 只依赖 `config`，谁 import 它都不会成环。
+from proto import trace
+from proto.handoff import TaskStage
+
 #: `Task.stage` 的全部取值 —— **与 `judgement._Judgement.status` 前三个同名**。
 #: 唯一的映射是 `incomplete → failed`（判定说"还没做完"，推满轮次后任务记"失败"）。
 #:
@@ -28,7 +33,8 @@ from __future__ import annotations
 #:                                 （它先调 A、拿到产物 ID、再调 B）。等做「异步委派」时再加
 #:   - `cancelled`              —— 用户明确放弃时主动取消。需要给主 agent 新工具，
 #:                                 且该场景尚未实测到。等真遇到再加
-STAGE_MARK: dict[str, str] = {
+#: 键 = `TaskStage`（词汇表）—— 打错键名 mypy 会报；覆盖性由 `unit_handoff` 的守卫盯着（N4）。
+STAGE_MARK: dict[TaskStage, str] = {
     "running": "⏳ 进行中",
     "completed": "✅ 已完成",
     "waiting_for_input": "⚠️ 等用户答复",
@@ -40,15 +46,34 @@ STAGE_MARK: dict[str, str] = {
 NEEDS_DETAIL = ("waiting_for_input", "failed")
 
 
-def brief(text: str, limit: int, what: str = "长文本") -> str:
+#: 台账截断时"全文在哪"的两种答案 —— **由这一轮是谁起的决定**（`Task.run_by`）：
+#:
+#: - `delegate`：全文在**那次的回执**里（主 agent 自己的工具返回，就在它上下文里）；
+#: - `feed`：**没有回执** —— 那轮是用户答复后**平台**直接调 `run_task` 重跑的，
+#:   全文压根不在主 agent 上下文里（它只有台账里这 150 字）。
+#:
+#: 🔴 **2026-11-04 复审 E2**：原来对两条路都写"全文见那次的回执"。投递那条路指过去，
+#: 主 agent 会翻到**上一轮**的回执（内容还是旧的），把旧的当成当前的 ——
+#: **指向一个"存在但内容不对"的出处，比指向不存在的更坏**（它会照错的往下判断）。
+#: 两条答案都不许现编：`feed` 那条就说清"你手上没有"，同判定那处"它没有读全文的手段"。
+_SRC = {
+    "delegate": "全文见那次的回执（`delegate` 的返回）",
+    "feed": "全文**不在你的上下文里** —— 这轮是平台投递你的答复后重跑的，没有回执",
+}
+#: `run_by` 缺失（比如 `case.initial_tasks` 注入的 Task）时的默认 —— **fail-safe 到"没有全文"**：
+#: 说不准就别指向一个出处（指错了比指不到坏）。
+_SRC_DEFAULT = "全文**不在你的上下文里**"
+
+
+def brief(text: str, limit: int, what: str = "长文本", *, run_by: str = "") -> str:
     """台账里的长文本 —— **要短就得说清"这是短的"**（用户 2026-11-02 的「交接三问」）。
 
     > "一定要注意交接的地方：① 交接了什么内容 ② **内容是否被截断了**
     >  ③ **过长的交接内容是否考虑了渐进式披露**。"
 
     这里选**显式截断**而不是渐进式披露，理由是**出处**：台账是**每轮重复注入**的索引，
-    而全文另有出处 —— 那次的**回执**（`delegate` 的返回）就在对话历史里，
-    主 agent 想看随时看得到。渐进式披露要配一个"按需取"的工具，这里不需要新造。
+    而全文另有出处（在哪见 `_SRC` —— **两条路不一样**，所以由 `run_by` 决定，
+    不能写死）。渐进式披露要配一个"按需取"的工具，这里不需要新造。
 
     🔴 **切了不标，是这两种做法里更糟的一种**：读的人分不清
     "它就说这么多"还是"被切了" —— 而这两种情况该做的决定**完全不同**
@@ -62,10 +87,9 @@ def brief(text: str, limit: int, what: str = "长文本") -> str:
         return text
     # 🔴 **切了一刀就报一刀**（判据②：主动截断要有显式标记 + 说清全文在哪）。
     # 标记在**文本里**（读的人看得见），这一行在**日志里**（复盘的人看得见）—— 两者都要。
-    from proto import trace
-
-    trace.cut(f"台账·{what}", limit, len(text), see="全文：那次的回执（`delegate` 的返回）")
-    return f"{text[:limit]}……【平台截断：还有 {len(text) - limit} 字，全文见那次的回执】……"
+    src = _SRC.get(run_by, _SRC_DEFAULT)
+    trace.cut(f"台账·{what}", limit, len(text), see=src)
+    return f"{text[:limit]}……【平台截断：还有 {len(text) - limit} 字，{src}】……"
 
 
 def render_ledger(tasks: list[dict]) -> str:
@@ -81,11 +105,14 @@ def render_ledger(tasks: list[dict]) -> str:
         # ⚠️ 没完成的任务，把**进度 / 缺失项**也带上（信息交接原则）——
         #    只说"没完成"，主 agent 没法决定是换个说法重派、还是向用户说明。
         if t.get("stage") in NEEDS_DETAIL:
+            # ⚠️ `run_by` 一路传下去：这三段**都来自同一轮**，全文在不在主 agent 上下文里
+            #    是同一件事（见 `brief` 的 `_SRC`）。
+            by = str(t.get("run_by") or "")
             if t.get("progress"):
-                lines.append(f"      已做到（判定说）：{brief(t['progress'], 150, '已做到')}")
+                lines.append(f"      已做到（判定说）：{brief(t['progress'], 150, '已做到', run_by=by)}")
             if t.get("missing"):
-                lines.append(f"      还缺（判定说）：{brief('；'.join(t['missing']), 200, '还缺')}")
-            lines.append(f"      执行器说：{brief(t['report'], 150, '执行器说')}")
+                lines.append(f"      还缺（判定说）：{brief('；'.join(t['missing']), 200, '还缺', run_by=by)}")
+            lines.append(f"      执行器说：{brief(t['report'], 150, '执行器说', run_by=by)}")
 
     waiting = [t for t in tasks if t.get("stage") == "waiting_for_input"]
     # ⚠️ 这里**不再**叫主 agent 去重新委派 —— 待答的投递和转达都由平台做（见 `_feed_waiting`

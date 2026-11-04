@@ -33,6 +33,9 @@ from __future__ import annotations
 
 from typing import Any, TypedDict
 
+# ⚠️ 顶层 import（2026-11-04 复审 N3 的**漏网之鱼**：它的名单里没有 receipt.py）——
+# 无环，纯习惯。走**模块 + 属性**（`artifacts_mod.get(...)`）而不是 `from … import get`。
+from proto import artifacts as artifacts_mod
 from proto.handoff import (
     BODY,
     DELIVERY,
@@ -68,8 +71,6 @@ def build_receipt(outcome: Any, *, agent_answer: str = "", note: str = "") -> Re
     ⚠️ 各段是**有条件**的（有产物才出【产出的产物】、试答过才出【你补的信息】）——
     条件写在这里，`HOPS['receipt']` 声明的 7 段是**上限**。
     """
-    from proto import artifacts as artifacts_mod
-
     if outcome.status == "completed":
         kind = "completed" if outcome.artifacts else "completed_in_reply"
     elif outcome.status == "waiting_for_input":

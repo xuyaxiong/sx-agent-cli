@@ -375,6 +375,10 @@ def delegate(
         # **问题由平台原样截下，不问 LLM**：用户答的那条在 `_feed_waiting` 截
         # （那一刻 `report` 就是它问的），主 agent 试答那条在 `delegate` 里截。
         "qa": [],
+        #: 这轮是谁起的（台账据此说清"全文在哪"）—— `delegate` 这一趟的全文在**回执**里，
+        #: 而投递重跑那一趟没有回执（见 `briefing.Task.run_by`）。⚠️ 试答后重跑仍在
+        #: **同一次** delegate 调用里，回执也还是这一份 —— 所以这里恒为 "delegate"。
+        "run_by": "delegate",
         # 用户原话**快照**（不是渲染交接书时现取），两个理由：
         # ① 答复投递那条路（`graph._feed_waiting`）也调 `render_briefing`，快照在 Task 上它自动跟着走
         # ② 与 `answers` **天然去重** —— 快照是"派发**之前**用户说的"，

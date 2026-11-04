@@ -181,6 +181,37 @@ def main() -> None:
     check("**上一轮交付的产物还在**（没被这一轮的空 artifacts 抹掉）",
           out6[0]["artifacts"] == ["art_001"], repr(out6[0]["artifacts"]))
 
+    print("\n⑦ 投递重跑那轮**没有回执** —— 台账不许再说「全文见回执」（2026-11-04 复审 E2）")
+    # 🔴 投递是**平台**直接调 `run_task`（不经过 `delegate`）→ 主 agent 的上下文里
+    #    **没有**这一轮的回执。而台账原来对两条路都写"全文见那次的回执"——
+    #    主 agent 翻过去只会看到**上一轮**的回执（内容还是旧的），把旧的当成当前的。
+    #    ⚠️ 这条特意让上一轮是 `delegate` 起的（`run_by="delegate"`）：那样上下文里
+    #    **确实有一份回执**（正是最容易被误认的那种情形）。
+    from proto.handoff.ledger import render_ledger
+
+    class _LongWaiting(_Waiting):
+        report = "问课时" * 60          # > 150 字，逼出台账的截断
+
+    proto.executor.run_task = lambda *a, **k: _LongWaiting()  # type: ignore[assignment]
+    state7 = {
+        "messages": [HumanMessage("两课时")],
+        "tasks": [{
+            "id": "t1", "skill": "quiz", "task": "出随堂小测",
+            "stage": "waiting_for_input", "artifacts": [], "refs": [],
+            "report": "问课时", "progress": "", "missing": [],
+            "qa": [], "user_turns": [], "run_by": "delegate",   # ← 上一轮是主 agent 派的
+        }],
+    }
+    out7, _ = graph._feed_waiting(state7)
+    check("这一轮记成了 `feed`", out7[0].get("run_by") == "feed", repr(out7[0].get("run_by")))
+    led = render_ledger(out7)
+    # ⚠️ 守的是**指针**（"全文见…"），不是"回执"这两个字 ——
+    #    `_SRC["feed"]` 那句里**故意**写着"没有回执"（把"别去找"说破），它含"回执"二字是对的。
+    check("台账**不再**指向回执（那一轮根本没有回执）",
+          "全文见" not in led, repr(led[-120:]))
+    check("台账说清了「全文不在你的上下文里」", "不在你的上下文里" in led, repr(led[-120:]))
+    check("但**该标的还在**：切了多少字照标", "【平台截断" in led)
+
     print("\n" + "═" * 78)
     print(f"{'全部通过' if not FAIL else '有失败'}：{len(PASS)}/{len(PASS) + len(FAIL)}")
     for name in FAIL:

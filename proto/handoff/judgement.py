@@ -13,12 +13,14 @@
 
 from __future__ import annotations
 
-from typing import Literal
 
 from langchain_core.messages import AIMessage
 from pydantic import BaseModel, Field
 
+# ⚠️ 顶层 import（2026-11-04 复审 N3）：`trace` 原来是**函数内** import —— 无环，纯习惯。
 from proto import artifacts as artifacts_mod
+from proto import trace
+from proto.handoff import OutcomeStatus
 
 #: 判定提示词里，**每一项**（一条 AI 产出 / 一个产物）的字符预算。
 #: 超了就**保头保尾 + 显式标注省略** —— 不是简单截尾。
@@ -75,9 +77,8 @@ class _Judgement(BaseModel):
     否则推回去时它只能从头再来。
     """
 
-    status: Literal["completed", "waiting_for_input", "incomplete"] = Field(
-        description="任务状态"
-    )
+    # ⚠️ 类型从**词汇表**取（`handoff.OutcomeStatus`），不在这里再写一遍字面量（N4）
+    status: OutcomeStatus = Field(description="任务状态")
     #: 非 completed 时：**已经做到什么程度**（哪些部分已完成）
     #: —— 让下一轮能**接着推进**，而不是从头再来
     progress: str = Field(
@@ -157,8 +158,6 @@ def _clip(text: str, budget: int = JUDGE_ITEM_BUDGET) -> str:
     #    报的会是意图，不是事实（2026-11-04 审核）。
     # ⚠️ `where` / `see` 说**人话**：这条切的是**判定看的那一份**，产物本身一个字没动 ——
     #    不写清的话，读日志的人第一反应是"我交付的教案被切了"。
-    from proto import trace
-
     kept = len(text[:head]) + len(text[-tail:])
     trace.cut(
         "判定看的材料（产物本身没动）",

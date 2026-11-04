@@ -29,7 +29,7 @@
 - 文件格式**保持不变**（`unit_decision` / `unit_stream_join` 守着）：
   日志是**原始记录**，供人与 `_run.md` 附录消费；记录层该怎么记还怎么记，
   只是**不再为展示层的排版让路**（旧 `_DEC=4` 那条耦合已废）。
-- 展示层**不再读日志文件**：`STREAM_MARK` 之类只是记录器自己的落盘格式，
+- 展示层**不再读日志文件**：`_STREAM_MARK` 之类只是记录器自己的落盘格式，
   不是跨层契约（2026-11-03 定：契约是事件，不是文本）。
 """
 
@@ -38,7 +38,6 @@ from __future__ import annotations
 import os
 import time
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Callable
 
 from proto.config import app_root
@@ -466,10 +465,15 @@ def close() -> None:
 
 #: 流式行在**日志文件**里的前缀 —— ⚠️ 只是记录器自己的落盘格式，**不是跨层契约**
 #: （展示层订阅事件，不再读日志文件；2026-11-03 定）。
-STREAM_MARK = "⟨生成·"
+#:
+#: 🔴 **名字也私有**（2026-11-04 复审 N1）：公开名本身就是"可以被 import"的邀请 ——
+#: 下一个消费者写 `from proto.trace import STREAM_MARK` 照样跑得通，
+#: "展示层认记录层的散文"那类事故就会原样复发。私有名一写出来，
+#: 就是**伸手进记录层**的信号（白盒测试除外，它们本来就该盯文件格式）。
+_STREAM_MARK = "⟨生成·"
 
-#: 决策块的**首行前缀**（文件格式用）。
-DECISION_HEAD = "🧭 决策"
+#: 决策块的**首行前缀**（文件格式用）。同上：私有。
+_DECISION_HEAD = "🧭 决策"
 
 #: 某些 `kind` 的 note 在**文件里**的前缀 —— 文件格式的一部分，归记录器。
 #:
@@ -519,7 +523,7 @@ def _recorder(ev: dict) -> None:
         for line in str(ev["text"]).splitlines() or [""]:
             _write(f"{ev['indent']}{line}")
     elif t == "stream":
-        _write(f"[{ts}] {STREAM_MARK}{ev['who']}⟩ {ev['text']}")
+        _write(f"[{ts}] {_STREAM_MARK}{ev['who']}⟩ {ev['text']}")
     elif t == "handoff":
         _write(f"[{ts}] 📤 交接 · {ev['hop']}（{ev['frm']} → {ev['to']}）：{len(ev['text'])} 字"
                f"｜结构化：{ev['structured'] or '（纯文本）'}")
@@ -535,7 +539,7 @@ def _recorder(ev: dict) -> None:
         for i, m in enumerate(messages):
             _write(f"  [{i}] {render_message(m)}")
     elif t == "decision":
-        out = [f"{DECISION_HEAD} · {ev['who']}"]
+        out = [f"{_DECISION_HEAD} · {ev['who']}"]
         # 🔴 键表**从 `DECISION` 取**，不在这里再抄一份（抄一份的后果见 `DECISION` 的注释）。
         vals = {k: ev.get(k) for k in DECISION}
         for key in DECISION:
