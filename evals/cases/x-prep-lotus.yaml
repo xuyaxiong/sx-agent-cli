@@ -1,0 +1,48 @@
+id: x-prep-lotus
+family: 真实技能
+why: >
+  用户 2026-11-04 指定的实测任务：**两样、且有依赖** ——
+  「人教版小学语文荷花」的教案 ＋ 导学单，且**导学单内容得参考教案内容**。
+  比 `t2-same-turn` 少一个技能（不要交互网页），要看的就一件事：
+  **跨技能依赖在隔离上下文里怎么桥接** —— 教案正文不进主 agent 上下文，
+  导学单那个执行器凭什么拿到它？（正解：`delegate(artifacts=[教案 ID])` 结构化传递，
+  执行器自己 `read_artifact` 读全文 —— 不靠主 agent 转述。）
+realism: 用户指定的实测任务
+tier: audit
+# 适配版技能（六类机械改动，见 evals/skills/README.md）；replace 掉自带的 4 个小技能
+skills_dir: evals/skills
+skills_mode: replace
+turns:
+  - "生成人教版小学语文荷花这一课的教案、导学单，注意导学单内容得参考教案内容"
+  # 两个技能各自会问 2 个问题（课型/学情、用途/形式）—— 一条消息把可能被问的都答了。
+  # 平台投递是**原话透传**（`graph._feed_waiting` 不做判断），各执行器自己挑需要的。
+  - "三年级，第一课时。教案按探究发现型上，学生基础一般、常见卡点是比喻句的理解；导学单用在课前预习，填空形式。"
+  - "其余没提到的按常规处理，直接生成，不用再问。"
+checks:
+  # 两样都要交付：两个技能各自 completed
+  - check: task_stages
+    stages:
+      lesson-prep: completed
+      guided-learning: completed
+  - check: every_task_has_artifact
+  - check: artifact_no_cross_attribution
+  # 🔴 **这条是本 case 的重点**：依赖走**结构化传递** ——
+  #    导学单那个 Task 的 refs 里必须有教案的产物 ID（不是靠主 agent 把正文转述过去）
+  - check: task_refs_contain
+    skills: [guided-learning]
+  - check: artifact_titles_contain
+    subs: ["教案", "导学单"]
+  - check: artifact_chars_over
+    n: 4000
+  - check: reply_chars_under
+    n: 1500
+  - check: no_exception
+soft:
+  # 产物**写完了没有**（模板残留 / 占位符 / 半成品）—— 只能语义判
+  - check: artifact_is_complete
+  # 用户点名的要求：导学单**内容上**是不是真的基于教案（机制证据见上面的 task_refs_contain）
+  - check: artifact_derives_from_source
+    source: 教案
+  # 轮 2 已经答过这些，再问就是重复
+  - check: no_repeat_question
+    fields: ["年级", "课时", "课型"]
