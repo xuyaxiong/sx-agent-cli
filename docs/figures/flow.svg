@@ -55,9 +55,9 @@
   <line x1="674" y1="218" x2="694" y2="218" stroke="#5F6368" stroke-width="1.8" marker-end="url(#a)"/>
 
   <rect x="696" y="190" width="390" height="56" rx="8" fill="#E8F5E9" stroke="#43A047" stroke-width="2"/>
-  <text x="891" y="208" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1B5E20">执行器：干活 → 判定三态 🧠（最多 3 轮）</text>
-  <text x="891" y="226" text-anchor="middle" font-size="10" fill="#2E7D32">每次收到交接书〔任务＋用户原话＋上次进度/缺失项＋历次问答＋产物清单〕</text>
-  <text x="891" y="241" text-anchor="middle" font-size="10" fill="#2E7D32">判 incomplete → 推回去〔进度＋缺失项〕，不要从头再来</text>
+  <text x="891" y="208" text-anchor="middle" font-size="12.5" font-weight="700" fill="#1B5E20">执行器：干活 → 交付产物 / ask_user 要信息（最多 3 轮）</text>
+  <text x="891" y="226" text-anchor="middle" font-size="10" fill="#2E7D32">每次收到交接书〔任务＋用户原话＋历次问答＋产物清单〕</text>
+  <text x="891" y="241" text-anchor="middle" font-size="10" fill="#2E7D32">平台按结构算三态：没交也没申报 → 推回去〔点明两条出路〕</text>
   <line x1="1088" y1="218" x2="1108" y2="218" stroke="#5F6368" stroke-width="1.8" marker-end="url(#a)"/>
 
   <rect x="1110" y="190" width="120" height="56" rx="8" fill="#E8F5E9" stroke="#43A047" stroke-width="1.6"/>
@@ -75,7 +75,7 @@
   <path d="M 720 286 L 720 268" fill="none" stroke="#5F6368" stroke-width="1.6" stroke-dasharray="6 4"/>
   <path d="M 900 286 L 900 268" fill="none" stroke="#5F6368" stroke-width="1.6" stroke-dasharray="6 4"/>
   <path d="M 1080 286 L 1080 268" fill="none" stroke="#5F6368" stroke-width="1.6" stroke-dasharray="6 4"/>
-  <text x="80" y="272" font-size="10.5" fill="#616161">执行器判定三态后 —— 三态各自包成一条 <tspan font-weight="600">ToolMessage</tspan>，从 delegate 的工具返回口<tspan font-weight="600">回到主 agent</tspan>：</text>
+  <text x="80" y="272" font-size="10.5" fill="#616161">平台按结构定三态后 —— 三态各自包成一条 <tspan font-weight="600">ToolMessage</tspan>，从 delegate 的工具返回口<tspan font-weight="600">回到主 agent</tspan>：</text>
 
   <rect x="640" y="290" width="160" height="38" rx="7" fill="#E8F5E9" stroke="#43A047" stroke-width="1.5"/>
   <text x="720" y="308" text-anchor="middle" font-size="11.5" font-weight="600" fill="#1B5E20">completed</text>
@@ -110,8 +110,8 @@
 
   <rect x="70" y="500" width="180" height="52" rx="8" fill="#FFF8F0" stroke="#FB8C00" stroke-width="2" stroke-dasharray="7 4"/>
   <text x="160" y="518" text-anchor="middle" font-size="11.5" font-weight="700" fill="#E65100">(4) 强制试答 🧠</text>
-  <text x="160" y="534" text-anchor="middle" font-size="9" fill="#8D6E63">〔能力名＋任务＋执行器原话</text>
-  <text x="160" y="546" text-anchor="middle" font-size="9" fill="#8D6E63">＋进度/缺失项＋最近 10 条消息〕</text>
+  <text x="160" y="534" text-anchor="middle" font-size="9" fill="#8D6E63">〔能力名＋任务＋它要的信息</text>
+  <text x="160" y="546" text-anchor="middle" font-size="9" fill="#8D6E63">＋全部消息（全文，不截）〕</text>
 
   <line x1="252" y1="526" x2="270" y2="526" stroke="#5F6368" stroke-width="1.6" marker-end="url(#a)"/>
   <text x="261" y="493" text-anchor="middle" font-size="9.5" font-weight="600" fill="#C62828">答不上</text>

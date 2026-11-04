@@ -32,7 +32,7 @@
   <!-- ═══════════ ② 主 agent ═══════════ -->
   <rect x="60" y="290" width="920" height="212" rx="14" fill="#FFF8F0" stroke="#FB8C00" stroke-width="2" stroke-dasharray="7 4"/>
   <text x="84" y="318" font-size="19" font-weight="700" fill="#E65100">② 主 Agent —— 一个完整的 Agent（🧠 软）</text>
-  <text x="84" y="340" font-size="12.5" fill="#8D6E63">自己的工具 + 自己的循环。<tspan font-weight="600">六个软选择由它定</tspan>：要不要委派 · 派给哪个技能 · 产出范围 · task 怎么写 · 点名哪几轮 · 回复怎么组织</text>
+  <text x="84" y="340" font-size="12.5" fill="#8D6E63">自己的工具 + 自己的循环。<tspan font-weight="600">五个软选择由它定</tspan>：要不要委派 · 派给哪个技能 · 产出范围 · task 怎么写 · 回复怎么组织</text>
 
   <rect x="84" y="356" width="264" height="86" rx="10" fill="#FFFFFF" stroke="#FFB74D" stroke-width="1.4"/>
   <text x="216" y="382" text-anchor="middle" font-size="15" font-weight="600" fill="#E65100">直接回答</text>
@@ -53,15 +53,15 @@
   <text x="84" y="487" font-size="12" fill="#8D6E63">🔒 上下文里还常驻着：<tspan font-weight="600">【平台提示】任务台账</tspan>（prepare 注入，只提供事实、不替它做决定）</text>
 
   <line x1="802" y1="502" x2="802" y2="548" stroke="#5F6368" stroke-width="1.8" marker-end="url(#arw)"/>
-  <text x="788" y="530" text-anchor="end" font-size="12" fill="#5F6368">delegate(skill_name, task, artifacts, based_on_turns)</text>
+  <text x="788" y="530" text-anchor="end" font-size="12" fill="#5F6368">delegate(skill_name, task, artifacts)</text>
 
   <!-- ═══════════ ③ delegate 内部 ═══════════ -->
   <rect x="60" y="552" width="920" height="246" rx="14" fill="#F1F8E9" stroke="#7CB342" stroke-width="2"/>
   <text x="84" y="580" font-size="17.5" font-weight="700" fill="#33691E">③ delegate 内部 —— 🔒 平台代码保证（LLM 跳不过）</text>
 
   <rect x="84" y="594" width="212" height="74" rx="8" fill="#FFFFFF" stroke="#AED581" stroke-width="1.4"/>
-  <text x="190" y="618" text-anchor="middle" font-size="12.5" font-weight="600" fill="#33691E">(1) 三处当场校验</text>
-  <text x="190" y="638" text-anchor="middle" font-size="11" fill="#5F6368">技能名 · 产物 ID · 轮次</text>
+  <text x="190" y="618" text-anchor="middle" font-size="12.5" font-weight="600" fill="#33691E">(1) 两处当场校验</text>
+  <text x="190" y="638" text-anchor="middle" font-size="11" fill="#5F6368">技能名 · 产物 ID</text>
   <text x="190" y="656" text-anchor="middle" font-size="11" fill="#5F6368">不存在 → 拒绝派发</text>
 
   <rect x="312" y="594" width="212" height="74" rx="8" fill="#FFFFFF" stroke="#AED581" stroke-width="1.4"/>
@@ -72,14 +72,14 @@
   <rect x="540" y="594" width="212" height="74" rx="8" fill="#FFFFFF" stroke="#AED581" stroke-width="1.4"/>
   <text x="646" y="618" text-anchor="middle" font-size="12.5" font-weight="600" fill="#33691E">(3) 交接书 → 执行器</text>
   <text x="646" y="638" text-anchor="middle" font-size="11" fill="#5F6368">【任务】【用户原话】</text>
-  <text x="646" y="656" text-anchor="middle" font-size="11" fill="#5F6368">【上次说到哪】【答复】…</text>
+  <text x="646" y="656" text-anchor="middle" font-size="11" fill="#5F6368">【问答经过】… 每段标来源</text>
 
   <rect x="768" y="594" width="188" height="74" rx="8" fill="#FFF8F0" stroke="#FFB74D" stroke-width="1.8" stroke-dasharray="6 4"/>
   <text x="862" y="618" text-anchor="middle" font-size="12.5" font-weight="600" fill="#E65100">(4) 强制试答 🧠</text>
   <text x="862" y="638" text-anchor="middle" font-size="11" fill="#8D6E63">答得上 → 带补充重跑</text>
   <text x="862" y="656" text-anchor="middle" font-size="11" fill="#8D6E63">答不上 → 交给用户</text>
 
-  <text x="84" y="694" font-size="12.5" font-weight="600" fill="#33691E">(5) 三态穷举分派（没有第四种）：</text>
+  <text x="84" y="694" font-size="12.5" font-weight="600" fill="#33691E">(5) 三态由<tspan font-weight="600">结构</tspan>定，穷举分派（没有第四种）：</text>
   <rect x="84" y="704" width="290" height="78" rx="8" fill="#E8F5E9" stroke="#43A047" stroke-width="1.6"/>
   <text x="229" y="728" text-anchor="middle" font-size="13" font-weight="600" fill="#1B5E20">completed → 交付</text>
   <text x="229" y="750" text-anchor="middle" font-size="11" fill="#2E7D32">主 agent 拿到：产物 ID + 摘要</text>
@@ -93,25 +93,25 @@
   <rect x="696" y="704" width="260" height="78" rx="8" fill="#FFEBEE" stroke="#E53935" stroke-width="1.6"/>
   <text x="826" y="728" text-anchor="middle" font-size="13" font-weight="600" fill="#B71C1C">incomplete（推满 3 轮）</text>
   <text x="826" y="750" text-anchor="middle" font-size="11" fill="#5F6368">→ failed，交给主 agent</text>
-  <text x="826" y="770" text-anchor="middle" font-size="11" fill="#5F6368">（带上进度 / 还缺什么）</text>
+  <text x="826" y="770" text-anchor="middle" font-size="11" fill="#5F6368">（带上回执：它说了什么）</text>
 
   <line x1="520" y1="798" x2="520" y2="846" stroke="#5F6368" stroke-width="1.8" marker-end="url(#arw)"/>
 
   <!-- ═══════════ ④ Sub Agent ═══════════ -->
   <rect x="60" y="850" width="920" height="152" rx="12" fill="#E8F5E9" stroke="#43A047" stroke-width="2"/>
   <text x="700" y="878" text-anchor="middle" font-size="17" font-weight="700" fill="#1B5E20">④ Sub Agent —— 执行器（隔离上下文 · 用完即弃 · 不绑任何 skill）</text>
-  <text x="700" y="902" text-anchor="middle" font-size="12.5" fill="#2E7D32">工具箱：write_artifact · read_artifact · read_skill_file · read_user_turn（按需）</text>
+  <text x="700" y="902" text-anchor="middle" font-size="12.5" fill="#2E7D32">工具箱：write_artifact · read_artifact · read_skill_file · <tspan font-weight="600">ask_user</tspan> · read_user_turn（按需）</text>
   <text x="700" y="926" text-anchor="middle" font-size="12.5" fill="#8D6E63">🧠 它自己的循环：怎么干 / 要不要落库 / 缺什么信息 —— 这些是它的自由</text>
   <rect x="240" y="940" width="400" height="48" rx="8" fill="#FFFFFF" stroke="#66BB6A" stroke-width="1.4"/>
   <text x="440" y="962" text-anchor="middle" font-size="12.5" font-weight="600" fill="#1B5E20">🔒 出口限制：最多 3 轮 react</text>
-  <text x="440" y="980" text-anchor="middle" font-size="11" fill="#5F6368">每轮都判三态；incomplete 就推回去，推满才交出去</text>
+  <text x="440" y="980" text-anchor="middle" font-size="11" fill="#5F6368">每轮都按<tspan font-weight="600">结构</tspan>算三态；incomplete 就推回去，推满才交出去</text>
 
   <line x1="520" y1="1002" x2="520" y2="1046" stroke="#43A047" stroke-width="1.8" marker-end="url(#arwG)"/>
 
   <!-- ═══════════ ⑤ 产物库 ═══════════ -->
   <rect x="60" y="1050" width="920" height="150" rx="12" fill="#F3E5F5" stroke="#8E24AA" stroke-width="2"/>
   <text x="520" y="1078" text-anchor="middle" font-size="17" font-weight="700" fill="#4A148C">⑤ 产物库 —— 平台<tspan font-weight="600">唯一保证</tspan>的交付物</text>
-  <text x="520" y="1102" text-anchor="middle" font-size="12.5" fill="#6A1B9A">🔒 落库（当场写盘） · 真实路径 · <tspan font-weight="600">跨轮累积</tspan> · 判定可见 · 可以有多个</text>
+  <text x="520" y="1102" text-anchor="middle" font-size="12.5" fill="#6A1B9A">🔒 落库（当场写盘） · 真实路径 · <tspan font-weight="600">跨轮累积</tspan> · 可以有多个</text>
   <text x="520" y="1126" text-anchor="middle" font-size="12.5" fill="#6A1B9A">7 个字段：title / summary / content / type / ext / file / path</text>
   <rect x="180" y="1140" width="680" height="46" rx="8" fill="#FFEBEE" stroke="#E53935" stroke-width="1.4"/>
   <text x="520" y="1160" text-anchor="middle" font-size="12" font-weight="600" fill="#B71C1C">⚠️ 写在回复正文里的（协议块那类）：平台不解析 · 不校验 · 不抽取 · 不累积</text>
@@ -142,9 +142,9 @@
   <text x="1026" y="494" font-size="11.5" fill="#558B2F">执行器通用、不绑 skill</text>
   <text x="1026" y="512" font-size="11.5" fill="#558B2F">加一个技能包 = 丢一个文件夹</text>
 
-  <text x="1026" y="548" font-size="13" font-weight="600" fill="#33691E">✓ 完成判定准</text>
-  <text x="1026" y="570" font-size="11.5" fill="#558B2F">问「任务完成了没」</text>
-  <text x="1026" y="588" font-size="11.5" fill="#558B2F">不是「产物生成了没」——产物只是证据之一</text>
+  <text x="1026" y="548" font-size="13" font-weight="600" fill="#33691E">✓ 出口由结构定</text>
+  <text x="1026" y="570" font-size="11.5" fill="#558B2F">三态 ＝ 申报 / 交了产物 / 都没有</text>
+  <text x="1026" y="588" font-size="11.5" fill="#558B2F">平台不判质量 ——「够不够」由主 agent 判</text>
 
   <line x1="1026" y1="612" x2="1318" y2="612" stroke="#AED581"/>
   <text x="1026" y="640" font-size="13" font-weight="600" fill="#33691E">实测数据</text>
@@ -155,15 +155,15 @@
   <line x1="1026" y1="732" x2="1318" y2="732" stroke="#AED581"/>
   <text x="1026" y="760" font-size="13" font-weight="600" fill="#33691E">平台强制（🔒 12+ 条）</text>
   <text x="1026" y="784" font-size="11.5" fill="#558B2F">· 产物必须真实存在且是这次新写的</text>
-  <text x="1026" y="804" font-size="11.5" fill="#558B2F">· 三态穷举分派，状态由代码写</text>
+  <text x="1026" y="804" font-size="11.5" fill="#558B2F">· 三态由结构定，状态由代码写</text>
   <text x="1026" y="824" font-size="11.5" fill="#558B2F">· 待答不丢（finalize 无条件透传）</text>
   <text x="1026" y="844" font-size="11.5" fill="#558B2F">· 并行不互相覆盖（按 id 合并）</text>
   <text x="1026" y="864" font-size="11.5" fill="#558B2F">· 引用了不存在的东西 → 当场拒绝</text>
 
   <line x1="1026" y1="888" x2="1318" y2="888" stroke="#AED581"/>
   <text x="1026" y="916" font-size="13" font-weight="600" fill="#33691E">交给 LLM 的（🧠）</text>
-  <text x="1026" y="940" font-size="11.5" fill="#558B2F">· 三态判定（任务完成了没）</text>
-  <text x="1026" y="960" font-size="11.5" fill="#558B2F">· 主 agent 试答（上下文里有没有）</text>
+  <text x="1026" y="940" font-size="11.5" fill="#558B2F">· 主 agent 试答（上下文里有没有）</text>
+  <text x="1026" y="960" font-size="11.5" fill="#558B2F">· 主 agent 自己判「这次交付够不够」</text>
   <text x="1026" y="980" font-size="11.5" fill="#558B2F">· 主 agent / 执行器自己的循环</text>
   <text x="1026" y="1008" font-size="11.5" font-weight="600" fill="#F57F17">软判断只剩这几处 —— 且每一处的</text>
   <text x="1026" y="1026" font-size="11.5" font-weight="600" fill="#F57F17"><tspan font-weight="600">输入都由代码取全</tspan>（缺一不可）</text>

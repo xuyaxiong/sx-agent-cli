@@ -35,7 +35,6 @@
   <line x1="400" y1="180" x2="400" y2="1160" stroke="#BDBDBD" stroke-width="1.2" stroke-dasharray="5 5"/>
   <line x1="760" y1="180" x2="760" y2="1160" stroke="#BDBDBD" stroke-width="1.2" stroke-dasharray="5 5"/>
   <line x1="1090" y1="180" x2="1090" y2="1160" stroke="#BDBDBD" stroke-width="1.2" stroke-dasharray="5 5"/>
-  <line x1="1310" y1="180" x2="1310" y2="1160" stroke="#BDBDBD" stroke-width="1.2" stroke-dasharray="5 5"/>
 
   <rect x="60" y="124" width="140" height="56" rx="8" fill="#E8F0FE" stroke="#4285F4" stroke-width="1.8"/>
   <text x="130" y="148" text-anchor="middle" font-size="13" font-weight="700" fill="#174EA6">用户</text>
@@ -52,10 +51,6 @@
   <rect x="990" y="124" width="200" height="56" rx="8" fill="#E0F7FA" stroke="#00838F" stroke-width="2"/>
   <text x="1090" y="148" text-anchor="middle" font-size="13" font-weight="700" fill="#006064">执行器 🧠</text>
   <text x="1090" y="166" text-anchor="middle" font-size="9.5" fill="#00838F">隔离上下文 · <tspan font-weight="600">用完即弃</tspan></text>
-
-  <rect x="1240" y="124" width="140" height="56" rx="8" fill="#F3E5F5" stroke="#8E24AA" stroke-width="1.8"/>
-  <text x="1310" y="148" text-anchor="middle" font-size="13" font-weight="700" fill="#4A148C">判定 🧠</text>
-  <text x="1310" y="166" text-anchor="middle" font-size="9.5" fill="#6A1B9A">结构化调用，无工具</text>
 
   <rect x="1400" y="124" width="140" height="1036" rx="10" fill="#FFFDE7" stroke="#FBC02D" stroke-width="1.4" stroke-dasharray="6 4"/>
   <text x="1470" y="150" text-anchor="middle" font-size="12" font-weight="700" fill="#F57F17">产物库</text>
@@ -77,23 +72,23 @@
   <text x="580" y="272" text-anchor="middle" font-size="11"><tspan font-weight="700" fill="#5F6368">② 台账注入</tspan><tspan fill="#9AA0A6"> · SystemMessage · 平台 → 主 agent</tspan></text>
   <rect x="400" y="288" width="360" height="47" rx="5" fill="#F8F9FA" stroke="#E0E0E0"/>
   <text x="410" y="303" font-size="9.5" fill="#616161">【平台提示】你已委派出去的工作（共 N 项）：</text>
-  <text x="410" y="315" font-size="9.5" fill="#616161">- {id}「{skill}」{状态标记}{→ 产物 ID}　｜　待答/失败另给细节</text>
-  <text x="410" y="327" font-size="9.5" fill="#616161">已做到・还缺・执行器说　（tasks 空 → 整段不注入）</text>
+  <text x="410" y="315" font-size="9.5" fill="#616161">- {id}「{skill}」{状态标记}{→ 产物 ID}　｜　截断带标记＋指向全文出处（按 run_by）</text>
+  <text x="410" y="327" font-size="9.5" fill="#616161">执行器说：{report 前 150 字}（仅待答/失败展开）　（tasks 空 → 整段不注入）</text>
 
   <!-- ═══════════ ③ ═══════════ -->
   <line x1="400" y1="368" x2="756" y2="368" stroke="#5F6368" stroke-width="1.8" marker-end="url(#m)"/>
   <text x="580" y="360" text-anchor="middle" font-size="11"><tspan font-weight="700" fill="#5F6368">③ 派发</tspan><tspan fill="#9AA0A6"> · tool_call 参数 · 主 agent → 平台</tspan></text>
   <rect x="400" y="376" width="360" height="35" rx="5" fill="#F8F9FA" stroke="#E0E0E0"/>
-  <text x="410" y="391" font-size="9.5" fill="#616161">skill_name ・ task ・ artifacts[] ・ based_on_turns[]</text>
-  <text x="410" y="403" font-size="9.5" fill="#616161">技能名 / 产物 ID / 轮次 不存在 → 当场拒绝，<tspan font-weight="600">不建 Task</tspan></text>
+  <text x="410" y="391" font-size="9.5" fill="#616161">skill_name ・ task ・ artifacts[]</text>
+  <text x="410" y="403" font-size="9.5" fill="#616161">技能名 / 产物 ID 不存在 → 当场拒绝，<tspan font-weight="600">不建 Task</tspan></text>
 
   <!-- ═══════════ ④ ═══════════ -->
   <line x1="760" y1="456" x2="1086" y2="456" stroke="#5F6368" stroke-width="2.2" marker-end="url(#m)"/>
   <text x="923" y="448" text-anchor="middle" font-size="11"><tspan font-weight="700" fill="#5F6368">④ 交接书</tspan><tspan fill="#9AA0A6"> · HumanMessage · 平台 → 执行器（所有重入路径的唯一入口）</tspan></text>
   <rect x="480" y="464" width="610" height="47" rx="5" fill="#F8F9FA" stroke="#E0E0E0"/>
   <text x="490" y="479" font-size="9.5" fill="#616161">【任务】（<tspan font-weight="600">主 agent 交代的</tspan>）・【用户原话】（<tspan font-weight="600">用户说的</tspan>・平台硬搬・每轮带「它在回答的上一句」）</text>
-  <text x="490" y="491" font-size="9.5" fill="#616161">【问答经过】（<tspan font-weight="600">按时间序</tspan> ・ 一问一答成对：问 1／答 1 ・ 末尾接它最后说的那句）・【上次判定】（<tspan font-weight="600">判定说</tspan> ・ 上一轮的情况）</text>
-  <text x="490" y="503" font-size="9.5" fill="#616161">【已经产出的产物】・【可读产物】・【续跑提示】　—— 7 段按条件出现，<tspan font-weight="600">每段都标来源</tspan> · 段名 0 列 / 段体 2 列</text>
+  <text x="490" y="491" font-size="9.5" fill="#616161">【问答经过】（<tspan font-weight="600">按时间序</tspan> ・ 一问一答成对：问 1／答 1 ・ 末尾接它最后说的那句）</text>
+  <text x="490" y="503" font-size="9.5" fill="#616161">【已经产出的产物】・【可读产物】・【续跑提示】　—— 6 段按条件出现，<tspan font-weight="600">每段都标来源</tspan> · 段名 0 列 / 段体 2 列</text>
 
   <!-- ═══════════ ⑤ ═══════════ -->
   <line x1="1090" y1="536" x2="1396" y2="536" stroke="#5F6368" stroke-width="1.8" marker-end="url(#m)"/>
@@ -103,33 +98,33 @@
   <text x="1060" y="571" font-size="9.5" fill="#616161">正文<tspan font-weight="600">不进</tspan>主 agent 上下文 —— 它是跨轮唯一的载体</text>
 
   <!-- ═══════════ ⑥ ═══════════ -->
-  <line x1="1090" y1="616" x2="1306" y2="616" stroke="#EF6C00" stroke-width="2" marker-end="url(#mO)"/>
-  <text x="1198" y="608" text-anchor="middle" font-size="11"><tspan font-weight="700" fill="#EF6C00">⑥ 判定输入</tspan><tspan fill="#9AA0A6"> · 结构化 prompt</tspan></text>
-  <rect x="1050" y="624" width="340" height="47" rx="5" fill="#FFF8F0" stroke="#FFCC80"/>
-  <text x="1060" y="639" font-size="9.5" fill="#8D6E63">【任务要求】skill.instructions</text>
-  <text x="1060" y="651" font-size="9.5" fill="#8D6E63">【执行者已经拿到的信息】＝整份交接书（④）</text>
-  <text x="1060" y="663" font-size="9.5" fill="#8D6E63">【实际执行结果】产物正文（无产物 → 全部 AI 产出）</text>
+  <line x1="1086" y1="616" x2="766" y2="616" stroke="#EF6C00" stroke-width="2" marker-end="url(#mO)"/>
+  <text x="926" y="608" text-anchor="middle" font-size="11"><tspan font-weight="700" fill="#EF6C00">⑥ 申报要信息</tspan><tspan fill="#9AA0A6"> · ask_user 工具参数 · 执行器 → 平台</tspan></text>
+  <rect x="760" y="624" width="330" height="35" rx="5" fill="#FFF8F0" stroke="#FFCC80"/>
+  <text x="770" y="639" font-size="9.5" fill="#8D6E63">ask_user(question) —— 它缺的那条信息（原话）</text>
+  <text x="770" y="651" font-size="9.5" fill="#8D6E63">平台<tspan font-weight="600">看到调用就结束这一轮</tspan>（结构保证）—— 正文里说的看不到</text>
 
   <!-- ═══════════ ⑦ ═══════════ -->
-  <line x1="1310" y1="696" x2="1094" y2="696" stroke="#EF6C00" stroke-width="1.8" stroke-dasharray="6 4" marker-end="url(#mO)"/>
-  <text x="1202" y="688" text-anchor="middle" font-size="11"><tspan font-weight="700" fill="#EF6C00">⑦ 判定结果</tspan><tspan fill="#9AA0A6"> · _Judgement · 判定 → 平台</tspan></text>
-  <rect x="1050" y="704" width="340" height="35" rx="5" fill="#FFF8F0" stroke="#FFCC80"/>
-  <text x="1060" y="719" font-size="9.5" fill="#8D6E63">status ・ progress ・ missing[] ・ reason</text>
-  <text x="1060" y="731" font-size="9.5" fill="#8D6E63">判定是<tspan font-weight="600">第三方评审</tspan>，可能判错 —— 交接书里它的话标「判定说」</text>
+  <path d="M 770 666 L 830 666 L 830 688 L 766 688" fill="none" stroke="#EF6C00" stroke-width="2" marker-end="url(#mO)"/>
+  <text x="842" y="681" font-size="11"><tspan font-weight="700" fill="#EF6C00">⑦ 三态（结构事实）</tspan><tspan fill="#9AA0A6"> · 平台自己算，不是一次交接</tspan></text>
+  <rect x="760" y="696" width="330" height="47" rx="5" fill="#FFF8F0" stroke="#FFCC80"/>
+  <text x="770" y="711" font-size="9.5" fill="#8D6E63">调了 <tspan font-weight="600">ask_user</tspan> → waiting_for_input ｜ 交了产物 → completed</text>
+  <text x="770" y="723" font-size="9.5" fill="#8D6E63">都没有（推满 3 轮）→ failed　·　顺序不能反：申报优先</text>
+  <text x="770" y="735" font-size="9.5" fill="#8D6E63">平台<tspan font-weight="600">不判质量</tspan>、不读正文 —— 「够不够」由主 agent 判（见 ⑩）</text>
 
   <!-- ═══════════ ⑧ ═══════════ -->
   <line x1="760" y1="776" x2="1086" y2="776" stroke="#EF6C00" stroke-width="2" marker-end="url(#mO)"/>
   <text x="923" y="768" text-anchor="middle" font-size="11"><tspan font-weight="700" fill="#EF6C00">⑧ 推回去</tspan><tspan fill="#9AA0A6"> · HumanMessage（追加）· 平台 → 执行器</tspan></text>
   <rect x="760" y="784" width="330" height="47" rx="5" fill="#FFF8F0" stroke="#FFCC80"/>
-  <text x="770" y="799" font-size="9.5" fill="#8D6E63">任务还没完成。／<tspan font-weight="600">你已经完成了</tspan>：{progress}</text>
-  <text x="770" y="811" font-size="9.5" fill="#8D6E63">／<tspan font-weight="600">还缺</tspan>：{missing}／请接着往下做，不要从头再来</text>
-  <text x="770" y="823" font-size="9.5" fill="#8D6E63">↺ 循环 ≤3 轮（MAX_REACT_ROUNDS）→ 仍 incomplete 判 failed</text>
+  <text x="770" y="799" font-size="9.5" fill="#8D6E63">这一轮<tspan font-weight="600">既没有交付产物、也没有说明你需要什么信息</tspan>。两条路，选一条走：</text>
+  <text x="770" y="811" font-size="9.5" fill="#8D6E63">干完了 → <tspan font-weight="600">write_artifact</tspan> 交付成产物　｜　缺信息 → <tspan font-weight="600">ask_user</tspan> 说清缺什么</text>
+  <text x="770" y="823" font-size="9.5" fill="#8D6E63">↺ 循环 ≤3 轮（MAX_REACT_ROUNDS）→ 仍 incomplete → failed</text>
 
   <!-- ═══════════ ⑨ ═══════════ -->
   <line x1="760" y1="856" x2="404" y2="856" stroke="#2E7D32" stroke-width="2" marker-end="url(#mG)"/>
   <text x="580" y="848" text-anchor="middle" font-size="11"><tspan font-weight="700" fill="#2E7D32">⑨ 试答</tspan><tspan fill="#9AA0A6"> · 结构化 prompt · 平台 → 主 agent（强制的一步）</tspan></text>
   <rect x="400" y="864" width="360" height="35" rx="5" fill="#F1F8E9" stroke="#C5E1A5"/>
-  <text x="410" y="879" font-size="9.5" fill="#33691E">能力 ・ 你交给它的任务 ・ 执行器说 ・【已做到】【还缺】・最近 10 条消息</text>
+  <text x="410" y="879" font-size="9.5" fill="#33691E">能力 ・ 你交给它的任务 ・ <tspan font-weight="600">它要的信息</tspan>（ask_user 原话）・ 它最后说的那段 ・ 你的上下文（<tspan font-weight="600">全部 N 条，全文</tspan>）</text>
   <text x="410" y="891" font-size="9.5" fill="#33691E">问：你的上下文里有没有它需要的信息？有 → 原话照搬；没有 → <tspan font-weight="600">不要编造</tspan></text>
 
   <!-- ═══════════ ⑩ ═══════════ -->
@@ -137,7 +132,7 @@
   <text x="580" y="928" text-anchor="middle" font-size="11"><tspan font-weight="700" fill="#2E7D32">⑩ 工具返回</tspan><tspan fill="#9AA0A6"> · ToolMessage · 七个可达出口</tspan></text>
   <rect x="400" y="944" width="360" height="35" rx="5" fill="#F1F8E9" stroke="#C5E1A5"/>
   <text x="410" y="959" font-size="9.5" fill="#33691E">七个出口都走 <tspan font-weight="600">render_receipt</tspan>（形式化 · <tspan font-weight="600">不截断</tspan>）</text>
-  <text x="410" y="971" font-size="9.5" fill="#33691E">【交付】＋【产出的产物】(带路径)＋【执行器说】全文＋【已做到】【还缺】</text>
+  <text x="410" y="971" font-size="9.5" fill="#33691E">【交付】(说事实，不下判决)＋【产出的产物】(带路径)＋【执行器说】全文＋【下一步】</text>
 
   <!-- ═══════════ ⑪ ═══════════ -->
   <line x1="760" y1="1016" x2="134" y2="1016" stroke="#2E7D32" stroke-width="2.2" marker-end="url(#mG)"/>
@@ -160,5 +155,5 @@
   <!-- 底注 -->
   <rect x="60" y="1176" width="1420" height="56" rx="10" fill="#F1F8E9" stroke="#7CB342" stroke-width="1.4"/>
   <text x="80" y="1198" font-size="11.5" font-weight="700" fill="#33691E">🔑 两条不变量 —— 看懂这两条就看懂了这个架构：</text>
-  <text x="80" y="1218" font-size="11.5" fill="#558B2F">① <tspan font-weight="600">执行器用完即弃</tspan> → 任何一次重入（试答后重跑 ⑧／答复投递 ⑫）都必须由平台<tspan font-weight="600">重放整份交接书</tspan>（④），不能只带增量　② <tspan font-weight="600">平台保证的交付物只有产物</tspan>，其余走大多数 agent 的搞法，不自己造机制</text>
+  <text x="80" y="1218" font-size="11.5" fill="#558B2F">① <tspan font-weight="600">执行器用完即弃</tspan> → 任何一次重入（试答后重跑／答复投递 ⑫）都必须由平台<tspan font-weight="600">重放整份交接书</tspan>（④），不能只带增量　② <tspan font-weight="600">平台保证的交付物只有产物</tspan>，其余走大多数 agent 的搞法，不自己造机制</text>
 </svg>

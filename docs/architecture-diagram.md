@@ -4,10 +4,10 @@
 > 图与本文不一致时，以本文为准。
 >
 > 对应代码：`../proto/`（9 个模块）+ `../evals/`（装配与评测）。
-> 设计原则与需求锚点见 `solution.md` §0；完成判定见 `solution.md` §十一；
+> 设计原则与需求锚点见 `solution.md` §0；**三态怎么来的**见 `solution.md` §十一；
 > 评审结论见 `architecture-review.md`；场景回归见 `scenarios.md`。
 >
-> **更新于 2026-11-02**（对齐到 commit `bea6c4c`）
+> **更新于 2026-11-05**（判定退休，对齐到 commit `838894e`）
 
 ---
 
@@ -22,7 +22,7 @@
 | 三 | **数据交接** —— **每一跳的精确内容**（交接了什么、谁生产、谁消费） | §三 |
 | 四 | **软判断 / 硬判断** —— 哪些决定是 LLM 下的、哪些是代码保证的 | §四 |
 
-配套两节字典：**§五 字段字典**（Task / ExecOutcome / _Judgement / Artifact / State）、
+配套两节字典：**§五 字段字典**（Task / ExecOutcome / Artifact / State）、
 **§六 图与生命周期**。
 
 > 📌 **为什么"交接"要单独成节**：这套系统的行为几乎全由"喂给 LLM 的上下文"决定 ——
@@ -46,7 +46,7 @@
 | `skills.py` | **技能领域** | `Skill`（`name`/`description`/`instructions`）· **内置表**（登记进 `registry`）· `read_skill` 工具 | **不做磁盘 I/O** · **不持有表** |
 | `skill_pack.py` | **技能包 I/O** | 文件夹形态 → `Skill`：`split_frontmatter` / `load_skill_pack` / `load_skills_dir`；自带文件的**列与读**（`list_skill_files` / `read_skill_file`） | 不定义 Skill 的语义 |
 | `artifacts.py` | **产物领域** | 产物库（**私有表 + 读 API** `get/has/ids/items/count/chars`）· ID 发号器 · 类型→扩展名**硬性派发** · 当场落盘 · `store/read/list_artifact` | 不管技能 |
-| `executor.py` | 执行器 | `_PLATFORM_RULE` · 三态判定 · 出口限制循环 · `run_task()` · `ExecOutcome` · **`read_user_turn`**（闭包造，见 §3.2.2） | **不持有状态、不跨轮、不直接问用户** |
+| `executor.py` | 执行器 | `_PLATFORM_RULE` · **三态由结构定**（`_structural_status`，见 §3.2.3）· `ask_user`（申报要信息）· 出口限制循环 · `run_task()` · `ExecOutcome` · **`read_user_turn`**（闭包造，见 §3.2.2） | **不持有状态、不跨轮、不直接问用户** |
 | `agent.py` | 主 agent | `_MAIN_PROMPT` · `delegate` 工具（含平台强制的四步）· **交接书** `render_briefing` · **用户原话快照** `_user_turns` · `absorb_outcome` | **不解析、不抽取参数** |
 | `graph.py` | 图 | `State`/`AgentState` · `prepare`（投递 + 台账注入）· `agent` · `finalize`（透传）· `build()` | 不做业务判断 |
 | `trace.py` | 可观测 | 全量日志 · **逐 super-step + 逐字流式**（`stream_agent`）· 参数摘要策略（`brief_args`） | 不截断正文（记录层不砍） |
@@ -97,7 +97,7 @@ config ──► trace ──► (所有模块都在写日志)
 | 对象 | 在哪 | 是什么 |
 |---|---|---|
 | **Skill** | `skills.py` | **静态能力包**：`name` + `description` + `instructions`（**只有这三个字段**） |
-| **Task** | `graph.State["tasks"]` | **一次具体业务工作**：跨轮存活，14 个字段见 §5.1 |
+| **Task** | `graph.State["tasks"]` | **一次具体业务工作**：跨轮存活，11 个字段见 §5.1 |
 | **Artifact** | `artifacts.py` | **运行期交付物**：7 个字段见 §5.4 |
 
 > 🔑 **一条不变量**：`read_skill_file` **只认 `list_skill_files` 给得出来的东西**。
@@ -136,7 +136,7 @@ config ──► trace ──► (所有模块都在写日志)
 │        · write_artifact    —— 自己产出短内容（**不建 Task**）          │
 │        · delegate(...)     —— 需要专业能力时（**建 Task**）            │
 └──────────────────────────┬──────────────────────────────────────────┘
-                           │ delegate(skill_name, task, artifacts=[...], based_on_turns=[...])
+                           │ delegate(skill_name, task, artifacts=[...])
                            ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │ ③ delegate 工具内部（**平台代码，这几步 LLM 跳不过**）                  │
@@ -144,11 +144,12 @@ config ──► trace ──► (所有模块都在写日志)
 │   ⓪ 校验：技能名不存在 → 拒绝；产物 ID 不存在 → 拒绝（**都不建 Task**）  │
 │   ⓪' _supersede_old：同 skill 下 stage=failed 的旧 Task → superseded   │
 │   ① render_briefing(rec) → run_task()  ← 执行器（隔离上下文）          │
-│   ② 按**三态穷举**分派（没有第四种）：                                  │
-│        completed ─────────────────────────► 交付（产物 ID + 路径 + 摘要）│
-│        waiting_for_input ─► _ask_main（**平台强制试答**）              │
+│        执行器在里头**申报**：调 `ask_user` = 要信息；交产物 = 交付      │
+│   ② 三态**由结构定**（`_structural_status`，不是 LLM 判的），穷举分派：  │
+│        waiting_for_input（调了 `ask_user`）─► _ask_main（**强制试答**） │
 │                              ├─ 答得上 → 带补充重跑 → completed? ─► 交付│
 │                              └─ 答不上 → 登记待答，交给平台转达         │
+│        completed（交了产物）─────────────► 交付（产物 ID + 路径 + 摘要）│
 │        incomplete（推满 3 轮）─────────────► failed，交给主 agent       │
 │                                                                     │
 │   ③ 返回 Command(update={messages:[ToolMessage], tasks:[rec, *旧的]}) │
@@ -173,25 +174,32 @@ config ──► trace ──► (所有模块都在写日志)
 run_task(skill, briefing)
   │  task_text = 【能力指令】instructions + 【技能自带文件】清单 + 【已知信息】briefing
   │  messages = [HumanMessage(task_text)]
+  │  工具：write_artifact（**按 run 记账**）· read_artifact · read_skill_file · `ask_user`
+  │        · `read_user_turn`（**按需**：有原话快照时才给）
   │
   ├─ 第 1 轮 ─────────────────────────────────────────────────────┐
-  │    stream_agent(executor_agent)   ← 工具：write/read_artifact  │
-  │    created[]（write_artifact 记账）        ← 只认**这次新写的**   │
-  │    _last_ai_text(resp)                    ← report（只给摘要用） │
-  │    _judge_material(arts, resp)            ← 判定看的"执行结果"   │
-  │    _judge(skill, arts, material, briefing) → _Judgement         │
-  │      ├─ completed / waiting_for_input ─────────────────► 出口    │
-  │      └─ incomplete ─► 还有轮次？ ─► _nudge_text(j) 追加 HumanMessage
-  │                        └─ 推满了 ─────────────────────► 出口（incomplete）
+  │    stream_agent(executor_agent)                                 │
+  │    created[]（write_artifact 记账）      ← 只认**这次新写的**     │
+  │    asked（ask_user 申报的那句原话）       ← 只认**这次申报的**     │
+  │    _last_ai_text(resp)                   ← report（只给回执用，   │
+  │                                             不参与任何判断）      │
+  │    按**结构**分派（平台只看自己看得见的）：                        │
+  │      ├─ 申报了要信息（`ask_user`）──────► 出口（waiting_for_input）│
+  │      ├─ 交了产物（`write_artifact`）────► 出口（completed）        │
+  │      └─ 都没有 ─► 还有轮次？ ─► nudge_text() 追加 HumanMessage    │
+  │                    └─ 推满了 ─────────────────────► 出口（incomplete）│
   ├─ 第 2 轮 …（同上，messages 累积）
   └─ 第 3 轮 …（同上，不再推）
   │
   ▼
-ExecOutcome{status, artifacts, report, rounds, progress, missing}
+ExecOutcome{status, artifacts, report, rounds, asked, fault}
 ```
 
 > ⚠️ **`messages` 是累积的**（`messages = list(resp["messages"]) + [HumanMessage(nudge)]`）——
-> 所以第 2 轮的 `resp` **包含第 1 轮的全部内容**。判定取材必须覆盖**所有轮次**（§3.2.3）。
+> 所以第 2 轮的 `resp` **包含第 1 轮的全部内容**，推回去越推越贵（见 `handoff-audit.md` H7）。
+>
+> 📌 **（历史）判定时代**这里还有一次 LLM 调用（`executor._judge`），它的取材必须覆盖**所有轮次**
+> —— 那套 2026-11-05 整块退休，见 §3.2.3。
 
 ### 2.3 数据流向总图（谁读谁写）
 
@@ -201,9 +209,10 @@ ExecOutcome{status, artifacts, report, rounds, progress, missing}
 | **台账** | `graph.node_prepare` | `state["messages"]`（SystemMessage） | 主 agent |
 | **Task** | `agent.delegate` | `state["tasks"]`（按 id 合并） | 台账渲染 · `_feed_waiting` · `_supersede_old` |
 | **交接书** | `agent.render_briefing` | 不存（现场渲染） | 执行器（作为 HumanMessage） |
-| 产物正文 | 执行器 / 主 agent 的 `write_artifact` | 产物库（`proto.artifacts`，+ 磁盘文件） | 判定 · `read_artifact` · 用户（打开文件） |
-| 产物 ID | 同上（返回值） | Task 的 `artifacts` / `refs` | 主 agent · 台账 · 判定 |
-| 判定结果 | `executor._judge` | `ExecOutcome` → Task 的 `progress`/`missing`/`stage` | 执行器（推回去）· 主 agent（台账 / 工具返回）· 用户（透传） |
+| 产物正文 | 执行器 / 主 agent 的 `write_artifact` | 产物库（`proto.artifacts`，+ 磁盘文件） | `read_artifact` · 用户（打开文件） |
+| 产物 ID | 同上（返回值） | Task 的 `artifacts` / `refs` | 主 agent · 台账 |
+| **申报要信息** | 执行器（`ask_user` 工具参数） | `ExecOutcome.asked` | 试答（平台强制）· 平台（转达给用户） |
+| **三态** | `executor._structural_status`（**结构**：申报 / 产物账） | `ExecOutcome.status` → `Task.stage` | 主 agent（台账 / 回执）· 平台（推回去 / 投递）· 用户（透传） |
 | 轨迹日志 | `trace.*` | `logs/proto-<时间戳>.log` | 人（事后复盘）· CLI（tail） |
 
 ### 2.4 跨轮：Task 靠什么活着
@@ -229,12 +238,12 @@ ExecOutcome{status, artifacts, report, rounds, progress, missing}
 | # | 交接 | 从 → 到 | 载体 | 精确内容 | ② 截断？ | ③ 长了怎么办 |
 |---|---|---|---|---|---|---|
 | ① | 用户输入 | 用户 → 图 | `HumanMessage` | 原话（不加工） | 不截 | — |
-| ② | **台账注入** | 平台 → 主 agent | `SystemMessage` | 见 §3.2.1 | **显式截断**（150/200 字，带标记＋指向回执） | 每轮重复注入的**索引**，所以允许短；但**切了必须说** |
-| ③ | **派发** | 主 agent → 平台 | `delegate` 工具参数 | `skill_name` / `task` / `artifacts[]` / **`based_on_turns[]`** | 不截（LLM 自己写的） | 轮次/产物 ID 不存在 → 当场拒绝 |
-| ④ | **交接书** | 平台 → 执行器 | `HumanMessage` | 见 §3.2.2 | **不截** | 用户原话＝**清单 + `read_user_turn` 按需全文**（点名那几轮直给全文） |
+| ② | **台账注入** | 平台 → 主 agent | `SystemMessage` | 见 §3.2.1 | **显式截断**（150 字，带标记＋指向全文出处） | 每轮重复注入的**索引**，所以允许短；但**切了必须说** |
+| ③ | **派发** | 主 agent → 平台 | `delegate` 工具参数 | `skill_name` / `task` / `artifacts[]` | 不截（LLM 自己写的） | 产物 ID 不存在 → 当场拒绝 |
+| ④ | **交接书** | 平台 → 执行器 | `HumanMessage` | 见 §3.2.2 | **不截** | 用户原话＝**清单 + `read_user_turn` 按需全文** |
 | ⑤ | 执行器产出 | 执行器 → 产物库 | 产物库（`proto.artifacts`）+ 磁盘 | 7 字段（§5.4） | 不截（正文全文落库） | 正文**不进主 agent 上下文**，用 `read_artifact` 按需读 |
-| ⑥ | **判定输入** | 平台 → 判定 | 结构化调用 prompt | 见 §3.2.3 | **显式截断**（保头保尾 + 显式标记） | 判定**没有工具循环**，取不了全文 —— 所以标记必须说清"你看不到这部分，别据此判未完成" |
-| ⑦ | 判定结果 | 判定 → 平台 | `_Judgement` | `status` / `progress` / `missing` / `reason` | 不截 | — |
+| ⑥ | **申报要信息** | 执行器 → 平台 | `ask_user` 工具参数 | `question` —— **它要什么**（原话） | 不截（LLM 自己写的） | — |
+| ⑦ | **三态（结构事实）** | 平台 → 平台 | `ExecOutcome.status`（枚举） | 见 §3.2.3 —— 平台只算"申报 / 交了产物 / 都没有" | 不截 | — |
 | ⑧ | **推回去** | 平台 → 执行器 | `HumanMessage`（追加） | 见 §3.2.4 | **不截** | — |
 | ⑨ | **试答** | 平台 → 主 agent | 结构化调用 prompt | 见 §3.2.5 | **不截**（含**全部**对话，不是"最近 N 条"） | 它是独立调用，只看得见这个 prompt —— 砍了就答不上来 |
 | ⑩ | **工具返回（回执）** | 平台 → 主 agent | `ToolMessage` | 见 §3.2.7 | **不截**（`render_receipt`） | 产物正文不进上下文，只给 ID＋路径＋梗概 |
@@ -249,17 +258,16 @@ ExecOutcome{status, artifacts, report, rounds, progress, missing}
 ```
 【平台提示】你已委派出去的工作（共 {N} 项）：
 - {task_id}  「{skill}」  {状态标记}{→ 产物 ID}
-      已做到：{progress 前 150 字}          ← 仅 stage ∈ (waiting_for_input, failed)
-      还缺：{missing 逐条，前 200 字}        ← 同上
-      执行器说：{report 前 150 字}           ← 同上
+      执行器说：{report 前 150 字}           ← 仅 stage ∈ (waiting_for_input, failed)
 
 {提示句}
 ```
 
 | 元素 | 取值 |
 |---|---|
-| 状态标记 `_STAGE_MARK` | `⏳ 进行中` / `✅ 已完成` / `⚠️ 等用户答复` / `❌ 失败` / `🔁 已被新的委派取代（不用管了）` |
-| 展开细节的 `_NEEDS_DETAIL` | `("waiting_for_input", "failed")` —— 其余只列一行 |
+| 状态标记 `_STAGE_MARK` | `⏳ 进行中` / `✅ 它交付了产物` / `⚠️ 它在要信息` / `❌ 它没交付、也没说要什么` / `🔁 已被新的委派取代（不用管了）` |
+| 展开细节的 `_NEEDS_DETAIL` | `("waiting_for_input", "failed")` —— 其余只列一行；展开的只有**执行器说**一行 |
+| 截断时"全文在哪" | 由 `Task.run_by` 决定：`delegate` 那一趟 → **那次的回执**；`feed`（投递重跑）那一趟 → **不在你的上下文里** |
 | 提示句（**有待答时**） | 「**「等用户答复」的那些，平台已经负责把问题转达给用户、也会把用户的答复投回去** —— 你**不用**重新委派它们，更不要自己替用户编一个答案。」 |
 | 提示句（**无待答时**） | 「（用户补充信息时，**只重跑受影响的任务**，已完成且不受影响的不动。）」 |
 | 注入条件 | `tasks` 为空 → **不注入**（闲聊轮次里主 agent 上下文里没有这段） |
@@ -285,11 +293,9 @@ ExecOutcome{status, artifacts, report, rounds, progress, missing}
 
 【用户原话】
   来源：**用户说的** —— 平台直接搬，未经转述
-  - **第 N 轮（M 字）—— 本次工作依据的就是它**：
-    {该轮原话全文}
-    ↳ **它在回答的上一句**：「{紧邻的前一条 AI 消息，开头 40 字}」
+  - 第 N 轮（M 字）：{开头 40 字}…
+    ↳ **它在回答的上一句**：「{紧邻的前一条 AI 消息，开头 40 字}…」
   - 第 K 轮（L 字）：{开头 40 字}…
-    ↳ **它在回答的上一句**：「…」
   （**这是事实来源**；【任务】是这次的要求，两者冲突时**以原话为准**。
    要看哪一轮的**完整上下文**（它回答的上一句 ＋ 原话）就用 `read_user_turn(轮次)` 读，
    不要凭那几十个字猜。）
@@ -306,13 +312,6 @@ ExecOutcome{status, artifacts, report, rounds, progress, missing}
     {主 agent 补的内容}
   （**它最后说的那句**就是上面「问 2」，逐字相同 —— 原样，**不重复贴**。）
   （如前后答复冲突，**以后面的为准**）
-
-【上次判定】
-  来源：**判定说** —— 这是**上一轮的情况**，不是本轮的结论
-  - 已做到：
-    {progress}
-  - 还缺：
-    - {missing 逐条}
 
 【已经产出的产物】
   - {art_id}《{title}》（{N} 字）—— {summary}
@@ -333,14 +332,13 @@ ExecOutcome{status, artifacts, report, rounds, progress, missing}
 | 【任务】 | 永远 |
 | **【用户原话】** | `user_turns` 非空（**首次派发也有** —— 快照在 `delegate` 建 Task 时就落下了） |
 | 【问答经过】 | `qa` 非空 **或** `report` 非空 |
-| 【上次判定】 | `progress` / `missing` 任一非空 |
 | 【已经产出的产物】 | `artifacts` 非空 |
 | 【可读产物】 | `refs` 非空 |
-| 【续跑提示】 | `progress` / `missing` / `report` / `qa` **任一非空** —— ⚠️ 不含 `artifacts`/`refs`（**只有重入才说"接着干"**，首跑说会让它以为有前情） |
+| 【续跑提示】 | `report` / `qa` **任一非空** —— ⚠️ 不含 `artifacts`/`refs`（**只有重入才说"接着干"**，首跑说会让它以为有前情） |
 
 ##### 🔴 段的顺序 ＝ 读的人理解这件事的顺序（2026-11-03）
 
-    我要做什么 → 用户原话 → 我做过什么/问过什么 → 判定怎么看 → 我产出了什么 → 接着干什么
+    我要做什么 → 用户原话 → 我做过什么/问过什么 → 我产出了什么 → 接着干什么
 
 原来是**按来源分段、且最新在前**：`report`（它最新那句）排在 `qa`（更早的历次问）**前面**，
 读的人得在两段之间来回跳才能把一件事的经过拼起来 —— 实测（`教案日志.txt` R07）读起来是**倒的**。
@@ -350,7 +348,8 @@ ExecOutcome{status, artifacts, report, rounds, progress, missing}
 
 **① 排版**：段名 0 列 · 段体 2 列 · 每层 +2（`proto.handoff.BODY` ＋ `body_lines`/`bullet_lines`）。
 治的是实测三种破法：多行的「答」续行**掉到 0 列** · 「答」和「问」的续行同缩进（看着像问的一部分）·
-点名轮原文顶在 0 列。**断言**：`unit_briefing.py` ⑩ 扫渲染结果，凡非空行不以 `【` 或两空格开头就红。
+~~点名轮原文顶在 0 列~~（点名 2026-11-03 删，这条破法随之没有了）。
+**断言**：`unit_briefing.py` ⑩ 扫渲染结果，凡非空行不以 `【` 或两空格开头就红。
 
 **② 去重**：`qa` 里的「问」是**当时那条 `report`** 原样抄下来的（`graph._feed_waiting` /
 `agent.delegate` 两处都这么建），而 `report` 要到 `absorb_outcome` 才被覆盖 ——
@@ -360,8 +359,10 @@ ExecOutcome{status, artifacts, report, rounds, progress, missing}
 读的人分不出"它没说"和"被折叠了"。**断言**：`unit_briefing.py` ⑨ 正反两条 ——
 相同则只出现一遍且带标记；**不同则一个字都不能少**（折叠写歪会静默吞内容）。
 
-> 🔴 **【上次判定】的措辞是写死的**：判定也会看到这段 —— 不写清"这是上一轮"，
-> 判定会把上一轮的"还缺"当成这一轮还没做完。
+> 📌 **（历史）【上次判定】那一段 2026-11-05 整段删掉** —— 它渲染的是**判定**给的
+> `progress` / `missing`，判定退休后**没有任何东西再写这两个字段**（执行器"上次说到哪"
+> 仍然在【问答经过】里，**是它自己的原话**）。
+> 当时那条"措辞必须写死'这是上一轮'"的规矩也随之作废（**只有判定会误读**，执行器读自己的话不会）。
 >
 > 🔴 **每个 Task 字段要么渲染在这里、要么在 `evals/unit_briefing.py` 的排除名单里** ——
 > 那里有断言，以后加字段忘了渲染会红。
@@ -384,7 +385,6 @@ ExecOutcome{status, artifacts, report, rounds, progress, missing}
 | 【任务】 | 来源行：**主 agent 交代的** —— 它根据对话写的，可能补了用户没说的东西 |
 | 【用户原话】 | 来源行：**用户说的** —— 平台直接搬，未经转述 |
 | 【问答经过】 | 来源行：**按时间顺序**…；「问」标`（执行器原话）`、「答」逐条标**谁**答的：`- **问 1**（执行器原话）：` / `- **答 1**（**用户**）：` |
-| 【上次判定】 | 来源行一次写死：`**判定说** —— 这是**上一轮的情况**，不是本轮的结论`（**判定是第三方评审，执行器是当事人 —— 可信度不是一回事**） |
 | 【已经产出的产物】【可读产物】 | 平台给的清单（**事实**，不是谁的话） |
 
 > ⚠️ **2026-11-03 分家**：原来【你上次说到哪】一段里**混着两方的话**
@@ -392,6 +392,7 @@ ExecOutcome{status, artifacts, report, rounds, progress, missing}
 > 现在 `report` 按时间序并进【问答经过】，**每段只留一方的话**，来源由段头写死一次 ——
 > 段名也跟着改成【上次判定】/【问答经过】（旧名在新内容上就是**假话**：
 > 【已经答复过的信息】里现在也有"还没人答的那句"）。
+> 📌 2026-11-05 判定退休后【上次判定】整段删掉（见上），**这一跳只剩一方的话**。
 
 ##### 🔴【用户原话】：为什么要有它、为什么**只给清单**（2026-11-02）
 
@@ -407,17 +408,19 @@ ExecOutcome{status, artifacts, report, rounds, progress, missing}
 |---|---|---|
 | **L1 清单** | 每轮一行：`第 N 轮（M 字）：{开头 40 字}…` | 交接书，**常驻** |
 | **L2 全文** | 某一轮的**原话全文** | 工具 `read_user_turn(n)`（**执行器**的，闭包造，见下） |
-| **L1.5 点名** | 主 agent 用 `based_on_turns=[1,3]` 点的那几轮 → **直接给全文** | 交接书（点名本身就是一次"按需取"） |
+| ~~**L1.5 点名**~~ | ~~主 agent 用 `based_on_turns=[1,3]` 点的那几轮 → 直接给全文~~ | **2026-11-03 删** —— 原话只有**索引**一种形状，全文一律按需取 |
 
 > ⚠️ **`read_user_turn` 是闭包造的**（`executor._user_turn_reader`），**不是模块级全局** ——
 > 并行 delegate 时两个执行器会互相覆盖，`ARTIFACT_DIR` 那种全局状态在这儿就是坑。
 >
-> ⚠️ **主 agent 点名的轮次当场校验**：点了不存在的轮次 → **拒绝派发**
-> （和"产物 ID 不存在"同一处理）。放行的话平台会"以为把原文给了"，实际什么都没给，
-> 而执行器不知道 —— **静默降级**。
+> ⚠️ **（历史）点名**（2026-11-03 删）：原来主 agent 可以用 `based_on_turns=[1,3]` 点几轮，
+> 平台**当场校验**轮次存不存在（点了不存在的 → 拒绝派发）—— 防的是"平台以为把原文给了，
+> 实际什么都没给，而执行器不知道"（静默降级）。**现在没有"点名"这个动作了**，
+> 那条校验随之没有对象（产物 ID 那条校验仍在）。
 >
-> 📌 **判定拿到的也是这份清单**（`briefing` 是判定输入之一）。它**没有工具循环**，读不了全文 ——
-> 开头 40 字通常已含最关键约束（用户一般先说主题），够判；不够是后续可调的点。
+> 📌 **（历史）判定退休前**（2026-11-05 前），它拿到的也是这份清单（`briefing` 是判定输入之一）——
+> 它**没有工具循环**、读不了全文，所以当时判断"开头 40 字够不够用"是它的一个可调点。
+> 现在读这份清单的只有**执行器**，它手里有 `read_user_turn`。
 
 ##### 🔴 每轮还要带「它在回答的上一句」（`after`，2026-11-02）
 
@@ -445,57 +448,65 @@ A. 填空补白 / B. 表格记录 / C. 图示思维导图 / D. 混合」，用�
 > ⚠️ **一个"上文"只配一轮**：连着两条用户消息时，第二条的语境是第一条，
 > 不该再挂同一条 AI 消息 —— 挂了就是**错的**上下文，比没有更糟。
 
-#### 3.2.3 ⑥ 判定输入（`executor._judge`）
+#### 3.2.3 ⑥ 申报要信息 ＋ ⑦ 三态**由结构定**（`executor._structural_status`）
 
-```
-【任务要求】
-{skill.instructions}
+**⑥ 执行器要信息 → 调 `ask_user`**（参数里那句原话就是"它要什么"）：
 
-【执行者已经拿到的信息】
-{briefing.strip() or '（无）'}
-
-【实际执行结果】
----
-{material}
----
-
-【产物情况】执行者**产出了 N 个文件**。/ 执行者**没有产出任何文件**。
-
-{_JUDGE_RULES}
+```python
+@tool
+def ask_user(question: str) -> str:
+    """你**没法往下干**了，需要一条你自己拿不到的信息 —— 用这个问。"""
 ```
 
-**`material` 的取材（`_judge_material`）—— 两条路不一样，别合并**：
+- 平台**看到调用就结束这一轮**（`run_task` 里 `break` —— **不等它继续说**，结构保证，
+  不靠提示词让它自觉）；之后走原路：`_ask_main` 试答 → 答不上把 `question` **原样**转给用户
+  （见 §3.2.5 / §3.2.8）。
+- 🔴 **写在回复正文里的"我要信息"平台看不到** —— 平台**不读正文**（那是判定时代的做法）。
+- `ask_user` 用**闭包**造（按 run 归属），同 `write_artifact`（§4.2 的 H1：**按 run 记账**）。
 
-| | 交付物是什么 | 判定看什么 |
+**⑦ 三态由结构定**（`executor._structural_status`，抽成函数是为了**可单测**）：
+
+| 平台**看得见的**结构事实 | → `ExecOutcome.status` | → `Task.stage` |
 |---|---|---|
-| **有产物** | **产物正文**（就是它） | 产物正文，**不掺它说的话** |
-| **无产物** | 只能从 AI 产出里找 | **全部轮次**的 AI 产出 |
+| 执行器**调了 `ask_user`**（申报要信息） | `waiting_for_input` | `waiting_for_input` |
+| 执行器**交了产物**（`write_artifact` 记账） | `completed` | `completed` |
+| **都没有**（推满 3 轮） | `incomplete` | `failed` |
 
-**字符预算**（`JUDGE_ITEM_BUDGET = 4000` / `JUDGE_TOTAL_BUDGET = 16000`）：
+> 🔴 **顺序不能反**：申报优先 —— 它可能交了一部分之后卡住，那时该去要信息。
+>
+> 🔴 **`completed` 只说"交了东西"这个事实，不说"够不够"**：平台**不判质量** ——
+> "这次交付够不够"是**主 agent 判**的（回执把交付账摆给它，见 §3.2.7）。平台判质量正是判定时代的毛病。
+>
+> 🔴 **平台不读正文**：`report`（它最后说的那段）**不参与任何判断**，只**原样**进回执
+> （标着"它说的"），由主 agent 读。
 
-- 每一项**各自**保头保尾（头 60% + 尾 40%），中间插**显式截断标记**：
-  `……【平台截断：中间 N 字因提示词长度限制未展示给你。**你无法看到这部分**，所以不要仅凭「看不到」判未完成；但若在**看得到**的部分发现占位符、待补充、半成品，照常判未完成】……`
-- 总量超 16000 → 砍掉排在后面的项，并**显式说明少了几项**
+> 📌 **（历史）判定** —— **2026-11-05 退休**。原来这里是一次 LLM 调用（`executor._judge`，
+> 输出 `_Judgement{status, progress, missing, reason}`），从"产物正文 ＋ 执行器说的话"里
+> 一起回答"完成了没 / 在不在要信息"。**根因是两个语义不同的问题被压进了一次判断** ——
+> "要不要把它说的话喂给判定"因此成了死结：喂了，礼貌收尾被当成要信息；不喂，真问题被吞。
+> 退休时**判定那个模块整个文件删掉**，`progress` / `missing` 两个字段
+> **整条链摘掉**（`ExecOutcome` / `Task` / 交接书 / 台账 / 回执 / 词汇表）。
+> 当时的实测记录（`JUDGE_ITEM_BUDGET = 4000` / `JUDGE_TOTAL_BUDGET = 16000` 的保头保尾、
+> 截断标记措辞、74% 没给判定看仍判 `completed`）见 `handoff-audit.md` §九 与 git 历史。
 
-> 🔴 **标记的措辞是被实测逼出来的，别改回去**：原来写「……（此处省略 N 字）……」，
-> 判定会把它当成**作者偷懒的占位符**（规则 1 说占位符不算完成）→
-> **产物越长越必然判 incomplete**。而"产物长"恰恰是本架构要支持的正常场景。
-
-#### 3.2.4 ⑧ 推回去（`executor._nudge_text`）
+#### 3.2.4 ⑧ 推回去（`proto/handoff/nudge.py::nudge_text`）
 
 ```
-任务还没完成。
+这一轮**既没有交付产物，也没有说明你需要什么信息**。
 
-**你已经完成了**：{progress}
-
-**还缺**：
-- {missing 逐条}
-
-请**接着往下做**，不要从头再来。
-
-如果确实缺少必要信息才能继续，就**明确说明你需要什么**（缺哪个参数、要什么确认）；
-否则不要用「已完成」之类的话收尾。
+两条路，选一条走：
+- **干完了** → 用 `write_artifact` 把成果**交付成产物**（正文写在回复里平台看不到，不算交付）；
+- **缺信息、干不下去** → 用 `ask_user` **说清缺什么**（平台会先问主 agent，它答不上再转用户）。
+不要用「已完成」这类话收尾 —— 那句话不构成交付。
 ```
+
+> 🔴 **只说平台看得见的两件事实 ＋ 两条出路**（2026-11-05 判定退休）：这段原来带的是
+> **判定吐的** `progress` / `missing`（"你已经完成了什么、还缺什么"）—— 判定没了就没有来源，
+> **不许在这里编**。做法是"平台造路"：不猜它想说什么，把**正确的两条路**摆在它面前。
+>
+> 📌 **（历史）实测效果**（判定时代）：那一轮执行器只把内容写在正文里没落库，判定发现 → 推回去 →
+> **下一轮就落库了**。现在做这件事的是**结构**：没交产物就没出口 → 推回去，nudge 点明
+> `write_artifact` 这条路（真跑实测：第 1 轮既没交也没申报 → 推回去 → 第 2 轮就调了 `ask_user`）。
 
 #### 3.2.5 ⑨ 试答（`agent._ask_main`）—— **平台强制的一步**
 
@@ -510,11 +521,9 @@ A. 填空补白 / B. 表格记录 / C. 图示思维导图 / D. 混合」，用�
 你委派出去的工作卡住了，它在请求信息。
 
 能力：{skill_name}
-你交给它的任务：{task}
-执行器说：{outcome.report}
-【已做到】{progress}
-【还缺】
-- {missing 逐条}
+你交给它的任务（**你写的** —— 可能补了用户没说的东西）：{task}
+**它要的信息**：{outcome.asked}
+它最后说的那段（可能有上下文，也可能只是过场）：{outcome.report}
 
 你的上下文（**全部 N 条，全文**）：
 {每条消息，**不截**}
@@ -523,6 +532,9 @@ A. 填空补白 / B. 表格记录 / C. 图示思维导图 / D. 混合」，用�
 - 有（用户之前说过）→ can_answer=true，answer 里给出补充内容，原话照搬
 - 没有 → can_answer=false，**不要编造**
 ```
+
+> 🔴 **"它要什么" = `ask_user` 工具参数里的原话**（**结构**）—— 不是从它的话里挑出哪句是问题
+> （那是判定时代才要做的事）。`outcome.report` 仍然给，但只作为**上下文**（它说过的原话）。
 
 > ⚠️ **不是"最近 N 条"、也不截**（2026-11-02 的交接三问之二）：这一步是个**独立的结构化调用**，
 > 它**只看得见这个提示词里的东西** —— 信息若落在长消息的后半段，它就答不上来、只能去打扰用户，
@@ -537,22 +549,19 @@ A. 填空补白 / B. 表格记录 / C. 图示思维导图 / D. 混合」，用�
 
 #### 3.2.6 🔴 **决策记录**：一次 LLM 决策 = 一条日志（`trace.decision`，2026-11-03）
 
-**两个软判断点**（判定 `executor._judge` / 试答 `agent._ask_main`）**共用同一种记录**：
+**运行期只剩一处平台主动发起的 LLM 决策点**（试答 `agent._ask_main`）——
+判定退休前是**两处**（判定 `executor._judge` / 试答），两处**共用同一种记录**：
 
 ```
-🧭 决策 · 判定（LLM）· R02 第 1 轮
+🧭 决策 · 试答（LLM）· 平台强制的一步
     前提：
-      - 技能 lesson-prep（instructions 2532 字，按名引用）
-      - 已知信息 926 字（委派时给的）
-      - 材料 执行器说的话（无产物）｜判定看到 1 段产出 + 0 个产物（274 字）
-    问题：这个任务完成了没？没完成的话，是**在要信息**（waiting_for_input）还是**没干完**（incomplete）？
+      - 执行器问的那句（原话，274 字）
+      - 主 agent 的全部 6 条消息 —— **全文、不截**，逐字见上面那条 PROMPT
+    问题：**主 agent 的上下文里**，有没有执行器要的那个信息？（有就不打扰用户）
     结果：
-      - status = **waiting_for_input**
-      - 理由：…
-      - 进度：…
-      - 还缺：
-        - 尚未收到用户对第二个问题的答复
-    下一步：登记待答 → 平台强制主 agent 试答 → 答不上就**原样透传**给用户
+      - can_answer = **False**
+      - 补充：（无）
+    下一步：答不上 → 登记待答，由**平台**把执行器原话**透传**给用户
 ```
 
 **为什么是这四段**（用户 2026-11-03 原话）：
@@ -560,9 +569,11 @@ A. 填空补白 / B. 表格记录 / C. 图示思维导图 / D. 混合」，用�
 > *"decide 那一段日志也得整理下格式，人看着也不清晰。既然是决策，很显然：**决策前提是什么、
 > 要决策的问题是什么、决策结果是什么**，有可能还要补充**下一步该干什么**。"*
 
-⚠️ **改之前是两条互不相干的 note**：`判定输入：…`（前提）在前、`R02 第 1 轮判定：status=…`
-（结果）在后，**中间隔着一次 LLM 调用**（实测 6 秒）。读的人得自己把两条拼起来 ——
-而"前提"恰恰是判错时要**第一个**看的东西（判定只看得到喂进去的那些）。
+⚠️ **（历史，判定时代）改之前是两条互不相干的 note**：`判定输入：…`（前提）在前、
+`R02 第 1 轮判定：status=…`（结果）在后，**中间隔着一次 LLM 调用**（实测 6 秒）。
+读的人得自己把两条拼起来 —— 而"前提"恰恰是判错时要**第一个**看的东西
+（判定只看得到喂进去的那些）。**这条教训对剩下的试答同样成立**：它也是个独立调用，
+只看得见 prompt 里的东西。
 
 **两条硬机制**：
 
@@ -577,9 +588,9 @@ A. 填空补白 / B. 表格记录 / C. 图示思维导图 / D. 混合」，用�
 > `can_answer=True answer='课型：…\n学生基础：…'`（转义过的 repr）。
 > 它**全文的前提**（主 agent 整个上下文）仍然照打，排在决策块**前面** —— 前提 → 证据 → 结论。
 
-**下一步那一行跟着代码走**：`executor._judge_next` 就是出口那段**三态枚举**的穷举
-（completed → 回执给主 agent ｜ waiting_for_input → **试答** → 答不上才登记待答 → 透传 ｜
-incomplete → 推回去 ｜ 推完轮数 → 交给用户），措辞跟分支一一对应。
+**下一步那一行跟着代码走**：`agent._ask_main` 的 `nxt=` 就是这一步出口的穷举
+（答得上 → 成对记进 `Task.qa` → 带回去重跑执行器、**不打扰用户** ｜ 答不上 → 登记待答，
+由平台把执行器原话**透传**给用户），措辞跟分支一一对应。
 
 **断言**：`evals/unit_decision.py`（四段齐全 / 顺序 / 值不丢 / **列表不是 Python repr** /
 展示层没写死内容特征）。⚠️ 它管不了"模型读懂没有" —— 那要真跑，见 §七。
@@ -602,8 +613,9 @@ incomplete → 推回去 ｜ 推完轮数 → 交给用户），措辞跟分支�
 
 ```
 【交付】                                          ← 段名独占一行（同 §3.2.2 那条规矩）
-  ✅ 已完成 —— 交付 N 个产物 ／ ✅ 已完成 —— 成果在执行器的回复里（**没有产物**）
-  ／ ⏳ 没完成 —— **它在请求信息** ／ ❌ 失败 —— 推了 N 轮，仍然既没完成、也没说明需要什么信息
+  它交付了 N 个产物 ／ 它在**要信息**（调了 `ask_user`）
+  ／ 它既没交付产物、也没说要什么信息（推了 N 轮）
+  ／ ⚠️ 没跑成 —— **平台故障**（重试过一次仍失败）
 【产出的产物】                                    ← 有产物才出
   - {art_id}《{title}》（{N} 字）—— {summary}
     文件：{真实路径}
@@ -611,18 +623,22 @@ incomplete → 推回去 ｜ 推完轮数 → 交给用户），措辞跟分支�
 【执行器说】                                       ← 🔴 **全文，一个字都不截**
   来源：**它说的** —— 原样，未经改写
   {report}
-【已做到】                                        ← 只有"没完成"才出
-  来源：**判定说**
-  {progress}
-【还缺】
-  来源：**判定说**
-  - {missing 逐条}
 【你补的信息】                                     ← 只有试答过才出
   来源：**你说的** —— 已成对记进 Task，下次重入还会带上
   {agent_answer}
+【平台故障】                                       ← 只有平台故障才出
+  来源：**平台说的** —— 不是执行器说的，也不是判定说的
+  这一轮**根本没跑成** ＋ 原样再 `delegate` 一次
 【下一步】
   {该出口的处置提示}                                ← 由调用方给
 ```
+
+> 🔴 **【交付】那一行说事实，不下判决**（2026-11-05）：原来写的是平台的**判决**
+> （"✅ 已完成 —— 交付 N 个产物"）—— 而"完成没"是**判定**给的，主 agent 只是照转。
+> 现在判定退休了，平台只说自己**看得见的事实**：交了几样 / 它在要信息 / 什么都没给。
+> **"够不够"由主 agent 判** —— completed 那档的【下一步】就写着「**你判**：这次交付够不够？」。
+> ⚠️ 同时删掉的是 `completed_in_reply` 那一档（"completed 但没产物"）：三态由结构算之后，
+> `completed` **必然有产物** —— 没产物就是 `incomplete` → 推回去让它交付。
 
 > 🔴 **排版和交接书是同一条规矩**（`handoff.section_head` ＋ `body_lines`）：
 > **段名独占一行 → 来源另起一行 → 段体缩进 2 列**。见 §3.2.2 那条注。
@@ -643,12 +659,17 @@ incomplete → 推回去 ｜ 推完轮数 → 交给用户），措辞跟分支�
 | # | 触发 | 回执 |
 |---|---|---|
 | 1 | **技能名不存在** | `【这次没有派发】❌ 没有能力「X」` ＋ `【可用的能力】…`（**不建 Task**） |
-| 2 | **产物 ID / 轮次不存在** | `【这次没有派发】❌ 产物 art_999 不存在` ＋ `【本会话现有产物】…`（**不建 Task**） |
-| 3 | `completed` + 有产物 | 全段 ＋ `【下一步】`（无） |
-| 4 | `completed` + 无产物（正文交付） | 全段，`【下一步】`＝「**请原样转达给用户，不要改写**」<br>⚠️ **这条出口不保证**（2026-11-02 定，见 `solution.md` §0.7）：平台**不解析、不校验、不抽取、不累积**；`report` 只取最后一条（**四家的标准做法**），多轮会碎 |
-| 5 | 试答成功 → 重跑 `completed` | 全段 ＋ `【你补的信息】` |
-| 6 | `waiting_for_input`（试答后仍缺） | 全段 ＋ `【下一步】`＝「平台已登记为待答…**你不用重复问，更不要自己替用户定一个答案**」 |
-| 7 | `incomplete` → `failed` | 全段 ＋ `【下一步】`＝「换个说法再 delegate 一次；或向用户说明没做成」 |
+| 2 | **产物 ID 不存在** | `【这次没有派发】❌ 产物 art_999 不存在` ＋ `【本会话现有产物】…`（**不建 Task**） |
+| 3 | `completed`（**交了产物**） | 全段 ＋ `【下一步】`＝「**你判**：这次交付够不够？（不够就换个说法重派，或向用户说明）」＋「它说的话**过一眼**」 |
+| 4 | 试答成功 → 重跑 `completed` | 全段 ＋ `【你补的信息】` |
+| 5 | `waiting_for_input`（试答后仍缺） | 全段 ＋ `【下一步】`＝「平台已登记为待答…**你不用重复问，更不要自己替用户定一个答案**」 |
+| 6 | `incomplete` → `failed` | 全段 ＋ `【下一步】`＝「它推满了轮次**既没交产物、也没说要什么信息**。两种可能，你看回执定：真的干不了 → 换个说法重派／向用户说明；其实把答案写在了回复里 → 平台不认正文交付，但你可以**原样转达**，或者让它交付成产物再来一次」 |
+| 7 | **平台故障**（`outcome.fault`） | 全段 ＋ `【平台故障】` ＋ `【下一步】`＝「**原样再 `delegate` 一次**即可（不用改措辞、不用改参数、不用问用户）」 |
+
+> ⚠️ **"正文交付"那一档**（`completed` 但没产物）**随判定退休一起删了**：三态由结构算之后
+> 它**结构上不可能**。正文交付本身仍然是**反模式**（平台不保证、也不为它造机制），
+> 见 `solution.md` §0.7 —— 但那条出口**不再是一格**：没交产物就是 `incomplete`，
+> 平台推回去让它交付（nudge 点明 `write_artifact` 这条路）。
 
 > 🔴 **不截断是硬要求**（用户 2026-11-02）：`report` 是**它交付了什么**，
 > 主 agent 要靠它写回复、人要靠它读日志。**任何形式的 `[:N]` 都会让这两件事同时残掉。**
@@ -707,12 +728,13 @@ settle(rec, outcome)          # 写字段 + 定 stage —— 状态迁移只有�
 
 ### 4.1 运行期的软判断（**LLM 决策**）
 
-**平台主动发起的 LLM 调用只有三处**（其余是 agent 自己的循环）：
+**平台主动发起的 LLM 调用只剩一处**（试答 S2）—— 判定退休前是**两处**。
+下面 S3 / S4 是**两个 agent 自己的循环**（不算"平台发起"，但也是软判断）：
 
 | # | 软判断 | 位置 | 输入 | 输出 | 失败兜底 |
 |---|---|---|---|---|---|
-| **S1** | **三态判定**：任务完成了没 | `executor._judge` | `instructions` + `briefing` + `material` + 产物数量 | `_Judgement{status, progress, missing, reason}` | `incomplete`（**会让它再 react 一轮**） |
-| **S2** | **主 agent 试答**：你上下文里有它缺的信息吗 | `agent._ask_main` | `skill_name` + `task` + `outcome.report` + 进度/缺失项 + **全部消息（全文，不截）** | `_AgentAnswer{can_answer, answer}` | `can_answer=False`（**交给用户，不编答案**） |
+| **~~S1~~** | ~~**三态判定**：任务完成了没~~ | ~~`executor._judge`~~ | — | — | **2026-11-05 退休**：三态改由**结构**定（`ask_user` 申报 / 交了产物 / 都没有，见 §3.2.3）—— 平台**不判质量** |
+| **S2** | **主 agent 试答**：你上下文里有它缺的信息吗 | `agent._ask_main` | `skill_name` + `task` + **`outcome.asked`（它要什么）** ＋ `outcome.report` ＋ **全部消息（全文，不截）** | `_AgentAnswer{can_answer, answer}` | `can_answer=False`（**交给用户，不编答案**） |
 | **S3** | 主 agent 自己的决策（**六个子选择**，见下） | `create_agent` 的模型调用 | 系统提示 + 对话历史 + 台账 + 工具定义 | 工具调用 / 直接回复 | —（原生 tool calling，无兜底） |
 
 **S3 的六个子选择**（逐个看能不能收紧 —— 这决定了「理解」这一层还剩多少软的）：
@@ -723,17 +745,20 @@ settle(rec, outcome)          # 写字段 + 定 stage —— 状态迁移只有�
 | ② | 派给哪个技能 | ⚠️ 需求 **F2** 本来要求「用户在 UI 中显式选中」，**原型未实现**（见 `solution.md` §0.6）|
 | ③ | 产出范围（做几样） | 随 ② 一起收窄 —— 选了几个就做几个 |
 | ④ | **`task` 怎么写** | ⚠️ 它是**转述**（会丢、会加料）→ 平台用【用户原话】**对冲**，见 §3.2.2 |
-| ⑤ | **`based_on_turns` 点名哪几轮** | LLM 只做**选择**，平台做**搬运** —— 点名的轮次**原文直给** |
+| **~~⑤~~** | ~~**`based_on_turns` 点名哪几轮**~~ | **2026-11-03 删** —— 轮次不再由主 agent 点名：原话只有**索引**一种形状，全文由读的人按需取（§3.2.2） |
 | ⑥ | 回复怎么组织 | ❌ 不收紧 —— 按 `solution.md` **§0.7**，正文交付**不保证** |
-| **S4** | 执行器自己的决策 | 同上（执行器实例） | `_PLATFORM_RULE` + 能力指令 + 已知信息 | 工具调用 / 回复 | — |
-| **S5** | 判定规则里"什么算请求信息" | `_JUDGE_RULES` 规则 3 | 同上 | 同上 | 同上 |
+| **S4** | 执行器自己的决策 | 同上（执行器实例） | `_PLATFORM_RULE` + 能力指令 + 已知信息 | 工具调用（含 **`ask_user`**）/ 回复 | — |
+| **~~S5~~** | ~~判定规则里"什么算请求信息"~~ | ~~`_JUDGE_RULES` 规则 3~~ | — | — | **随判定退休**：这条语义判断的**根因被移除**了 —— "要信息"改成**执行器自己申报**（`ask_user`），不再由 LLM 从文本里认 |
 
-> 🔴 **S1 的"输入缺一不可"**：`instructions` + `briefing` + 产出 + 产物数量 ——
+> 📌 **编号沿用原表**（S1 / S5 / ⑤ 划掉，不重排）—— 它们**曾**存在、**为什么被删**都记在上面那几行里。
+>
+> 🔴 **（历史）S1 的"输入缺一不可"**：`instructions` + `briefing` + 产出 + 产物数量 ——
 > **缺一个就会猜**。这个坑踩过**四次**，前三次是"忘了带某个字段"，
 > 第四次是"信息在列表里、但取错了那一条"（只取最后一条 AI 消息，看不到前面几轮）。
+> 判定退休后这条**对剩下的试答同样成立**：它是独立调用，只看得见 prompt 里的东西。
 
-> 🔴 **S1 / S2 每次调用都留一条「决策记录」**（前提 → 问题 → 结果 → 下一步，见 §3.2.6）——
-> 复盘"它为什么判错"时，**第一个要看的就是前提**（它只看得见喂进去的那些）。
+> 🔴 **S2 每次调用都留一条「决策记录」**（前提 → 问题 → 结果 → 下一步，见 §3.2.6）——
+> 复盘"它为什么答不上"时，**第一个要看的就是前提**（它只看得见喂进去的那些）。
 > 日志格式由 `trace.DECISION` 一处定义，展示层从同一张表取。
 
 > 📌 **S3①「要不要委派」有开关可收紧**：`proto/agent.EXEC_PATH`
@@ -741,8 +766,10 @@ settle(rec, outcome)          # 写字段 + 定 stage —— 状态迁移只有�
 > 跑批时"测哪条开哪条"，不用碰运气碰一个愿意走那条路的 case。
 > 见 `evals/README.md` 的「执行路径开关」。**它第一次跑就逼出一个真 bug（F23）。**
 >
-> 🔴 **S2 只做一次**，靠 `delegate` 的**线性控制流**保证（`_ask_main` 单点调用，
-> 其后无循环、无重入）—— **不是**靠 `agent_tried` 标记（那个只写不读，是展示字段）。
+> 🔴 **S2 每轮最多一次**（不反复试答），靠 `try_answer_then_rerun` 的**线性控制流**保证
+> —— **不是**靠 `agent_tried` 标记（那个只写不读，是展示字段）。
+> ⚠️ **一个 Task 可能试答两次**（首次派发一次、投递重跑又一次，2026-11-04 E1 起两条路共用它），
+> 真跑实测见过 —— 见 §4.2 的 H9。
 
 ### 4.2 运行期的硬判断（**代码保证**）
 
@@ -763,7 +790,7 @@ settle(rec, outcome)          # 写字段 + 定 stage —— 状态迁移只有�
 | H13 | 未知技能名**直接拒绝，不建 Task** | `agent.delegate` | 挂一个跑不起来的 Task |
 | H14 | 产物引用**当场校验**，不存在就拒绝派发 | `agent.delegate` | 执行器读不到会自己找补，错误埋进产物 |
 | H15 | 统一返回口 `_out` **总带上被取代的旧 Task** | `agent._out` | 漏一个返回口就丢 supersede |
-| H16 | `missing` **空串过滤** | `executor.run_task` | 实测模型会填 `['']` |
+| H16 | **三态由结构定**（申报优先；**只说话不算交付**） | `executor._structural_status` | 让"任务往哪走"由 LLM 说了算（判定时代的做法，见 §3.2.3） |
 | H17 | 执行器 `invoke` **不传 `config`** | `executor.run_task` | 传了执行器会变成独立根图 |
 | H18 | `messages` 用 `add_messages` reducer | `graph.State` | 消息被覆盖 |
 | H19 | **产物 ID 发号器**用 `itertools.count()` | `artifacts._ART_SEQ` | `len+1` 是"先查后写"，并行会撞 ID → **产物静默丢失** |
@@ -771,7 +798,7 @@ settle(rec, outcome)          # 写字段 + 定 stage —— 状态迁移只有�
 | H21 | 技能包**只认 `SKILL.md`** | `skill_pack.ENTRY_NAME` | "这个目录是不是技能包"要靠猜 |
 | H22 | **三流 UTF-8**（stdin/stdout/stderr） | `config.py` | 中文 Windows 上报错与正常输出两种编码；管道喂中文解成代理字符 → 一条坏字符整场崩 |
 | H23 | 路径**只从 `config.app_root()` 算** | `config.py` / `trace.py` | 冻结后算出解包目录（`_internal/`），用户找不到、重建还会被清掉 |
-| H24 | **`based_on_turns` 的轮次当场校验**（点了不存在的轮次 → **拒绝派发**） | `agent.delegate` | 放行的话平台会"**以为把原文给了**"，实际什么都没给，而执行器不知道 —— **静默降级** |
+| ~~H24~~ | ~~**`based_on_turns` 的轮次当场校验**（点了不存在的轮次 → **拒绝派发**）~~ | — | **2026-11-03 删** —— 点名机制整个去掉，这条校验**没有对象**了（产物 ID 那条校验仍在，见 H14） |
 
 > 📌 **"硬"的定义是"违反会导致状态不一致"**，不是"代码写的"。
 > 比如 `_STAGE_MARK` 的文案、台账的措辞，都是代码写的但属**展示**，不在本表。
@@ -780,12 +807,16 @@ settle(rec, outcome)          # 写字段 + 定 stage —— 状态迁移只有�
 
 | 规则 | 位置 | 说什么 |
 |---|---|---|
-| 判定三条规则 | `executor._JUDGE_RULES` | ① 需要文件产物的：逐个检查，占位/待补充/半成品不算完成 ② 不需要产物的：不能仅凭"声称完成" ③ 只有**明确请求继续所必需的信息**才算 waiting_for_input |
-| 执行器平台约定 | `executor._PLATFORM_RULE` | 交付用 `write_artifact`（名称+梗概+正文）· 缺信息要**明确说明需要什么** · **答复不一定是回答你的问题，没给就再问一次** |
+| 执行器平台约定 | `executor._PLATFORM_RULE` | 交付用 `write_artifact`（名称+梗概+正文）· 缺信息要**明确说明需要什么**（`ask_user` 是唯一出口，见下）· **答复不一定是回答你的问题，没给就再问一次** |
+| `ask_user` 的工具说明 | `executor.make_ask_user` | **要信息必须用它** —— 写在回复正文里平台看不到；一次问一件；**能自己判断的别问**（会打扰用户） |
 | 主 agent 系统提示 | `agent._MAIN_PROMPT` | 两种做法 · **不要一律问** · **产出范围以用户明确说的为准** · 传 ID 不转述正文 · **产物正文不要搬进回复** |
 | 业务侧 | **skill 的 `instructions`** | "你需要知道 X"（哪些参数必答）—— **平台不猜，也不让模型猜** |
 
-### 4.4 评测期的硬判断（`evals/checks.py` · **36 条**）
+### 4.4 评测期的硬判断（`evals/checks.py` · **33 条**）
+
+> 📌 表里划掉的 3 条是 **2026-11-05 清掉的**（判据：**别拿文本当判据** ——
+> 断模型的措辞等于没效果）：两条扫判定的 `missing` / `progress`（判定退休后那两个字段没了）、
+> 一条在产物正文里找占位词（换成软 rubric `artifact_is_complete`，§4.5）。
 
 **判据**：能靠代码算的，不交给 LLM。每条签名 `(run, turn, **args) -> (ok, detail)`；
 `detail` 的要求是"**失败时不用打开 JSON 就能判断是机制坏了还是断言写坏了**"。
@@ -800,8 +831,7 @@ settle(rec, outcome)          # 写字段 + 定 stage —— 状态迁移只有�
 | | `task_stages` | 每个 skill **至少一个** task 命中给定 stage（值可为 str 或 list） |
 | | `no_task_stage` | 指定 skill 下**不允许**存在这些 stage |
 | | `all_tasks_given_contain` | **每个** task 的 `task` 文本都含全部子串（验"派发前收齐信息"） |
-| | `missing_excludes` | 没了结 task 的 `missing` 里不出现这些词（P1「不重复问」）—— **只扫 `missing`，不扫 `progress`/`report`**（中文子串会误伤） |
-| | `missing_includes` | 至少一个没了结 task 的 `progress + missing` 里出现**全部**这些词 |
+| | ~~`missing_excludes`~~ / ~~`missing_includes`~~ | **2026-11-05 删** —— 它们在**非结构化文本**里找词（判定的 `missing` / `progress`），而那两个字段随判定退休整条链摘掉了；同一件事的软 rubric `no_repeat_question` 一直在用 |
 | | `every_task_has_artifact` | 每个 task 都有非空 `artifacts`；**无 task 也算失败** |
 | | `artifact_no_cross_attribution` | 每个 task 记的产物必须出现在**它自己 skill 的** `run_tasks[].produced` 里（不许把读来的算产出） |
 | **委派与兜底** | `delegate_calls_max` | 到该轮为止的 `delegate` 调用数 ≤ n（**上界**：少派不算坏事，"该不该派"由 `task_stages` 兜；多派才是 bug） |
@@ -814,7 +844,7 @@ settle(rec, outcome)          # 写字段 + 定 stage —— 状态迁移只有�
 | | `reply_chars_under` | 回复字数 < n |
 | | `artifact_chars_over` | 产物库正文总量 > n（**隔离必须用长内容才测得出**） |
 | | `artifact_count` | 产物个数 == n |
-| **产物正文** | `artifact_no_placeholder` | 产物正文不含作者写的占位符（默认 7 词：`待补充/待填写/待完善/此处省略/TODO/TBD/占位`，**刻意不收单字「略」**） |
+| **产物正文** | ~~`artifact_no_placeholder`~~ | **2026-11-05 删** —— 在产物正文里搜「待补充」「TODO」…：模型换个写法就漏、正文里**引用**这几个字的正常产物又会被误伤（**过了不代表对，挂了不代表错**）→ 换成软 rubric `artifact_is_complete`（§4.5） |
 | | `artifact_html_complete` | **声明为 html** 的产物必须"有头有尾"（§4.4.1） |
 | | `artifact_titles_contain` | 每个子串至少在**一个**产物标题里出现 |
 | | `task_refs_contain` | 指定技能的 task 必须存在且带产物引用 `refs` |
@@ -833,8 +863,8 @@ settle(rec, outcome)          # 写字段 + 定 stage —— 状态迁移只有�
 `report.py` 里 `VALIDITY_CHECKS = {"artifact_writes_multithreaded", "fault_fired"}`，
 附注写着：**这条不绿，同 case 其他断言的通过是假阴性**。
 
-> ⚠️ **已注册但当前没有 case 引用**的 9 条：
-> `artifact_writes_timing` · `missing_includes` · `main_agent_no_artifact_read` · `main_ctx_under` ·
+> ⚠️ **已注册但当前没有 case 引用**的 8 条：
+> `artifact_writes_timing` · `main_agent_no_artifact_read` · `main_ctx_under` ·
 > `artifact_write_no_collision` · `artifact_writes_multithreaded` · `llm_calls_under` ·
 > `reply_excludes` · `supersede_worked`。
 > 其中 `artifact_write_no_collision` 端到端**测不到**（竞态窗口微秒级、真实写入间隔 4–205 秒），
@@ -849,7 +879,7 @@ flake 时还说不清是系统坏了、还是模型今天走了另一条路。�
 | 断谁 | 判 | 例 |
 |---|---|---|
 | **平台机制**（代码） | ✅ **稳** | `platform_relayed` · `platform_fed_answer` · `artifact_write_no_collision` · `artifact_no_cross_attribution` |
-| **产物性质** | ✅ **稳** | `artifact_no_placeholder` · `artifact_html_complete` |
+| **产物性质** | ✅ **稳** | `artifact_html_complete`（"声明了是网页，就得是完整的网页" —— **按解析结果判骨架**，不在正文里找字符串） |
 | **不变量** | ✅ **稳** | `task_count: 0` · `no_duplicate_completed` · `every_task_has_artifact` |
 | **目标状态**（断结果，不断路径） | ✅ 大体稳 | `task_stages`（某技能**最终** completed） |
 | 🔴 **模型走了几步 / 输出多长** | **脆** | `delegate_calls_max` · `task_count_at_least` · `llm_calls_under` · `reply_chars_under` · `artifact_chars_over` |
@@ -869,29 +899,40 @@ case 还可以用 **`initial_tasks`** 直接注入一个"等用户答复"的 Tas
 
 ```python
 html_ids = [aid for aid, a in arts.items() if file_ext(a.get("type") or "") == ".html"]
-# 判据：剥掉开头空白与 HTML 注释后，startswith("<!doctype html") or startswith("<html")
-#       且 "</html>" in s
+# 判据：把正文交给 `html.parser` 拆成 token，看**文档骨架**在不在
+#       （doctype 声明 ＋ <html> 起止）—— 由**解析结果**说了算，不由"出现过没有"说了算
 ```
 
 - **类型以声明为准**：`type` 由产出方在交付时一起说（`write_artifact(file_type=...)`），
   平台据此**硬性派发**扩展名（同一张表 `proto.artifacts.FILE_TYPES`）。
 - **一份 html 都没声明 → 失败**（不是跳过）。
-- **剥开头注释是实测踩出来的**：`t2-refs5` 里设计说明有 36 行，`<!DOCTYPE html>` 落在 1000 字开外，
-  被误判成"不是从文档头开始"。
+- **不在正文里找字符串**（2026-11-05 改）：原来是 `content.startswith("<!doctype html")`
+  ＋ `"</html>" in content` —— 正文里**引用**了这几个字的地方（讲 HTML 的正文、代码块）也会命中，
+  而"前面先放一段设计说明"又得靠 `_strip_leading_comments` 那种剥字符串的 hack 去绕。
+  现在交给解析器拆 token，**那个 hack 一起删了**。
+- 📌 **（历史）"剥开头注释"是实测踩出来的**：`t2-refs5` 里设计说明有 36 行，
+  `<!DOCTYPE html>` 落在 1000 字开外，被误判成"不是从文档头开始" —— 那条误判是上面这个
+  "在正文里找字符串"的判据造成的，判据换了它也就不存在了。
 
 > 🔴 用户 2026-10-30：*"就是不用嗅探呀 测试也不用"*。
 > 不是"看着像 HTML 就算网页"，而是"**你说了是网页，那就得是完整的网页**"。
 
-### 4.5 评测期的软判断（`evals/judge.py` · **3 条 rubric**）
+### 4.5 评测期的软判断（`evals/judge.py` · **4 条 rubric**）
 
 **判据**：只有**必须语义判断**的才走这里；**评分调用失败时判「不通过」，不判「通过」**。
 在**父进程**跑（子进程已退出），输入是子进程录下的快照。
 
 | rubric | 断言什么 | 喂给它的材料 | 输出 |
 |---|---|---|---|
-| `no_repeat_question` | 主 agent / 执行器有没有向用户索要**用户其实已经说过的**字段 | ① 到该轮为止的**全部用户原话** ② 该轮回复 ③ 每个 task 的 `report`（**截 300 字**）④ 待查字段清单 | `asked: list[str]`（非空 → 失败） |
+| `no_repeat_question` | 主 agent / 执行器有没有向用户索要**用户其实已经说过的**字段 | ① 到该轮为止的**全部用户原话** ② 该轮回复 ③ 每个 task 的 `report`（**保头保尾，预算 800**）④ 待查字段清单 | `asked: list[str]`（非空 → 失败） |
 | `artifact_derives_from_source` | 后序产物**内容上**是否真的基于源产物（依赖成立的语义证据） | 源产物正文（**截 2500 字**）+ 每份其他产物（**截 1500 字**）+ 各自的标题 | `derived: list[str]` / `generic: list[str]` / `evidence: str` |
 | `reply_is_summary` | 产物正文有没有被搬进主 agent 的回复（隔离的另一面） | 产物清单（ID + 字数）+ 该轮回复 | `pasted_body: bool`（true → 失败） |
+| `artifact_is_complete` | 产物**写完了没有**（模板残留 / 占位符 / 半成品）—— **只能语义判** | 每份产物正文（**保头，预算 2500 字**，带截断标注）+ 各自的标题 | `unfinished: list[str]`（非空 → 失败） |
+
+> 📌 `artifact_is_complete` 是 **2026-11-05** 从代码侧的 `check_artifact_no_placeholder` 换过来的：
+> 那条在产物正文里**搜词**，模型换个写法就漏、正文里**引用**这几个字的正常产物又会被误伤
+> （**过了不代表对，挂了不代表错**），词表还只会越加越长。判"写完了没有"本来就是语义判断
+> —— 让评分模型读产物判，**判断过程留档**（判错了能看出是模型判错还是喂的材料不对）。
 
 > 🔴 **"助手内部向它自己索要、但没转达给用户"不算**（`no_repeat_question` 的判据里写死了这条）——
 > 否则试答那一步会被误判成"又问了一遍"。
@@ -917,8 +958,10 @@ html_ids = [aid for aid, a in arts.items() if file_ext(a.get("type") or "") == "
 - 类型列有三种：`🔬 测试有效性` / `软断言` / `硬断言`。
 
 > 📌 **报告头写明**：每个 run 的完整记录在 `artifacts/<case>__r<rep>/_run.md`，
-> 且 **"判「完整性」以产物原文为准，不以判定的话为准"** ——
-> 判定被预算截断时给的"完成"是**推测**（§3.2.3）。
+> 且 **"判「完整性」以产物原文为准"**。
+> 📌 **（历史）** 这句话原来还有后半句 ——"不以判定的话为准：判定被预算截断时给的'完成'是**推测**"。
+> 判定 2026-11-05 退休后，运行期**不再有人对产物质量下结论**（`completed` 只说"交了东西"这个事实，
+> "够不够"由主 agent 判）—— 完整性判据只剩**产物原文**这一处。
 
 ### 4.7 `_run.md` 的四个 section（**一次跑完，一份读完**）
 
@@ -929,15 +972,17 @@ html_ids = [aid for aid, a in arts.items() if file_ext(a.get("type") or "") == "
 | ③ | **原始 trace 附录** | `evals.run._append_trace` 追加 |
 
 > 🔴 **"交接内容"在 ① 里是被"拆开"渲染的**：`delegate` 的 `ToolMessage` 不是整段贴，
-> 而是按 `_RECEIPT_SPLIT` 的 8 个标记切成
-> **「平台的框架话」/「执行器的原话」/「平台附注 · 已做到什么程度 / 还缺什么」/「平台给主 agent 的指示」** ——
+> 而是按**回执对象**（`additional_kwargs["handoff"]`）逐段渲染成
+> **「平台的框架话」/「平台给的产物清单」/「执行器的原话」/「主 agent 补的信息」/「平台给主 agent 的指示」** ——
 > 读记录的人一眼能分清**哪句话是谁说的**。
+> ⚠️ **读的是对象、不是文本**（2026-11-03 定）：原来按 `_RECEIPT_SPLIT` 的标记切**渲染出来的文本**，
+> 回执一改措辞就**全部静默失配**（实测新格式 0/8 命中、12560 字被切成 1200）—— 那条路已整个删掉。
 
 ---
 
 ## 五、字段字典
 
-### 5.1 `Task`（`state["tasks"]` 里一条 · **13 个字段**）
+### 5.1 `Task`（`state["tasks"]` 里一条 · **11 个字段**）
 
 | 字段 | 谁写 | 含义 |
 |---|---|---|
@@ -947,34 +992,42 @@ html_ids = [aid for aid, a in arts.items() if file_ext(a.get("type") or "") == "
 | `stage` | **`settle()`**（`delegate` / `_feed_waiting` 都调它，唯一一处迁移） | 5 态（§6.2） |
 | `artifacts` | `absorb_outcome`（`settle()` 调；`delegate` 只建空表） | **产出**的产物 ID 列表（⚠️ **只在非空时覆盖** —— 这一轮没产出，不许抹掉上一轮交付的） |
 | `refs` | `delegate` | **输入引用**的产物 ID 列表（⚠️ 与 `artifacts` 方向相反） |
-| `report` | `absorb_outcome` | 执行器最后说的话 |
-| `progress` | `absorb_outcome` | 判定给的"已经做到什么程度" |
-| `missing` | `absorb_outcome` | 判定给的"还缺什么" |
+| `report` | `absorb_outcome` | 执行器最后说的话（**只给回执用**，不参与判断） |
+| ~~`progress`~~ / ~~`missing`~~ | — | **2026-11-05 删** —— 它们是**判定**吐的"已做到 / 还缺"；判定退休后**没有任何东西再写它们**（两个字段整条链一起摘掉：`ExecOutcome` / 交接书 / 台账 / 回执） |
 | `qa` | `_feed_waiting` / `delegate` | **历次问答对**（累积，不覆盖）：`[{"by": "用户"\|"主 agent", "q": 执行器问的那句, "a": 答复}]` —— **问题由平台原样截下**，见 §3.2.8 |
 | ~~`agent_answer`~~ | — | **已并入 `qa`**（`by="主 agent"`）—— 两个字段是**按来源分叉**，而"谁答的"本来就该是每条记录的一个属性 |
 | `agent_tried` | `delegate` | 试答过没（⚠️ **只写不读**，展示字段） |
 | `user_turns` | `delegate` | **用户原话快照** `[{"n": 1, "text": "…", "after": "它在回答的上一句"}]` —— 建 Task 那一刻落的，**不是渲染时现取**；`after` 见 §3.2.2 |
-| `based_on` | `delegate` | 主 agent **点名**依据哪几轮（平台据此把那几轮原文直接给执行器） |
+| `run_by` | `delegate` / `_feed_waiting` | 这一趟是**谁起的**：`"delegate"` / `"feed"` —— 台账据此说清截断的全文在哪（§3.2.1） |
+| ~~`based_on`~~ | — | **2026-11-03 删** —— 轮次不再由主 agent **点名**（`based_on_turns` 整个去掉）：原话只有**索引**一种形状，全文由读的人按需取（§3.2.2） |
 
 ### 5.2 `ExecOutcome`（执行器 → 平台）
 
 ```python
-status: Literal["completed", "waiting_for_input", "incomplete"]  # = "incomplete"
-artifacts: list[str]   # 这次新写的产物 ID
-report: str            # 最后一条有内容的 AI 消息
+status: Literal["completed", "waiting_for_input", "incomplete"]  # 默认 = "incomplete"
+artifacts: list[str]   # 这次新写的产物 ID（write_artifact 记账）
+report: str            # 最后一条有内容的 AI 消息（只给回执用）
 rounds: int            # 实际 react 了几轮
-progress: str          # 判定给的：已经做到什么程度
-missing: list[str]     # 判定给的：还缺什么
+asked: str             # 它申报要的信息（ask_user 参数里那句原话；空 = 没申报）
+fault: str             # 平台故障（非空 = 这一轮**根本没跑成**，不是执行器干不了）
 ```
 
-### 5.3 `_Judgement`（判定的输出 · 结构化）
+### 5.3 三态怎么来的（`executor._structural_status`）
 
-```python
-status: Literal["completed", "waiting_for_input", "incomplete"]
-progress: str        # 非 completed 时填
-missing: list[str]   # incomplete 时填
-reason: str          # 一句话理由 —— **只写日志**，供事后复盘误判
-```
+**平台按结构算**（不看 LLM 的结论、也不读正文）：
+
+| 平台看得见的结构事实 | → `status` |
+|---|---|
+| 调了 `ask_user`（申报要信息） | `waiting_for_input` |
+| 交了产物（`write_artifact` 记账） | `completed` |
+| 都没有 | `incomplete` |
+
+> 🔴 **申报优先**（顺序不能反）；`completed` **只说"交了东西"这个事实**，"够不够"由主 agent 判。
+> 见 §3.2.3。
+>
+> 📌 **~~`_Judgement`~~（判定的输出）2026-11-05 随判定整个删掉**：原来是
+> `{status, progress, missing, reason}` 四个字段的**结构化输出**（`with_structured_output`），
+> `reason` 只写日志供复盘误判。**没有"判定"这个东西了，就没有这个 schema。**
 
 ### 5.4 `Artifact`（产物库里一条 · **7 个字段**）
 
@@ -1014,7 +1067,7 @@ class AgentState(TypedDict):     # 主 agent 子图 —— **故意不含 log**
 | `turn` / `user` / `wall_s` | 入参 |
 | `input_source` | 默认 `"scripted"`，**交互式覆盖成 `"human"`**（`_run.md` 的标题按它分叉） |
 | `reply` | 最后一条有内容的 `AIMessage` |
-| `tasks` | `state["tasks"]`（**14 个字段全带上**） |
+| `tasks` | `state["tasks"]`（**11 个字段全带上**） |
 | `main_ctx_chars` | 消息 content + tool_call args 长度（**不含 system prompt**） |
 | `sys_prompt_chars` | `_MAIN_PROMPT` + 能力清单的长度（**不在 state 里**，故单记） |
 | `artifacts_chars` / `artifacts` | 产物库正文总量 / `{aid: 字数}` |
@@ -1052,7 +1105,7 @@ START → prepare → agent → finalize → END        （compile(checkpointer=
                       │
         ┌─────────────┼─────────────┐
    completed   waiting_for_input   failed
-   （交付）      （等用户答复）      （推满 3 轮仍 incomplete）
+   （交了产物）   （调了 ask_user）   （推满 3 轮仍 incomplete）
 
    另有 superseded：同 skill 的 failed 旧 Task 被重新委派时自动标记（**不用管了**）
 ```
@@ -1061,11 +1114,12 @@ START → prepare → agent → finalize → END        （compile(checkpointer=
 |---|---|---|
 | `running` | 一行 | 同一轮内即变（同步委派） |
 | `completed` | 一行（含产物 ID） | — |
-| `waiting_for_input` | **展开**：进度 / 缺失项 / 执行器原话 | **用户答复**（`_feed_waiting` 投递） |
+| `waiting_for_input` | **展开**：执行器原话（截 150 字，带标记） | **用户答复**（`_feed_waiting` 投递） |
 | `failed` | **展开**：同上 | 主 agent 重新委派（旧的 → superseded） |
 | `superseded` | 一行 | — |
 
-**与 `_Judgement.status` 的关系**：前三个**同名**，唯一映射 `incomplete → failed`。
+**与 `ExecOutcome.status`（三态）的关系**：前三个**同名**，唯一映射 `incomplete → failed`。
+三态本身**由结构定**（§5.3），不是谁判的。
 
 **暂未实现的三个**（记清了为什么不做、什么时候该做）：
 
@@ -1080,9 +1134,9 @@ START → prepare → agent → finalize → END        （compile(checkpointer=
 | 不要混 | 说明 |
 |---|---|
 | `waiting_for_input` **≠** Graph 运行失败 | 前者是**正常状态** —— 图跑得好好的 |
-| `completed` **≠** 某次模型调用正常结束 | 模型正常返回 ≠ 任务完成 |
-| `failed` **≠** 模型返回了错误字符串 | 它的定义是"推满 3 轮仍**既没完成、也没请求信息**" |
-| **某个 Sub Agent 执行完成 ≠ Task 已经完成** | 执行器"跑完了"和"干完了"是两回事 |
+| `completed` **≠** 任务已经完成 | 它只表示"**交了产物**"这个事实 —— "够不够"由**主 agent 判**（§3.2.3） |
+| `failed` **≠** 模型返回了错误字符串 | 它的定义是"推满 3 轮仍**既没交产物、也没申报要信息**" |
+| **某个 Sub Agent 执行完成 ≠ Task 已经完成** | 执行器"跑完了"和"干完了"是两回事（所以平台只报结构事实） |
 
 ---
 
@@ -1098,17 +1152,17 @@ START → prepare → agent → finalize → END        （compile(checkpointer=
 用户：分数的初步认识
   │
   ├─ agent     🧠 调 delegate(lesson-prep) → 建 Task（stage=running）
-  │             ↓ 交接书：【任务】分数的初步认识（无【上次说到哪】—— 首跑）
-  │           执行器读能力指令 → 发现缺「课时」→ 判定 waiting_for_input
-  │             ↓ 平台强制试答 → 答不上
-  │           stage = waiting_for_input，台账里展开"还缺：课时"
+  │             ↓ 交接书：【任务】分数的初步认识（无【问答经过】—— 首跑）
+  │           执行器读能力指令 → 发现缺「课时」→ 调 `ask_user` 申报
+  │             ↓ 平台定 waiting_for_input → 强制试答 → 答不上
+  │           stage = waiting_for_input，台账里展开"执行器说：…"
   ├─ finalize  透传执行器原话 → 用户看到问题
   │
 用户：第1课时
   │
   ├─ prepare   _feed_waiting：原话投给待答 Task（qa 累积 1 对：它问的那句 ＋ 用户答的）
-  │            → 执行器这次拿到课时 → completed（art_001 落盘）
-  │            → 台账注入：「t…「lesson-prep」✅ 已完成 → art_001」
+  │            → 执行器这次拿到课时 → 交了产物（art_001 落盘）→ completed
+  │            → 台账注入：「t…「lesson-prep」✅ 它交付了产物 → art_001」
   ├─ agent     看到台账（不用重派）→ 回复"备课搞定了…文件：art_001 → C:\…"
   └─ finalize  无待答 → 不补
 ```
@@ -1123,7 +1177,7 @@ START → prepare → agent → finalize → END        （compile(checkpointer=
 | 流程 | 代码写死的固定边 | **由 LLM 驱动**（图只有三个节点） |
 | 闲聊"你好" | ❌ 返回"（无产出）" | ✅ 自己答 |
 | 建 Task 时机 | 选完技能**必建** | **决定委派才建** |
-| 完成判定 | `ExecResult.status`（执行器**声称**） | **三态判定**（问"任务完成了没"） |
+| 完成判定 | `ExecResult.status`（执行器**声称**） | **三态由结构定**（`ask_user` 申报 / 交了产物 / 都没有）—— 平台只报事实，**"够不够"由主 agent 判** |
 | 交付物声明 | `deliverables` 清单 + `required` | **不需要** |
 | 参数 | 动态 schema 抽取 + 并集计算 | **不抽取**，原话原样带进去 |
 | 挂起 | `interrupt()` + `Command(resume)` | **不需要**（`waiting_for_input` 由 Task 推导） |
@@ -1134,5 +1188,5 @@ START → prepare → agent → finalize → END        （compile(checkpointer=
 | `Skill` 字段 | name/description/instructions/**params**/**criteria** | **只剩三个**（+ 技能包文件夹） |
 | 技能形态 | 单个 `.md` | **文件夹**（`SKILL.md` + 任意参考资料，渐进式披露三层） |
 | 产物 | 内存 dict，跑完统一落盘 | **当场落盘**（返回里带真实路径） |
-| 决策输出 | 混着（工具参数 / 自然语言） | **一律 `with_structured_output`** |
+| 决策输出 | 混着（工具参数 / 自然语言） | **LLM 决策一律 `with_structured_output`**；**任务三态不再是 LLM 决策**（由结构定） |
 | 可观测 | 跑完才 dump | **逐 super-step + 逐字流式**（黑屏 0%） |

@@ -57,7 +57,7 @@
 | **知道"这事怎么走过来的"** | **`discussion-log.md`** —— 讨论记录 + 实测发现 F1–F21 + 推演过程 |
 | **知道"该怎么跟你配合"** | **`principles.md`** —— 处事原则 8 条 |
 | **每次架构迭代后跑回归** | **`scenarios.md`** —— 场景回归集 |
-| **调提示词** | **`solution.md` §十一** —— 判定机制 + 实测对比 + 可调优点 |
+| **调提示词** | **`solution.md` §十一** —— 实测对比 + 可调优点（⚠️ 判定那次调用 2026-11-05 退休） |
 | **讲清楚架构**（给人看） | **`architecture-diagram.md`** + `figures/*.svg` |
 | **查"这一跳交接了什么"** | **`architecture-diagram.md` §三** —— 13 跳逐跳的精确内容 |
 | **查"交接截没截 / 落在哪 / 会不会撑爆"** | **`handoff-audit.md`** —— **23 处**交接逐点审计（含执行器内部循环与评测层）＋ 膨胀账 ＋ 隐患清单 |
@@ -78,7 +78,7 @@ README.md（本文）              入口 + **导航**（找东西 / 写东西�
 ├── solution.md                ★ 方案文档 —— 要落地什么 + 它怎么实现  【现行的】
 │                              §0    速览与需求 ← **§0.6 需求清单 = 所有设计的锚点**
 │                              §一–§十  方案正文（模块详解 / 关键机制 / 落地建议）
-│                              §十一  任务完成判定机制（三态 + 实测对比 + 可调优点）
+│                              §十一  ⚠️ 判定那次调用 2026-11-05 退休（历史章节：实测对比 + 可调优点）
 │                              **要落地时看这份**
 │
 ├── scenarios.md               场景回归集（输入 / 期望 / 为什么重要 / 当前状态）【现行的】
@@ -185,7 +185,8 @@ README.md（本文）              入口 + **导航**（找东西 / 写东西�
 │   ├── briefing.py  委托单（平台 → 执行器）：Task / Turn / QA schema ＋ render_briefing
 │   ├── receipt.py   回执（执行器 → 主 agent）：Receipt schema ＋ build/render_receipt
 │   ├── ledger.py    台账（平台 → 主 agent）：stage 词表 ＋ render_ledger（**唯一故意短**的一跳）
-│   ├── judgement.py 判定：_Judgement schema ＋ 输入模板 ＋ 保头保尾截断（`_clip`）
+│   │   ⚠️ `judgement.py`（判定）**2026-11-05 整个删了** —— 三态改由平台按**结构**定，
+│   │      见 `architecture-diagram.md` §三 的交接表与 `executor._structural_status`
 │   ├── nudge.py     推回去（平台 → 执行器）：nudge_text
 │   └── ask.py       试答（平台 → 主 agent）：build_prompt（**全部消息、不截**）
 │
@@ -193,7 +194,7 @@ README.md（本文）              入口 + **导航**（找东西 / 写东西�
 ├── skill_pack.py  【技能包】文件夹形态 → Skill + 自带文件的列/读 —— I/O + 格式，换存储只动这里
 ├── artifacts.py   【产物领域】产物库 + 类型派发 + 落盘 + write/read/list_artifact
 │
-├── executor.py    执行器（三态判定 + 出口限制）← **判定提示词的真值在这里**
+├── executor.py    执行器（三态**按结构**定 + 出口限制 + `ask_user` 申报口）
 ├── agent.py       主 agent（工具 + 系统提示 + 交接书渲染）
 ├── graph.py       图（prepare / agent / finalize）
 ├── trace.py       全量日志
