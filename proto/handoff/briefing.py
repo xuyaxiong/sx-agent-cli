@@ -344,7 +344,7 @@ def settle(rec: dict, outcome: Any) -> str:
     """**把一次执行结果落进 Task** —— 状态迁移的唯一入口（原来散在 7 处手写）。
 
     两件事一起做完，顺序不能反：
-      ① `absorb_outcome`：report / progress / missing / artifacts
+      ① `absorb_outcome`：report / artifacts
          （**artifacts 只在非空时覆盖** —— 这一轮没产出，不能把上一轮交付的抹掉）；
       ② `stage`：由 `outcome.status` 映射（见 `_STATUS_TO_STAGE`）。
 

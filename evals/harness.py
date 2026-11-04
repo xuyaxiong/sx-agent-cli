@@ -40,7 +40,7 @@ from proto.config import app_root
 
 
 class UsageCounter(BaseCallbackHandler):
-    """挂在模型实例上，数**所有** LLM 调用（主 agent + 执行器 + 判定）。"""
+    """挂在模型实例上，数**所有** LLM 调用（主 agent + 执行器 + 试答）。"""
 
     def __init__(self) -> None:
         self.calls = 0
@@ -469,12 +469,12 @@ def _slug(s: str, n: int = 40) -> str:
 
 
 def dump_artifacts(out_dir: Path, case_id: str, rep: int, result: dict) -> Path:
-    """把产物**原文**落盘 —— 判定看不到的东西，人能看到。
+    """把产物**原文**落盘 —— **主 agent 的上下文里没有的东西**，人能看到。
 
-    🔴 这是**唯一可靠的"完整性"真值来源**。
-    实测（`docs/discussion-log.md` F1）：判定被 800 字预算截断，
-    既会误判完整产物、又会漏掉真占位符（占位符正好落在被截掉的中段）。
-    **只有把原文摊开给人看，"这份到底完不完整"才有答案。**
+    🔴 这是**唯一可靠的"完整性"真值来源**：**只有把原文摊开给人看，"这份到底完不完整"
+    才有答案** —— 中间隔着"谁转述 / 谁截断"的任何一层都不算。
+    （⚠️ 2026-11-05 判定退休：这条原来的论据是"判定被 800 字预算截断，既会误判完整产物、
+    又会漏掉落在中段的真占位符"—— 那次事故是事实，只是判定那层现在整个没有了。）
 
     落 `runs/<tag>/artifacts/<case>__r<rep>/`：每个产物一个文件 + 一份 `_index.md`。
     """
@@ -503,7 +503,7 @@ def dump_artifacts(out_dir: Path, case_id: str, rep: int, result: dict) -> Path:
         f"# {case_id} · 第 {rep} 遍 · 产物原文\n\n"
         f"共 {artifacts.count()} 个，合计 {artifacts.chars()} 字。\n\n"
         + "\n".join(rows)
-        + "\n\n> **这是判定看不到的原文** —— 判「完整性」以这里为准，不以判定的话为准。\n",
+        + "\n\n> **这是主 agent 上下文里没有的原文** —— 判「完整性」以这里为准。\n",
         encoding="utf-8",
     )
     return d
@@ -515,10 +515,9 @@ def dump_artifacts(out_dir: Path, case_id: str, rep: int, result: dict) -> Path:
 #: 原来这里手抄了一组开场白做前缀匹配，2026-11-02 回执一改格式就**一条都不中**
 #: （实测：新格式 0/8、旧格式 38/38）—— 而且**不会报错，只会静默失效**。
 _RECEIPT_KINDS: dict[str, str] = {
-    "completed": "✅ **交付回执**（执行器已写入产物库）",
-    "completed_in_reply": "✅ **交付回执**（成果在回复正文里，**不落库**）",
-    "waiting": "❓ **执行器在提问**（待答：平台会把这段转达给用户）",
-    "failed": "⚠️ **执行器没做成**（既没完成、也没说缺什么）",
+    "completed": "✅ **交付回执**（执行器已写入产物库 —— 平台只说这个事实）",
+    "waiting": "❓ **执行器申报要信息**（`ask_user`：平台先试答，答不上转达给用户）",
+    "failed": "⚠️ **既没交付、也没说要什么**（推满轮次，交给主 agent 判）",
     "rejected_skill": "⛔ **被平台拒绝**：没有这个能力",
     "rejected_artifact": "⛔ **被平台拒绝**：产物 ID 不存在",
 }
@@ -539,8 +538,6 @@ _RECEIPT_LABEL: dict[str, str] = {
     "deliver": "平台的框架话 · 这条回执属于哪种出口",
     "produced": "平台给的产物清单（**不含正文**）",
     "report": "**执行器的原话**（它说了什么、在问什么）",
-    "progress": "平台附注 · 已做到什么程度（**判定说**）",
-    "missing": "平台附注 · 还缺什么（**判定说**）",
     "agent_answer": "**主 agent 补的信息**（它说的）",
     "next": "平台给主 agent 的指示",
     "not_dispatched": "平台的框架话 · 这次**没有派发**",
@@ -820,17 +817,16 @@ def dump_run_record(out_dir: Path, case_id: str, rep: int, result: dict) -> None
             lines += [
                 "### Task 台账",
                 "",
-                "| Task | 技能 | 状态 | **产出** | **输入引用** | 进度 / 还缺 |",
-                "|---|---|---|---|---|---|",
+                # ⚠️ 2026-11-05 判定退休：原来还有一列「进度 / 还缺」（判定给的）—— 没有来源了，
+                #    整列删掉；执行器的原话在下面每个 Task 的 `<details>` 里有**全文**（不用再列一遍）。
+                "| Task | 技能 | 状态 | **产出** | **输入引用** |",
+                "|---|---|---|---|---|",
             ]
             for x in t["tasks"]:
-                note = "；".join(
-                    y for y in [x.get("progress") or "", "缺：" + "、".join(x.get("missing") or []) if x.get("missing") else ""] if y
-                )
                 lines.append(
                     f"| `{x['id']}` | {x['skill']} | {x['stage']} "
                     f"| {', '.join(x.get('artifacts') or []) or '—'} "
-                    f"| {', '.join(x.get('refs') or []) or '—'} | {note or '—'} |"
+                    f"| {', '.join(x.get('refs') or []) or '—'} |"
                 )
             lines.append("")
             for x in t["tasks"]:

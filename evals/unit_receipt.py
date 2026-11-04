@@ -186,7 +186,9 @@ def main() -> None:
           build_receipt(completed)["kind"] == "completed"
           and build_receipt(waiting)["kind"] == "waiting"
           and build_receipt(failed)["kind"] == "failed")
-    bare = ExecOutcome(status="completed", artifacts=[], report="成果在这里", rounds=1)
+    # ⚠️ 原来这里还建了一个 `bare`（`completed` + 空产物）—— 它属于【成果在回复正文里】
+    #    那一档；2026-11-05 判定退休后那个档位没了（`completed` 必然有产物），
+    #    这行成了**定义了没人用**的死代码，删掉。
 
     # ④ 派发被拒那几个口：对象 → 文本 → 记录层，三边一致
     # ⚠️ ~~`rejected_turns`~~ **2026-11-03 删**：轮次不再由主 agent 点名

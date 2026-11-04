@@ -180,7 +180,8 @@ KINDS = frozenset({
     # graph.prepare / finalize
     "feed", "relay",
     # llm.safe_structured（`llm_io` = 那次调用的 PROMPT / RESPONSE / 失败提示）
-    "ask_main", "judge", "llm_io",
+    # ⚠️ `judge` 2026-11-05 删：判定那次调用退休了，没人再发它。
+    "ask_main", "llm_io",
     # trace.stream_agent（`retry` = 这一轮抖动、已重试一次）
     "retry",
     # executor.run_task（`run_fault` = 重试过仍失败，这一轮没跑成；

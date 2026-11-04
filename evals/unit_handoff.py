@@ -23,6 +23,7 @@
 
 from __future__ import annotations
 
+import ast
 import io
 import re
 import sys
@@ -138,14 +139,18 @@ def main() -> None:
     task = {
         "id": "t1", "skill": "s", "task": "超长任务描述：" + "细节。" * 200,
         "stage": "waiting_for_input", "artifacts": [aid], "refs": [aid],
-        "report": LONG, "progress": LONG, "missing": [LONG],
+        "report": LONG,
         "qa": [{"by": "用户", "q": LONG, "a": LONG}],
         "user_turns": [{"n": 1, "text": TURN, "after": LONG}],
     }
     brief = render_briefing(task)
     check("④ 交接书 · 任务全文在", task["task"] in brief)
     check("④ 交接书 · 执行器上次说的全文在", LONG in brief)
-    check("④ 交接书 · 缺什么全文在", task["missing"][0] in brief)
+    # ⚠️ 原来这里还有一条「缺什么全文在」（`task["missing"][0] in brief`）——
+    #    2026-11-05 判定退休，`missing` 没有来源了，这条**是在断言一个不存在的字段**：
+    #    `task` 是上面那个 fixture 字典，`task["missing"][0]` 就是 `LONG`，
+    #    而上一行刚断过 `LONG in brief`（由 `report` 满足）—— 它一直靠 report 假绿。
+    #    删掉，不留"看着还有一条"的错觉。
     # 🔴 **用户原话走的是「清单 + 按需」**（不是"不截"）：索引行在、正文按需 ——
     # 见 `briefing.turn_lines` 的分层。超长输入下**常驻层不许跟着涨**。
     check("④ 交接书 · 用户原话**索引行**在（序号 + 字数 + 开头）",
@@ -180,7 +185,7 @@ def main() -> None:
         "messages": [AIMessage("（没有 HumanMessage，免得触发投递）")],
         "tasks": [{"id": "t1", "skill": "s", "stage": "waiting_for_input",
                    "artifacts": [], "refs": [], "report": LONG,
-                   "progress": LONG, "missing": [LONG], "qa": [], "user_turns": []}],
+                   "qa": [], "user_turns": []}],
     }
     injected = node_prepare(st)["messages"][0].content
     check("② 台账 · 长内容被截了（它是每轮重复注入的索引，允许短）", LONG not in injected)
@@ -196,7 +201,7 @@ def main() -> None:
           node_prepare({**st, "tasks": [{**st["tasks"][0], "run_by": "delegate"}]})["messages"][0].content)
     check("② 台账 · `feed`／没记 run_by 时：**不许**指向回执，要说清「你手上没有」",
           "回执" not in injected and "不在你的上下文里" in injected)
-    short_task = {**st["tasks"][0], "report": "很短", "progress": "也很短", "missing": ["短"]}
+    short_task = {**st["tasks"][0], "report": "很短"}
     check("② 台账 · 短内容**不该**被标截断",
           "【平台截断" not in node_prepare({**st, "tasks": [short_task]})["messages"][0].content)
 
@@ -305,6 +310,58 @@ def main() -> None:
 
     check("`Task.stage` 的标注就是 `TaskStage`（不是又一个 str）",
           get_type_hints(Task)["stage"] == TaskStage, repr(get_type_hints(Task)["stage"]))
+
+    # ── ⑬+ 替身只许用**真类型里有的字段** ──
+    # 🔴 2026-11-05：判定退休把 `progress` / `missing` 从 `Task` / `ExecOutcome` 上摘了，
+    #    而**替身**（单测 fixture 字典 / case 注入的 `initial_tasks` / 手捏的假 outcome 类）
+    #    没跟着走 —— 实测**替身烂了 11 处**（另有两处同族：一行死代码、一条空转断言），
+    #    **全是绿的**：多一个键没人读、少一个键没人问，正是"看着还有一条"的错觉
+    #    （也违反"一套，别分叉"）。规矩只靠记性必然烂 → 进守卫。
+    #    ⚠️ **射程**（别当成万能）：整份 Task 字面量 / 展开式（`{**task, "x": …}`）/
+    #    case 注入 / 假 outcome 类。**不带 `id`/`stage` 的局部 delta**
+    #    （`task.update({"progress": …})`）射不到 —— 那种只能靠"像不像 Task"猜，
+    #    猜宽了会误伤别的字典（`id` / `task` / `report` 都是很普通的键名）。
+    print("\n⑬+ 替身只许用真类型里有的字段")
+    _tf = set(get_type_hints(Task))
+    _stray: list[str] = []
+    _fakes: list[str] = []
+    _n_dict = _n_case = 0
+    for _p in sorted(glob("evals/unit_*.py")):
+        for _n in ast.walk(ast.parse(io.open(_p, encoding="utf-8").read())):
+            # ① 长得像 Task 的字典字面量（同时有 `id` 和 `stage` 两个键）
+            if isinstance(_n, ast.Dict):
+                _k = {x.value for x in _n.keys
+                      if isinstance(x, ast.Constant) and isinstance(x.value, str)}
+                if {"id", "stage"} <= _k:
+                    _n_dict += 1
+                    if _k - _tf:
+                        _stray.append(f"{_p}:{_n.lineno} → {sorted(_k - _tf)}")
+                # ①' **展开式**（`{**task, "report": …}`）—— 显式键里已经有一个 Task 字段，
+                #     其余显式键就必须也是（`{**st, "tasks": [...]}` 那种不算：
+                #     `tasks` 不是 Task 字段，`_k & _tf` 是空）
+                elif any(x is None for x in _n.keys) and (_k & _tf) and (_k - _tf):
+                    _stray.append(f"{_p}:{_n.lineno} → {sorted(_k - _tf)}（展开式）")
+            # ② 手捏的 outcome 替身：类属性里同时有 `status` / `report` 的就是
+            if isinstance(_n, ast.ClassDef):
+                _a = {t.id for _s in _n.body if isinstance(_s, ast.Assign)
+                      for t in _s.targets if isinstance(t, ast.Name)}
+                if {"status", "report"} <= _a:
+                    _fakes.append(f"{_p}:{_n.lineno} → {_n.name}")
+    # ③ case 注入的 `initial_tasks`（`evals/_child.py` 原样塞进 state）—— 一样会被静默忽略
+    import yaml as _yaml
+
+    for _p in sorted(glob("evals/cases/*.yaml")):
+        _case = _yaml.safe_load(io.open(_p, encoding="utf-8").read()) or {}
+        for _t in _case.get("initial_tasks") or []:
+            _n_case += 1
+            if set(_t) - _tf:
+                _stray.append(f"{_p} · initial_tasks → {sorted(set(_t) - _tf)}")
+    # 🔴 **有效性自检**（同 `report.VALIDITY_CHECKS` 的道理）：扫不到东西的话，
+    #    上面两条会**永远绿着**（路径写错、glob 空、fixture 换了形状 —— 都不会报错）。
+    check(f"确实扫到了替身（不是空转）：fixture 字典 {_n_dict} 个 / case 注入 {_n_case} 条",
+          _n_dict > 0 and _n_case > 0)
+    check("fixture / case 里没有 `Task` 之外的键", not _stray, "\n".join(_stray))
+    check("没有手捏的 outcome 替身（用真 `ExecOutcome`）", not _fakes, "\n".join(_fakes))
 
     # ── ⑫ 交接包里**每个渲染器都调得通** ──
     # 🔴 这条是 2026-11-03 搬家时**真踩到**的坑：`_judge_material` 抽进 `handoff/judgement.py` 时

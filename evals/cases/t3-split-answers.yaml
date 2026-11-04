@@ -40,8 +40,9 @@ initial_tasks:
     artifacts: []
     refs: []
     report: 你希望这份产品说明是什么风格？（简洁 / 详细 / 活泼）
-    progress: 已确认产品与目标受众
-    missing: [风格, 篇幅]
+    # ⚠️ 2026-11-05：原来这里还有 `progress` / `missing`（判定吐的）和 `based_on: [1]`
+    #    （点名轮次）—— 三样都没有来源了（判定退休 / 点名 2026-11-03 取消），
+    #    留着只会被**静默忽略**（注入时原样塞进 state，没人读）。`unit_handoff` ⑬+ 守着这条。
     # 🔴 问答**成对**（2026-11-02）：它问的那句 ＋ 答复，一条记录
     qa: []
     agent_tried: false
@@ -50,7 +51,6 @@ initial_tasks:
     user_turns:
       - n: 1
         text: 帮我写一份产品说明。产品：智学笔，一支能实时翻译的智能笔，面向学生和家长。
-    based_on: [1]
 
 turns:
   # 用户**一次答一个** —— 每次答复都会被投给那个待答 Task（重入）

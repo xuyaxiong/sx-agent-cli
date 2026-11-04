@@ -83,7 +83,7 @@ SOURCE_NOTE: dict[str, str] = {
     # ── 回执（`receipt.py`）──
     "report": "**它说的** —— 原样，未经改写",
     "agent_answer": "**你说的** —— 已成对记进 Task，下次重入还会带上",
-    "fault": "**平台说的** —— 不是执行器说的，也不是判定说的",
+    "fault": "**平台说的** —— 不是执行器说的",
 }
 
 #: 来源那一行的前缀 —— `来源：` 后面接 `SOURCE_NOTE[key]`。

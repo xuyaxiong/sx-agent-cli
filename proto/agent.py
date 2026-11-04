@@ -136,10 +136,10 @@ class _AgentAnswer(BaseModel):
 def _ask_main(messages: list, skill_name: str, task: str, outcome: Any) -> str:
     """**平台强制的一步**：让主 agent 用自己的上下文试着补上缺的信息。
 
-    ⚠️ **必须把"已经做到什么程度 / 还缺什么"一起给它**（信息交接原则）——
-    只知道"它说缺课时"，主 agent 判不出该不该补；
-    知道"已完成学习目标和预习任务，只差当堂检测（需要课时才能写）"，
-    它就能判断这个信息在不在自己上下文里、值不值得去打扰用户。
+    ⚠️ **必须把"它要什么"给全**（信息交接原则）：现在那是**执行器自己申报的原话**
+    （`ask_user` 参数 ✓ 结构 ✓）—— 不用从它说的话里挑哪句是问题。
+    （⚠️ 2026-11-05 判定退休：原来这里要求带"判定说的已做到 / 还缺什么"—— 那两样
+    是判定吐的，判定没了就没有来源了。）
 
     ⚠️ 入参是**消息列表**而不是 `ToolRuntime`（2026-11-04 抽 `try_answer_then_rerun` 时改）：
     这一步**两条路都要用** —— `delegate` 有 runtime、`graph._feed_waiting` 只有 state，
@@ -176,8 +176,10 @@ def _ask_main(messages: list, skill_name: str, task: str, outcome: Any) -> str:
         "试答（LLM）· 平台强制的一步",
         q="**主 agent 的上下文里**，有没有执行器要的那个信息？（有就不打扰用户）",
         given=[
-            f"执行器问的那句（原话，{len(outcome.report)} 字）",
-            "判定说的「已做到 / 还缺」（第三方评审，可能判错）",
+            # 🔴 **它要什么 = `ask_user` 参数里的原话**（结构 ✓）—— 判定退休后没有
+            #    "判定说的已做到/还缺"那两样了（那本来是判定吐的）。
+            f"执行器申报要的信息（`ask_user` 参数原话，{len(outcome.asked)} 字）：{outcome.asked}",
+            f"它最后说的那段（{len(outcome.report)} 字，可能有上下文、也可能只是过场）",
             f"主 agent 的全部 {len(msgs)} 条消息 —— **全文、不截**，逐字见上面那条 PROMPT",
         ],
         result=[
@@ -392,7 +394,6 @@ def delegate(
     rec: dict[str, Any] = {
         "id": tid, "skill": skill_name, "task": task,
         "stage": "running", "artifacts": [], "report": "", "agent_tried": False,
-        # 判定的产出也要进 Task 记录 —— 台账注入时主 agent 才看得到
         # ⚠️ `artifacts` 是**产出**（产物 ID 列表），`refs` 是**输入引用** —— 两个方向，别混。
         # 待答投递（`graph._feed_waiting`）要按 refs 原样重建可读产物清单。
         "refs": refs,

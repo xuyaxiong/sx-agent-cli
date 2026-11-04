@@ -518,7 +518,7 @@ def check_no_duplicate_completed(run: dict, turn: dict, skills: list[str] | None
     """同一个技能**最多只能有一个 `completed` 的 Task** —— 这才是 S14「不重复委派」。
 
     ⚠️ 别用 `delegate_calls_max` 代替：**补救性的重派是合法的**
-    （执行器没按指令落库 → 判定 incomplete → 主 agent 换个说法重派 → 这次成了）。
+    （执行器没按指令落库 → **平台按结构判** incomplete → 主 agent 换个说法重派 → 这次成了）。
     实测踩过：`s01b` r1 用了 4 次委派完成 3 件事，那是**恢复路径生效**，不是缺陷。
     真正的缺陷是"同一件事被做成了两份成品"。
     """

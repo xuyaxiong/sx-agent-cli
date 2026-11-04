@@ -10,6 +10,6 @@ turns:
 checks:
   - check: fault_fired
   - check: no_exception
-  # 抖动之后还得把活干完（判定退化到 incomplete → 推回去继续 → 第 2 轮判成功）
+  # 抖动之后还得把活干完（平台按结构判 incomplete → 推回去继续 → 第 2 轮交付成功）
   - check: task_stages
     stages: {quiz: completed}

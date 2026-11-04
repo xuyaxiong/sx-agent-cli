@@ -121,7 +121,7 @@ def main() -> None:
     case = yaml.safe_load(Path(case_path).read_text(encoding="utf-8"))
     result = run_case(case, rep, out_dir=out.parent)
 
-    # 🔴 产物原文 + 逐轮对话落盘 —— 给人工审计用（判定看不到的东西，人能看到）
+    # 🔴 产物原文 + 逐轮对话落盘 —— 给人工审计用（主 agent 上下文里没有的东西，人能看到）
     dump_artifacts(out.parent, case["id"], rep, result)
     dump_run_record(out.parent, case["id"], rep, result)
 

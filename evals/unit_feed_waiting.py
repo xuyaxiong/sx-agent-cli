@@ -31,6 +31,7 @@ from langchain_core.messages import HumanMessage
 
 import proto.executor
 from proto import graph
+from proto.executor import ExecOutcome
 
 PASS: list[str] = []
 FAIL: list[str] = []
@@ -41,24 +42,29 @@ def check(name: str, ok: bool, detail: str = "") -> None:
     print(f"  {'✅' if ok else '❌'} {name}" + (f"\n      {detail}" if detail else ""))
 
 
-class _Waiting:
-    """假的 ExecOutcome：投递后仍待答（不关心内容，只看提示词）。"""
-
-    status = "waiting_for_input"
-    artifacts: list[str] = []
-    report = "（还需要信息）"
-    progress = ""
-    missing: list[str] = []
+#: 待答时执行器"最后说的那句" —— 断言要拿它当期望值（见 ⑧）
+WAITING_REPORT = "（还需要信息）"
 
 
-class _CompletedNoArtifact:
-    """假的 ExecOutcome：**完成了，但这一轮没写新产物**（成果在回复里）—— 见 ⑥。"""
+def _waiting(report: str = WAITING_REPORT) -> ExecOutcome:
+    """投递后仍待答（不关心内容，只看提示词）。
 
-    status = "completed"
-    artifacts: list[str] = []
-    report = "按你说的改完了"
-    progress = ""
-    missing: list[str] = []
+    🔴 **用真的 `ExecOutcome`，不自己捏一个假类**（2026-11-05）：假类是**同一语义的第二份定义**
+    （"一套，别分叉"），实测已经漂了 —— 它留着判定时代的 `progress` / `missing`（真类早删了），
+    又缺 `asked` / `fault`（真类新加的）。多一份定义 = 多一次静默分叉的机会。
+    """
+    return ExecOutcome(status="waiting_for_input", artifacts=[], report=report, rounds=1)
+
+
+def _no_delivery() -> ExecOutcome:
+    """推满轮次、这一轮什么都没交出来 —— 见 ⑥。
+
+    ⚠️ 原来这个假类叫 `_CompletedNoArtifact`（`completed` + 空产物），**那个状态现在不可达**：
+    三态由**结构**定，`artifacts` 空就不可能是 `completed`（`executor._structural_status`）。
+    真正可达的同形状是 `incomplete`（推满轮次）—— 上一轮的产物**同样**不能被这一轮抹掉，
+    ⑥ 要守的那条不变量一个字没变，只是换到了**走得通**的那条路上。
+    """
+    return ExecOutcome(status="incomplete", artifacts=[], report="（这一轮没交出东西）", rounds=3)
 
 
 def _capture() -> list[tuple[str, list | None]]:
@@ -71,7 +77,7 @@ def _capture() -> list[tuple[str, list | None]]:
 
     def fake(skill, briefing: str = "", user_turns=None):  # noqa: ANN001, ANN202
         seen.append((briefing, user_turns))
-        return _Waiting()
+        return _waiting()
 
     proto.executor.run_task = fake  # type: ignore[assignment]
     # 🔴 **试答那一步也要打桩**（2026-11-04 E1 之后，投递路径也会走它）：
@@ -136,8 +142,6 @@ def main() -> None:
     seen = _capture()
     state["tasks"][0].update(
         {
-            "progress": "已完成学习目标",
-            "missing": ["当堂检测"],
             "report": "我先设计了目标……请问用在哪？",
         }
     )
@@ -165,25 +169,28 @@ def main() -> None:
     # 🔴 交接书里只有清单，**全文走 `read_user_turn`** —— 所以原话必须一路传到 run_task
     check("原话也传给了执行器（read_user_turn 要用）", bool(turns), "" if turns else "传了个空的")
 
-    print("\n⑥ 重入**完成**但这一轮没产出 → 上一轮交付的产物不许被抹掉")
+    print("\n⑥ 重入**什么都没交出来** → 上一轮交付的产物不许被抹掉")
     # 🔴 2026-11-03 审核实测到的真 bug：settle 那行原来写的是
     #    `rec.update(stage="completed", artifacts=outcome.artifacts)` —— **无条件覆盖**，
     #    把 `absorb_outcome` 的保护（"这一轮没产出，不能把上一轮的抹掉"）当场抵消。
     #    后果：台账 / 终端任务表 / `_run.md` / 断言 `every_task_has_artifact`
     #    看到的都是"这个任务没交付过东西"。同一形状在 failed 分支上踩过一次
     #    （见 `checks.check_every_task_has_artifact` 的 docstring）。
-    proto.executor.run_task = lambda *a, **k: _CompletedNoArtifact()  # type: ignore[assignment]
+    # ⚠️ 2026-11-05：这条原来喂的是 `completed` + 空产物 —— 判定退休后**那个状态不可达**
+    #    （三态由结构定，`artifacts` 空就不可能是 `completed`），等于在测一条走不通的路。
+    #    换成真正可达的 `incomplete`（推满轮次）：**要守的不变量一个字没变**。
+    proto.executor.run_task = lambda *a, **k: _no_delivery()  # type: ignore[assignment]
     state6 = {
         "messages": [HumanMessage("就按这个改")],
         "tasks": [{
             "id": "t1", "skill": "guided-learning", "task": "生成导学单",
             "stage": "waiting_for_input", "artifacts": ["art_001"],   # ← 上一轮交付的
             "refs": [], "qa": [{"by": "用户", "q": "用在哪？", "a": "课前预习"}],
-            "report": "请问用在哪？", "progress": "", "missing": [],
+            "report": "请问用在哪？",
         }],
     }
     out6, _ = graph._feed_waiting(state6)
-    check("stage 照常迁移到 completed", out6[0]["stage"] == "completed", out6[0]["stage"])
+    check("stage 迁移到 failed（没交付就是没交付）", out6[0]["stage"] == "failed", out6[0]["stage"])
     check("**上一轮交付的产物还在**（没被这一轮的空 artifacts 抹掉）",
           out6[0]["artifacts"] == ["art_001"], repr(out6[0]["artifacts"]))
 
@@ -195,16 +202,14 @@ def main() -> None:
     #    **确实有一份回执**（正是最容易被误认的那种情形）。
     from proto.handoff.ledger import render_ledger
 
-    class _LongWaiting(_Waiting):
-        report = "问课时" * 60          # > 150 字，逼出台账的截断
-
-    proto.executor.run_task = lambda *a, **k: _LongWaiting()  # type: ignore[assignment]
+    # > 150 字，逼出台账的截断
+    proto.executor.run_task = lambda *a, **k: _waiting("问课时" * 60)  # type: ignore[assignment]
     state7 = {
         "messages": [HumanMessage("两课时")],
         "tasks": [{
             "id": "t1", "skill": "quiz", "task": "出随堂小测",
             "stage": "waiting_for_input", "artifacts": [], "refs": [],
-            "report": "问课时", "progress": "", "missing": [],
+            "report": "问课时",
             "qa": [], "user_turns": [], "run_by": "delegate",   # ← 上一轮是主 agent 派的
         }],
     }
@@ -232,7 +237,7 @@ def main() -> None:
             "tasks": [{
                 "id": "t1", "skill": "quiz", "task": "出随堂小测",
                 "stage": "waiting_for_input", "artifacts": [], "refs": [],
-                "report": "用几个课时？", "progress": "", "missing": [],
+                "report": "用几个课时？",
                 "qa": [], "user_turns": [],
             }],
         }
@@ -241,7 +246,7 @@ def main() -> None:
         proto.agent._ask_main = lambda *a, **k: ""  # type: ignore[assignment]
     check("试答之后**又重跑了一次**执行器（run_task 被调 2 次）", len(seen8) == 2, f"{len(seen8)} 次")
     check("试答**成对记进 `qa`**（`by=主 agent`；`q` 是**那一刻它问的那句** —— 即 outcome 的 report）",
-          any(x.get("by") == "主 agent" and x.get("q") == _Waiting.report
+          any(x.get("by") == "主 agent" and x.get("q") == WAITING_REPORT
               for x in out8[0]["qa"]),
           repr(out8[0]["qa"]))
     check("日志里说破了这一跳（不然读的人以为平台凭空多跑了一轮）",
@@ -258,7 +263,7 @@ def main() -> None:
         "tasks": [{
             "id": "t1", "skill": "quiz", "task": "出随堂小测",
             "stage": "waiting_for_input", "artifacts": [], "refs": [],
-            "report": "用几个课时？", "progress": "", "missing": [],
+            "report": "用几个课时？",
             "qa": [], "user_turns": [],
         }],
     }
