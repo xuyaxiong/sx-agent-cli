@@ -15,7 +15,6 @@ checks:
     subs: ["三年级", "数学"]
   - check: delegate_calls_max
     n: 3
-  - check: reply_nonempty
 soft:
   # 中文子串必然误伤（「三年级」含「年级」），只能语义判
   - check: no_repeat_question

@@ -47,5 +47,4 @@ checks:
   - check: artifact_count
     n: 0
   # 成果在执行器的话里（平台不保证这条路径，只保证"判得对"）
-  - check: reply_nonempty
   - check: no_finalize_rescue

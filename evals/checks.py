@@ -531,10 +531,10 @@ def check_llm_calls_under(run: dict, turn: dict, n: int) -> Result:
 #    找内容"的断言（AST 扫，名字也不许再出现）。
 
 
-@_reg
-def check_reply_nonempty(run: dict, turn: dict) -> Result:
-    r = (turn.get("reply") or "").strip()
-    return bool(r), f"回复 {len(r)} 字" if r else "⚠️ 主 agent 一个字没说"
+# ⚠️ ~~`check_reply_nonempty`~~ **2026-11-05 删**（用户："没用就删"）：
+#    它断的是"**模型说没说话**"（`turn["reply"]` 非空）—— 同族（拿模型输出当判据 ✗），
+#    而且**历史上从来没红过**（一次都没抓到过东西）。真出现"一个字没说"，
+#    用户那边看到的是一轮空回复 ✓，不需要一条专门断模型输出的断言。
 
 
 @_reg
