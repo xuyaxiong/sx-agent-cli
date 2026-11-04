@@ -394,6 +394,9 @@ def delegate(
     rec: dict[str, Any] = {
         "id": tid, "skill": skill_name, "task": task,
         "stage": "running", "artifacts": [], "report": "", "agent_tried": False,
+        # 平台故障的原因（空 = 没故障）—— 新建的 Task 当然还没故障；
+        # 每次 `settle` 由 `absorb_outcome` **覆盖写**（见 `Task.fault`）。
+        "fault": "",
         # ⚠️ `artifacts` 是**产出**（产物 ID 列表），`refs` 是**输入引用** —— 两个方向，别混。
         # 待答投递（`graph._feed_waiting`）要按 refs 原样重建可读产物清单。
         "refs": refs,

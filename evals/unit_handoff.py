@@ -404,6 +404,22 @@ def main() -> None:
     _led = _ledger([{**short_task, "stage": "waiting_for_input", "report": "它在问课时"}])
     check("⑫ `render_ledger` 里**只有执行器的原话**（判定的两行随判定退休删了）",
           "执行器说" in _led and "判定说" not in _led, _led)
+
+    # 🔴 **平台故障要压过 `stage` 标记**（2026-11-05 修 A3）：故障的 Task `stage` 也是
+    #    `failed`，照 stage 说话就是假话（"❌ 它没交付、也没说要什么" ＝ 执行器没干成），
+    #    而主 agent 做**下一轮决定**时看的正是台账 —— 同一件事两副面孔。
+    _l1 = _ledger([{**short_task, "stage": "failed", "report": "",
+                    "fault": "TimeoutError: （模拟）抖动"}])
+    check("⑫ 故障的 Task 说「平台故障」，不说「没交付」",
+          "平台故障" in _l1 and "没交付" not in _l1, _l1)
+    check("⑫ 故障时**不打**「执行器说」（它一个字都没说，照打就是冒号后一行空白）",
+          "执行器说" not in _l1, _l1)
+    check("⑫ 故障原因原样带出来（复盘要看）", "TimeoutError" in _l1, _l1)
+    # 反向：**没有故障的 failed 别跟着改口**（不然就把"执行器干不成"也盖掉了）
+    _l2 = _ledger([{**short_task, "stage": "failed", "fault": "",
+                    "report": "我尽力了但没做成"}])
+    check("⑫ 不是故障的 failed 照旧说「执行器说」",
+          "执行器说" in _l2 and "平台故障" not in _l2, _l2)
     check("⑫ `ask.build_prompt` 调得通",
           "你的上下文" in _ask("quiz", "出题", ExecOutcome(status="waiting_for_input", report="r"),
                               [HumanMessage("x")]))

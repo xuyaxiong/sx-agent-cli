@@ -49,6 +49,19 @@ STAGE_MARK: dict[TaskStage, str] = {
 #: 需要**展开细节**（进度 / 缺失项 / 执行器原话）的状态
 NEEDS_DETAIL = ("waiting_for_input", "failed")
 
+#: 🔴 **平台故障那一档的标记 —— 它压过 `stage` 标记**（2026-11-05 修 A3）。
+#:
+#: 故障的 Task `stage` 也是 `failed`，但 `STAGE_MARK["failed"]`（"❌ 它没交付、也没说要什么"）
+#: 对平台故障就是**假话** —— 那句话的意思是"**执行器**没干成"，而故障是**平台根本没跑成**，
+#: 两者主 agent 该做的事**完全不同**（原样重派 vs 换说法重派 / 向用户说明）。
+#: 原来是"同一件事两副面孔"：回执说"⚠️ 平台故障，原样再派一次"，台账说"❌ 失败" ——
+#: 而主 agent 做下一轮决定时看的**是台账**。
+#:
+#: **事实来源是 `Task.fault`**（`absorb_outcome` 写的，一处定义）—— 与回执的
+#: 【平台故障】（`DELIVERY["fault"]`）是**同一个事实的两个视图**（视图可以不一样，
+#: 事实只能有一处）。
+FAULT_MARK = "⚠️ 平台故障（这一轮**没跑成** —— 原样再派一次即可）"
+
 
 #: 台账截断时"全文在哪"的两种答案 —— **由这一轮是谁起的决定**（`Task.run_by`）：
 #:
@@ -103,15 +116,24 @@ def render_ledger(tasks: list[dict]) -> str:
     """
     lines: list[str] = []
     for t in tasks:
-        mark = STAGE_MARK.get(t.get("stage", ""), t.get("stage", "?"))
+        # 🔴 **平台故障压过 stage 标记**（见 `FAULT_MARK`）：故障的 stage 也是 `failed`，
+        #    照 stage 说话就是假话。
+        faulted = bool(t.get("fault"))
+        mark = (FAULT_MARK if faulted
+                else STAGE_MARK.get(t.get("stage", ""), t.get("stage", "?")))
         arts = f" → {', '.join(t['artifacts'])}" if t.get("artifacts") else ""
         lines.append(f"- {t['id']}  「{t['skill']}」  {mark}{arts}")
         # ⚠️ 没完成的任务，把**进度 / 缺失项**也带上（信息交接原则）——
         #    只说"没完成"，主 agent 没法决定是换个说法重派、还是向用户说明。
-        if t.get("stage") in NEEDS_DETAIL:
-            # ⚠️ `run_by` 一路传下去：这三段**都来自同一轮**，全文在不在主 agent 上下文里
-            #    是同一件事（见 `brief` 的 `_SRC`）。
-            by = str(t.get("run_by") or "")
+        # ⚠️ `run_by` 一路传下去：这两段**都来自同一轮**，全文在不在主 agent 上下文里
+        #    是同一件事（见 `brief` 的 `_SRC`）。
+        by = str(t.get("run_by") or "")
+        if faulted:
+            # 🔴 **故障时打故障原因，不打「执行器说」**：它一个字都没说 ——
+            #    照打就是一行"执行器说："后面**空白**（冒号后面什么都没有），
+            #    读的人还以为它说了句空话。同一条 `brief` 规矩（长了显式截断＋指向出处）。
+            lines.append(f"      平台故障：{brief(t['fault'], 150, '平台故障', run_by=by)}")
+        elif t.get("stage") in NEEDS_DETAIL:
             # ⚠️ 原来这里还有"已做到（判定说）/ 还缺（判定说）"两行 —— 判定退休后
             #    `Task.progress` / `Task.missing` 没有来源了，两行一起删（2026-11-05）。
             lines.append(f"      执行器说：{brief(t['report'], 150, '执行器说', run_by=by)}")

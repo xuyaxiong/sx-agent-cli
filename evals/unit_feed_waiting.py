@@ -194,6 +194,35 @@ def main() -> None:
     check("**上一轮交付的产物还在**（没被这一轮的空 artifacts 抹掉）",
           out6[0]["artifacts"] == ["art_001"], repr(out6[0]["artifacts"]))
 
+    print("\n⑥' 投递那趟遇到**平台故障**：故障要落进 Task（台账才说得出真话）")
+    # 🔴 **2026-11-05 修 A3**：故障原来只活在 `ExecOutcome` 上，落到 Task 就只剩 `stage=failed`
+    #    → 台账说"❌ 它没交付、也没说要什么"（＝执行器没干成）—— 而回执说"⚠️ 平台故障，
+    #    原样再派"。**同一件事两副面孔**，主 agent 做下一轮决定看的是台账。
+    #    ⚠️ 投递这条路**没有回执**（回执只属于 `delegate` 工具调用）—— 所以这里台账是
+    #    **唯一的信号**，说错了没有任何东西能纠正它。
+    from proto.handoff.ledger import render_ledger as _ledger
+
+    proto.executor.run_task = lambda *a, **k: ExecOutcome(  # type: ignore[assignment]
+        status="incomplete", artifacts=[], report="", rounds=1,
+        fault="TimeoutError: （模拟）投递那趟抖动")
+    state6b = {
+        "messages": [HumanMessage("就按这个改")],
+        "tasks": [{
+            "id": "t1", "skill": "guided-learning", "task": "生成导学单",
+            "stage": "waiting_for_input", "artifacts": [], "refs": [],
+            "report": "请问用在哪？", "qa": [],
+        }],
+    }
+    out6b, _ = graph._feed_waiting(state6b)
+    check("故障这一趟：stage 记 failed", out6b[0]["stage"] == "failed", out6b[0]["stage"])
+    check("**故障原因落进了 Task**（不落 → 台账只能说「没交付」这句假话）",
+          out6b[0].get("fault") == "TimeoutError: （模拟）投递那趟抖动",
+          repr(out6b[0].get("fault")))
+    _led6b = _ledger(out6b)
+    check("台账说的是「平台故障」，不是「没交付」",
+          "平台故障" in _led6b and "没交付" not in _led6b, _led6b)
+    check("台账**不打**「执行器说」（它一个字都没说）", "执行器说" not in _led6b, _led6b)
+
     print("\n⑦ 投递重跑那轮**没有回执** —— 台账不许再说「全文见回执」（2026-11-04 复审 E2）")
     # 🔴 投递是**平台**直接调 `run_task`（不经过 `delegate`）→ 主 agent 的上下文里
     #    **没有**这一轮的回执。而台账原来对两条路都写"全文见那次的回执"——

@@ -65,6 +65,9 @@ EXCLUDED: dict[str, str] = {
     "stage": "平台状态机内部字段；'这是重入'这层意思由【续跑提示】承载",
     "agent_tried": "布尔标记（只写不读，跑批报告用）；它要传达的信息由 `qa` 里 `by=\"主 agent\"` 那条承载",
     "run_by": "平台内部字段（**台账**用它决定'全文在哪'，见 `ledger._SRC`），执行器不需要",
+    "fault": "**平台故障的原因** —— 它是**平台**的事（台账据此说「平台故障，原样再派」、"
+             "回执有【平台故障】段）。执行器是**隔离上下文、用完即弃**：它上一次有没有跑成，"
+             "跟这一次该怎么干**无关**（重入时它看到的是完整交接书），写进去只是噪音",
 }
 
 #: 通用循环**查不了**的字段 —— 由下面的专门分块断言（不是排除，是换一种查法）
@@ -103,6 +106,10 @@ def _full_task() -> dict:
              "a": "填空补白"},
         ],
         "agent_tried": True,
+        # ⚠️ 故障和"等答复"实际不会同时出现（故障的 stage 是 `failed`）—— 但 fixture 的
+        #    规矩是**每个字段都填满**（空字段测不出"漏渲染"），而且 ② 那条"没泄漏"的断言
+        #    要求值**非空**（空串在任何文本里都能"找到"）。填一个一眼能认出来的值。
+        "fault": "TimeoutError: （fixture）这条不该出现在交接书里",
         # 这轮是谁起的 —— 台账据此说"全文在哪"（`delegate` 有回执 / `feed` 没有）
         "run_by": "delegate",
         # 🔴 平台**不挑**哪几轮给全文（2026-11-03）：每一轮都只进**索引**一行
@@ -135,6 +142,18 @@ def main() -> None:
         values = value if isinstance(value, list) else [value]
         missing = [v for v in values if str(v) not in text]
         check(f"`{key}` 渲染了", not missing, f"没出现：{missing}" if missing else "")
+
+    # 🔴 **覆盖性守卫**（2026-11-05 加）：`_full_task()` 必须**包含 `Task` 的每一个字段** ——
+    #    不然上面那条规矩（"加字段的人只有两条路：渲染它，或者写明为什么不渲染"）**是空的**：
+    #    新字段不进 fixture，① 和 ② **都看不见它**，静默漏掉（加 `fault` 时实测就是这样）。
+    from typing import get_type_hints
+
+    from proto.handoff.briefing import Task
+
+    _missing = sorted(set(get_type_hints(Task)) - set(task))
+    check("`_full_task()` 覆盖 `Task` 的每个字段（漏了 → ① ② 都查不到它）",
+          not _missing, f"fixture 里没有：{_missing} —— 要么补进 fixture 让它被渲染，"
+                        f"要么写进 EXCLUDED 说明为什么不")
 
     print("\n② 排除名单里的字段**不该**出现（双向：要么渲染、要么显式排除）")
     for key in EXCLUDED:

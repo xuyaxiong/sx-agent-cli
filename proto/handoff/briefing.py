@@ -94,6 +94,14 @@ class Task(TypedDict, total=False):
     artifacts: list[str]  # **产出**的产物 ID
     refs: list[str]  # **输入引用**的产物 ID（两个方向，别混）
     report: str  # 执行器最后一轮的原话（**覆盖写**）
+    #: 🔴 **平台故障的原因**（非空 = 这一轮**根本没跑成**，**不是执行器干不了**；空 = 没故障）。
+    #:
+    #: 2026-11-05 加（深度审计 P1-1 / A3）：在这之前**故障只活在 `ExecOutcome` 上**，
+    #: 落到 `Task` 时就只剩 `stage="failed"` 了 —— 于是**同一件事两副面孔**：
+    #: 回执说"⚠️ 平台故障，原样再派一次"，下一轮台账说"❌ 它没交付、也没说要什么"
+    #: （那句话的意思是"**执行器**没干成"）。而主 agent 做下一轮决定时看的**是台账**。
+    #: 现在**事实只有这一处定义**，回执的【平台故障】与台账的标记都是它的视图。
+    fault: str
     # ⚠️ 原来还有 `progress` / `missing`（**判定**吐的"已做到 / 还缺"）——
     #    2026-11-05 判定退休后**没有任何东西再写它们**，两个字段整条链一起摘掉。
     qa: list[QA]
@@ -325,6 +333,9 @@ def absorb_outcome(rec: dict, outcome: Any) -> None:
     ⚠️ `artifacts` 只在非空时覆盖：执行器可能这一轮没产出，不能把上一轮的抹掉。
     """
     rec["report"] = outcome.report
+    # 平台故障**也落进 Task**（理由见 `Task.fault`）—— 与 `report` 一样**覆盖写**：
+    # 正常跑完就清空，不留上一次的故障（不然一个瞬时的故障会在台账里阴魂不散）。
+    rec["fault"] = outcome.fault
     if outcome.artifacts:
         rec["artifacts"] = list(outcome.artifacts)
 
