@@ -45,6 +45,11 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 #: 待答时执行器"最后说的那句" —— 断言要拿它当期望值（见 ⑧）
 WAITING_REPORT = "（还需要信息）"
 
+#: 它**申报**要的那句原话（`ask_user` 的参数）—— 🔴 与 `WAITING_REPORT` **故意不同**：
+#: 【问答经过】的「问」必须取**这一句**，不是那段过场。两处用同一个值的话，
+#: "取错了源"这件事在这条断言上**看不出来**（2026-11-04 日志定位的正是这个错）。
+WAITING_ASKED = "这份导学单用在哪？（课前预习 / 课中探究 / 课后巩固）"
+
 
 def _waiting(report: str = WAITING_REPORT) -> ExecOutcome:
     """投递后仍待答（不关心内容，只看提示词）。
@@ -53,7 +58,8 @@ def _waiting(report: str = WAITING_REPORT) -> ExecOutcome:
     （"一套，别分叉"），实测已经漂了 —— 它留着判定时代的 `progress` / `missing`（真类早删了），
     又缺 `asked` / `fault`（真类新加的）。多一份定义 = 多一次静默分叉的机会。
     """
-    return ExecOutcome(status="waiting_for_input", artifacts=[], report=report, rounds=1)
+    return ExecOutcome(status="waiting_for_input", artifacts=[], report=report, rounds=1,
+                       asked=WAITING_ASKED)
 
 
 def _no_delivery() -> ExecOutcome:
@@ -146,6 +152,9 @@ def main() -> None:
     state["tasks"][0].update(
         {
             "report": "我先设计了目标……请问用在哪？",
+            # 🔴 **`asked` 与 `report` 故意不同**：下面那条断言要能分辨"取错了源"
+            #    （2026-11-04 修的就是这个 —— 原来取的是 `report`）。
+            "asked": "这份导学单用在哪？（课前预习 / 课中探究 / 课后巩固）",
         }
     )
     graph._feed_waiting(state)
@@ -155,11 +164,18 @@ def main() -> None:
     delivered = {**state["tasks"][0]}
     delivered["qa"] = [
         *delivered["qa"],
-        {"by": "用户", "q": delivered.get("report") or "", "a": "篇幅一页"},
+        {"by": "用户", "q": delivered.get("asked") or "", "a": "篇幅一页"},
     ]
     expect = render_briefing(delivered)
     check("提示词 == render_briefing(投递后的 Task)", prompt == expect, f"实际：\n{prompt[:400]}")
     check("它上次问过什么也带上了", "请问用在哪" in prompt)
+    # 🔴 **回归点**（2026-11-04 日志定位）：【问答经过】的「问」= `ask_user` 的参数原话。
+    #    取 `report` 的话，这里换成那段过场 —— 用户看到的是"答：A"，却不知道 A 在答什么。
+    check("「问」取的是 `ask_user` 的参数原话，**不是**它最后说的那段",
+          "这份导学单用在哪？（课前预习 / 课中探究 / 课后巩固）" in prompt,
+          prompt[-400:])
+    check("那段过场仍在（作为「它最后说的那句」），没被丢掉",
+          "我先设计了目标" in prompt, prompt[-400:])
 
     print("\n⑤ 用户原话跟着 Task 走（快照在 Task 上 → 这条重入路径**自动**带上）")
     seen = _capture()
@@ -289,9 +305,15 @@ def main() -> None:
     finally:
         proto.agent._ask_main = lambda *a, **k: ""  # type: ignore[assignment]
     check("试答之后**又重跑了一次**执行器（run_task 被调 2 次）", len(seen8) == 2, f"{len(seen8)} 次")
-    check("试答**成对记进 `qa`**（`by=主 agent`；`q` 是**那一刻它问的那句** —— 即 outcome 的 report）",
-          any(x.get("by") == "主 agent" and x.get("q") == WAITING_REPORT
+    # 🔴 **「问」= `outcome.asked`**（`ask_user` 的参数原话），**不是** `outcome.report`
+    #    （它最后说的那段话）—— 2026-11-04 日志定位。两条一起断，缺一条就分不出取错了源。
+    check("试答**成对记进 `qa`**（`by=主 agent`；`q` 是**它申报要的那句原话**）",
+          any(x.get("by") == "主 agent" and x.get("q") == WAITING_ASKED
               for x in out8[0]["qa"]),
+          repr(out8[0]["qa"]))
+    check("「问」**不是**那段过场（`report`）—— 取错源的话这条红",
+          all(x.get("q") != WAITING_REPORT
+              for x in out8[0]["qa"] if x.get("by") == "主 agent"),
           repr(out8[0]["qa"]))
     check("日志里说破了这一跳（不然读的人以为平台凭空多跑了一轮）",
           any("试答" in ln for ln in logs8), repr(logs8))

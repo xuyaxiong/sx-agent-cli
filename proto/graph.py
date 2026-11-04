@@ -180,10 +180,20 @@ def _feed_waiting(state: State) -> tuple[list[dict], list[str]]:
         # 答复**累积在 Task 上**，整份交接书一起喂 —— 见 `agent.render_briefing`
         # 🔴 **一问一答成对存**（用户 2026-11-02）：`report` 是**覆盖**写的
         # （`absorb_outcome`），只存答案的话，第二次投递之后旧答案就没有指涉了 ——
-        # 用户看到的是"答：A"，却看不到 A 在回答什么。**问题在这一刻从 Task 上
-        # 原样截下**（此刻的 `report` 就是它问的那句），平台搬，不靠 LLM 转述。
+        # 用户看到的是"答：A"，却看不到 A 在回答什么。
+        #
+        # 🔴 **「问」取 `Task.asked`，不取 `report`**（2026-11-04 日志定位）：
+        #    `report` 是执行器**最后说的那段话**（混着"好的，第一个问题已发出，
+        #    等你的答复"这类过场），平台自己在 `agent._ask_main` 里都标着
+        #    "可能只是过场" —— 拿它当「问」，配对就成了"一句没有指涉的话 ＋ 一个答复"。
+        #    实测（`logs/proto-20261104-152230.log`）：**同一句问题两副面孔** ——
+        #    透传给用户的是干净原话（`finalize` 走 `Task.asked`），回灌给执行器的
+        #    却是那段过场。而 `asked` 就在手边：`settle` 要到下面那一行才覆盖它。
+        # ⚠️ 取不到时**不静默降级**（fixture / 手写 state）：存空串，由 `briefing`
+        #    明说"这一条没留下问题原话"（同 `finalize._one` 的写法）——
+        #    **绝不拿 `report` 顶替**，那正是这次要修的错。
         rec = {**t, "qa": [*(t.get("qa") or []),
-                           {"by": "用户", "q": t.get("report") or "", "a": user}]}
+                           {"by": "用户", "q": t.get("asked") or "", "a": user}]}
         trace.section(f"prepare · 投递用户原话 → {t['id']} · {t['skill']}", kind="feed")
         trace.block("投过去的原话", user)
         trace.note(f"累计问答 {len(rec['qa'])} 对（历次一起带上，否则执行器会重问）")

@@ -217,10 +217,12 @@ def try_answer_then_rerun(
         return outcome, ""
     rec["agent_tried"] = True
     # 🔴 **成对记**（`by="主 agent"`）：只记答案的话，下一次重入时 `report` 已经被
-    # 新问题覆盖，这条答案就没了指涉 —— 同 `qa` 那段注释。问题**就是这一刻的
-    # `outcome.report`**，平台原样截下，不问 LLM。
+    # 新问题覆盖，这条答案就没了指涉 —— 同 `qa` 那段注释。
+    # 🔴 **「问」取 `outcome.asked`（`ask_user` 的参数原话），不取 `report`**
+    #    （2026-11-04 日志定位，同 `graph._feed_waiting` 那一处）：`report` 是它
+    #    最后说的**那段话**，混着过场；拿它当「问」，配对就失去指涉。
     rec["qa"] = [*(rec.get("qa") or []),
-                 {"by": "主 agent", "q": outcome.report, "a": answer}]
+                 {"by": "主 agent", "q": outcome.asked, "a": answer}]
     # 试答后重跑也是**重入**：走同一份交接书（带上刚才那一轮的进度 / 它问过什么）
     o2 = executor.run_task(skill, render_briefing(rec), rec.get("user_turns"))
     return o2, answer
@@ -407,14 +409,16 @@ def delegate(
         # `[{"by": "用户"|"主 agent", "q": 执行器问的原话, "a": 答复}]`
         #
         # **为什么是"对"而不是两个平行列表**：执行器用完即弃，每次重入都要重放全部已知；
-        # 而 `report`（它问的那句）是**覆盖**写的 —— 答案累积、问题覆盖的话，
+        # 而 `report` / `asked` 都是**覆盖**写的 —— 答案累积、问题覆盖的话，
         # 第二次重入之后旧答案就没有指涉了（"答第二个把第一个冲掉"的镜像版）。
         #
         # **为什么不分两个字段**（原来是 `answers` ＋ `agent_answer`）：那是**按来源分叉**，
         # 而"谁答的"本来就是每条记录的一个属性 —— 一个列表 ＋ 一个 `by` 字段就够了。
         #
-        # **问题由平台原样截下，不问 LLM**：用户答的那条在 `_feed_waiting` 截
-        # （那一刻 `report` 就是它问的），主 agent 试答那条在 `delegate` 里截。
+        # 🔴 **`q` 取 `asked`（`ask_user` 的参数原话），不取 `report`**（2026-11-04 修）：
+        # 平台**不解析散文**，所以"哪句才是问题"这件事它答不了 —— 正解不是去抽，
+        # 是**取那个本来就是问题的字段**。用户答的那条在 `_feed_waiting` 截，
+        # 主 agent 试答那条在 `delegate` 里截，两处都取 `asked`。
         "qa": [],
         #: 这轮是谁起的（台账据此说清"全文在哪"）—— `delegate` 这一趟的全文在**回执**里，
         #: 而投递重跑那一趟没有回执（见 `briefing.Task.run_by`）。⚠️ 试答后重跑仍在

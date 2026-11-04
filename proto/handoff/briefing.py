@@ -21,13 +21,18 @@
 **① 排版** —— 段名 0 列 / 段体 2 列 / 每层 +2（`proto.handoff.BODY` ＋ `body_lines`）。
 治的是实测三种破法，见 `proto/handoff/__init__.py` 那段注释。
 
-**② 去重** —— `qa` 里的「问」是**当时那条 `report`** 原样抄下来的
-（`graph._feed_waiting` / `agent.delegate` 两处都这么建），而 `report` 要到
-`absorb_outcome` 才被覆盖，**渲染发生在覆盖之前** —— 所以
+**② 去重** —— `qa` 里的「问」是**当时那句 `ask_user` 参数原话**（`Task.asked`；
+`graph._feed_waiting` / `agent.try_answer_then_rerun` 两处都这么建），
+而 `report` 是**它最后说的那段话** —— 两者**一般不是同一句**。
 
-    "最后一问 == report" 在**每一次重入渲染时恒成立**
+> ⚠️ **2026-11-04 之前「问」取的是 `report`**（`absorb_outcome` 之前它还没被覆盖，
+> 所以"最后一问 == report"当时**恒成立**）。后果是交接书里的「问」是**过场**而不是问题
+> （实测 `logs/proto-20261104-152230.log`：「问 1」写的是"好的，第一个问题已发出，
+> 等你的答复"），而**同一句问题**在透传那条路上走的是 `Task.asked` ——
+> **一个事实两副面孔**。现在两处都取 `asked`。
 
-两边都渲染 = 同一段话贴两遍（实测 R07：275 字，占交接书 11%）。
+改取 `asked` 之后，"逐字相同"只在执行器**把问题原样又说了一遍**时偶然成立 ——
+那时两边都渲染就是同一段话贴两遍（实测 R07：275 字，占交接书 11%）。
 🔴 **只折叠逐字相同的最后一条，且必须标出来** —— 悄悄不贴和悄悄切一刀一样糟：
 读的人分不出"它没说"和"被折叠了"。折叠的**字数**另报一行日志（同 `trace.cut` 的做法）。
 
@@ -70,13 +75,18 @@ class Turn(TypedDict):
 class QA(TypedDict):
     """**一问一答成对** —— 免得「答」脱离了「问」。
 
-    `report` 是**覆盖**写的（`absorb_outcome`），所以只存答案的话，
+    `report` / `asked` 都是**覆盖**写的（`absorb_outcome`），所以只存答案的话，
     第二次重入之后旧答案就成了没有指涉的孤儿。问题由**平台**在收下答案的那一刻
-    从 `report` 原样截下，不靠任何 LLM 转述。
+    从 `Task.asked`（`ask_user` 的参数原话）原样截下，不靠任何 LLM 转述。
+
+    🔴 **`q` 是 `asked`，不是 `report`**（2026-11-04 修，见模块 docstring ②）：
+    `report` 是执行器最后说的**那段话**，混着过场 —— 拿它当「问」等于没有指涉。
+    ⚠️ `asked` 取不到（fixture / 手写 state）时存**空串**，渲染那边会明说
+    "这一条没留下问题原话"；**不许**拿 `report` 顶替（那正是这次修的错）。
     """
 
     by: str  # "用户" | "主 agent"
-    q: str  # 执行器问的原话
+    q: str  # 执行器问的原话（`ask_user` 的参数 —— 取不到时是空串，不是 `report`）
     a: str  # 答复
 
 
@@ -239,7 +249,7 @@ def render_briefing(task: dict) -> str:
     # （`absorb_outcome` 无条件覆盖），所以只存答案的话，第二次重入之后
     # 旧答案就成了**没有指涉的孤儿** —— 那正是修过的"答第二个把第一个冲掉"
     # 的**镜像版**（那次修的是答案，这次是问题）。问题由**平台**在收下答案的
-    # 那一刻从 `report` 原样截下，不靠任何 LLM 转述。
+    # 那一刻从 `Task.asked`（`ask_user` 的参数原话）原样截下，不靠任何 LLM 转述。
     qa = [x for x in (task.get("qa") or [])
           if isinstance(x, dict) and str(x.get("a") or "").strip()]
     report = (task.get("report") or "").strip()
@@ -252,12 +262,15 @@ def render_briefing(task: dict) -> str:
             q = str(x.get("q") or "").strip()
             by = str(x.get("by") or "用户")
             if q:
-                # `q` 是执行器的**整条 report**（可能多行，前面还有一句交代）。
-                # ⚠️ **不抽取"哪句才是问题"**：那是语义判断，平台不做（见 §0.7）。
+                # `q` 是 `ask_user` 的**参数原话**（结构 ✓，不是从散文里抽的）——
+                # 所以这里**没有**"抽取哪句才是问题"那种语义判断要做（见 §0.7）。
                 block.append(f"{BODY}- **问 {i}**（执行器原话）：")
                 block += body_lines(q, BODY * 2)
             else:
-                block.append(f"{BODY}- **问 {i}**：（这一轮它没留下话）")
+                # ⚠️ 空 = **这一条没记下 `ask_user` 的参数**（fixture / 手写 state），
+                #    不等于"它没说话" —— 它说的那段话在下面「它最后说的那句」里。
+                #    说清是哪种，别让读的人以为它一个字都没说（同 `finalize._one`）。
+                block.append(f"{BODY}- **问 {i}**：（**这一条没留下问题原话**）")
             # ⚠️ 「答」是**和「问」平级的一项**，不是「问」的续行 ——
             # 原来是 `  **用户** 答：`（和问的续行同一个缩进），答看起来像问的一部分。
             block.append(f"{BODY}- **答 {i}**（**{by}**）：")
@@ -268,9 +281,15 @@ def render_briefing(task: dict) -> str:
                 "原样，**不重复贴**。）"
             )
         elif report:
-            # 兜底：`report` 不是任何一问（首跑 / 试答后重跑那两条路）——
+            # `report` 不是任何一问。**两条路都会走到这里**：
+            #   - 首跑 / 试答后重跑：还没有人答过，它那段话是**唯一的进展**；
+            #   - 有 `qa` 的那些轮（2026-11-04 起是**常态**）：「问」取的是 `asked`，
+            #     与 `report` 本就不是同一句 —— 那段话是它自己的收尾，不该丢。
             # **一个字都不能少**，所以照原样给它一块。
-            block.append(f"{BODY}- **它最后说的那句**（原样，这一轮还没有人答）：")
+            # ⚠️ "这一轮还没有人答"只在**没有 `qa`** 时才是真话（原来是恒真的，
+            #    因为那时 `q` 就是 `report`、这一支根本走不到）。
+            tail = "" if qa else "，这一轮还没有人答"
+            block.append(f"{BODY}- **它最后说的那句**（原样{tail}）：")
             block += body_lines(report, BODY * 2)
         if len(qa) > 1:
             block.append(f"{BODY}（如前后答复冲突，**以后面的为准**）")

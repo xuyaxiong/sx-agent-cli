@@ -57,6 +57,11 @@ LONG_REPORT = (
     + "\n**结尾标记**：这一段在最后，截断的话它一定不在。"
 )
 
+#: 它**申报**要的那句原话（`ask_user` 的参数）—— 🔴 与 `LONG_REPORT` **故意不同**：
+#: 【它要的信息】必须渲染**这一句**，不是那段独白（2026-11-04 日志定位）。
+#: 两处用同一个值的话，"取错了源"这件事在断言上**看不出来**。
+ASKED = "这份导学单主要用在哪？（课前预习 / 课中探究 / 课后巩固）"
+
 
 #: 三态共用同一个产物 —— **只建一次**（每次都清库的话，先前那两条的 ID 就悬空了）
 artifacts.clear()
@@ -75,6 +80,8 @@ def _outcome(status: str) -> ExecOutcome:
         artifacts=[AID] if status == "completed" else [],
         report=LONG_REPORT,
         rounds=3,
+        # 只有"在要信息"那一档才有申报 —— 其余档 `asked` 是空的（`absorb_outcome` 覆盖写）
+        asked=ASKED if status == "waiting_for_input" else "",
     )
 
 
@@ -103,9 +110,27 @@ def main() -> None:
         #    2026-11-05 判定退休，那两段（【已做到】/【还缺】）整块删了，这条随之作废。
         if label == "incomplete":
             check("[incomplete] `rounds` 出现在话里", str(out.rounds) in text)
+        if label == "waiting_for_input":
+            # 🔴 **它要的信息必须进回执**（2026-11-04 日志定位）：主 agent 的回复
+            #    **写在 `finalize` 注入问题之前** —— 实测同一轮：回执 15:23:14.770
+            #    → 它回复 15:23:19.193 → 平台注入问题 15:23:19.198。回执里没有这一句，
+            #    它写"派了什么、还差什么"时就只能**编**（实测编出"比如年级、课时、
+            #    学情等"，而执行器问的是**课型**）。透传保证用户不丢，但它那句话是假的。
+            check("[waiting] 有【它要的信息】段", SECTION["asked"] in text, text[:200])
+            check("[waiting] 段体是**申报的那句原话**（`ask_user` 的参数）", ASKED in text)
+            check("[waiting] 它排在【执行器说】**前面**（问题比那段独白要紧）",
+                  text.index(ASKED) < text.index(SECTION["report"]), text[:300])
         for aid in out.artifacts:
             check(f"[{label}] 产物 ID 渲染了", aid in text)
             check(f"[{label}] 产物**真实路径**渲染了", artifacts.get(aid)["path"] in text)
+
+    # 🔴 `asked` 缺失时**不许静默降级**（fixture / 手写 state）——
+    #    说清"这一条没留下问题原话"，再让【执行器说】把那段话摆出来（同 `finalize._one`）。
+    _noq = ExecOutcome(status="waiting_for_input", artifacts=[], report="我先分析一下……",
+                       rounds=1, asked="")
+    _t = _render(_noq)
+    check("`asked` 缺失时**显式说清**（不静默降级、也不假装有）",
+          SECTION["asked"] in _t and "没留下问题原话" in _t, _t[:300])
 
     print("\n② 🔴 **一个字都不许截断** —— 这是这条规矩的由来")
     for label, out in (("completed", completed), ("waiting_for_input", waiting), ("incomplete", failed)):
@@ -132,6 +157,8 @@ def main() -> None:
     check("没产物 → 没有【产出的产物】", "【产出的产物】" not in t)
     check("没交也没申报 → 交付行**说事实**（不是判决）",
           "既没交付产物、也没说要什么信息" in t)
+    check("没申报要信息 → 没有【它要的信息】（条件段，不许凭空冒出来）",
+          SECTION["asked"] not in t)
     check("没试答 → 没有【你补的信息】", "【你补的信息】" not in t)
     check("没给 note → 没有【下一步】", "【下一步】" not in t)
     check("成果在回复里时，正文**原样**在", "成果在这里" in t)
@@ -143,7 +170,9 @@ def main() -> None:
 
     print("\n⑥ 记录层读的是**对象**，不是文本（用户 2026-11-03 定的硬规矩）")
     from evals.harness import _RECEIPT_LABEL, _receipt_sections
-    from proto.handoff import HOPS, SECTION
+    # ⚠️ 只 import `HOPS`：`SECTION` **模块级已经 import 过了** —— 在函数里再 import 一次
+    #    会把它变成**整个函数的局部名**，于是它前面那几处用法直接 `UnboundLocalError`（踩过）。
+    from proto.handoff import HOPS
     from proto.handoff.receipt import build_rejection
 
     # ① 三态：对象里的段 = 渲染出来的段；**执行器的原话逐字相等**

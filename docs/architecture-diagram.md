@@ -211,7 +211,7 @@ ExecOutcome{status, artifacts, report, rounds, asked, fault}
 | **交接书** | `agent.render_briefing` | 不存（现场渲染） | 执行器（作为 HumanMessage） |
 | 产物正文 | 执行器 / 主 agent 的 `write_artifact` | 产物库（`proto.artifacts`，+ 磁盘文件） | `read_artifact` · 用户（打开文件） |
 | 产物 ID | 同上（返回值） | Task 的 `artifacts` / `refs` | 主 agent · 台账 |
-| **申报要信息** | 执行器（`ask_user` 工具参数） | `ExecOutcome.asked` | 试答（平台强制）· 平台（转达给用户） |
+| **申报要信息** | 执行器（`ask_user` 工具参数） | `ExecOutcome.asked` → `Task.asked` ＋ `Task.qa[].q` | 试答（平台强制）· 平台（转达给用户）· 交接书【问答经过】的「问」· 回执【它要的信息】 |
 | **三态** | `executor._structural_status`（**结构**：申报 / 产物账） | `ExecOutcome.status` → `Task.stage` | 主 agent（台账 / 回执）· 平台（推回去 / 投递）· 用户（透传） |
 | 轨迹日志 | `trace.*` | `logs/proto-<时间戳>.log` | 人（事后复盘）· CLI（tail） |
 
@@ -682,9 +682,9 @@ def ask_user(question: str) -> str:
 用户下一条消息 → **原话**投给**所有** `stage=waiting_for_input` 的 Task：
 
 ```python
-# 问题在这一刻从 Task 上**原样截下**（此刻的 report 就是它问的那句）—— 平台搬，不问 LLM
+# 问题在这一刻从 Task 上**原样截下**（取 `asked` —— `ask_user` 的参数原话，不是那段过场）
 rec = {**t, "qa": [*(t.get("qa") or []),
-                   {"by": "用户", "q": t.get("report") or "", "a": user}]}
+                   {"by": "用户", "q": t.get("asked") or "", "a": user}]}
 outcome = run_task(skill, render_briefing(rec))
 settle(rec, outcome)          # 写字段 + 定 stage —— 状态迁移只有这一处
 ```
@@ -1009,11 +1009,11 @@ html_ids = [aid for aid, a in arts.items() if file_ext(a.get("type") or "") == "
 | `stage` | **`settle()`**（`delegate` / `_feed_waiting` 都调它，唯一一处迁移） | 5 态（§6.2） |
 | `artifacts` | `absorb_outcome`（`settle()` 调；`delegate` 只建空表） | **产出**的产物 ID 列表（⚠️ **只在非空时覆盖** —— 这一轮没产出，不许抹掉上一轮交付的） |
 | `refs` | `delegate` | **输入引用**的产物 ID 列表（⚠️ 与 `artifacts` 方向相反） |
-| `report` | `absorb_outcome` | 执行器最后说的话（**只给回执用**，不参与判断） |
+| `report` | `absorb_outcome` | 执行器最后说的那段话（**回执【执行器说】** ＋ **交接书「它最后说的那句」**；不参与判断） |
 | `fault` | `absorb_outcome` | **平台故障的原因**（非空 = 这一轮**根本没跑成**，不是执行器干不了）—— 台账据此说「⚠️ 平台故障，原样再派」，不照 `stage` 说"❌ 没交付"（§3.2.1） |
-| `asked` | `absorb_outcome` | **它申报要的那句原话**（`ask_user` 的参数）—— 透传据此渲染（"【{skill}】问：…"，§3.1 ⑪）；将来弹框也用它（`solution.md` §0.65 Y1）。**不进交接书**（执行器不需要，那次问答已在【问答经过】里） |
+| `asked` | `absorb_outcome` | **它申报要的那句原话**（`ask_user` 的参数）—— 透传据此渲染（"【{skill}】问：…"，§3.1 ⑪）、**回执【它要的信息】**也贴它（主 agent 写回复时就得看见问的是什么）；将来弹框也用它（`solution.md` §0.65 Y1）。**不单独进交接书** —— 它已经逐条进了【问答经过】的「问」（`qa[].q`） |
 | ~~`progress`~~ / ~~`missing`~~ | — | **2026-11-05 删** —— 它们是**判定**吐的"已做到 / 还缺"；判定退休后**没有任何东西再写它们**（两个字段整条链一起摘掉：`ExecOutcome` / 交接书 / 台账 / 回执） |
-| `qa` | `_feed_waiting` / `delegate` | **历次问答对**（累积，不覆盖）：`[{"by": "用户"\|"主 agent", "q": 执行器问的那句, "a": 答复}]` —— **问题由平台原样截下**，见 §3.2.8 |
+| `qa` | `_feed_waiting` / `delegate` | **历次问答对**（累积，不覆盖）：`[{"by": "用户"\|"主 agent", "q": 执行器问的那句, "a": 答复}]` —— **`q` 取收下答案那一刻的 `asked`**（不是 `report` 那段过场），平台原样截下，见 §3.2.8 |
 | ~~`agent_answer`~~ | — | **已并入 `qa`**（`by="主 agent"`）—— 两个字段是**按来源分叉**，而"谁答的"本来就该是每条记录的一个属性 |
 | `agent_tried` | `delegate` | 试答过没（⚠️ **只写不读**，展示字段） |
 | `user_turns` | `delegate` | **用户原话快照** `[{"n": 1, "text": "…", "after": "它在回答的上一句"}]` —— 建 Task 那一刻落的，**不是渲染时现取**；`after` 见 §3.2.2 |

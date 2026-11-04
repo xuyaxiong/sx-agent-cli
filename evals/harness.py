@@ -541,6 +541,7 @@ _TOOL_SOURCE: dict[str, str] = {
 #: 段的**标签**（给读日志的人看）。**段名本身不在这里** —— 从 `proto.handoff.SECTION` 取。
 _RECEIPT_LABEL: dict[str, str] = {
     "deliver": "平台的框架话 · 这条回执属于哪种出口",
+    "asked": "**它申报要的那句原话**（`ask_user` 的参数，未经转述）",
     "produced": "平台给的产物清单（**不含正文**）",
     "report": "**执行器的原话**（它说了什么、在问什么）",
     "agent_answer": "**主 agent 补的信息**（它说的）",

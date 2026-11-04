@@ -54,6 +54,11 @@ SECTION: dict[str, str] = {
     "resume": "【续跑提示】",
     # ── 回执（执行器 → 主 agent，`receipt.py`）──
     "deliver": "【交付】",
+    #: 🔴 **它申报要的那句原话**（`ask_user` 的参数）—— **单起一段**：
+    #: 塞进【交付】就把执行器的原话混进平台的框架话里（来源标注串了），
+    #: 而【执行器说】是它最后说的**整段话**（混着过场）—— 两样都不是这一句。
+    #: ⚠️ 措辞与 `ask.py` 的 `**它要的信息**：` **同一句**（一套，别分叉）。
+    "asked": "【它要的信息】",
     "produced": "【产出的产物】",
     "report": "【执行器说】",
     "agent_answer": "【你补的信息】",
@@ -81,6 +86,7 @@ SOURCE_NOTE: dict[str, str] = {
     "user_turns": "**用户说的** —— 平台直接搬，未经转述",
     "answered": "**按时间顺序**，新的在下 —— 一问一答成对，免得「答」脱离了「问」",
     # ── 回执（`receipt.py`）──
+    "asked": "**它申报的** —— `ask_user` 的参数原话，未经转述",
     "report": "**它说的** —— 原样，未经改写",
     "agent_answer": "**你说的** —— 已成对记进 Task，下次重入还会带上",
     "fault": "**平台说的** —— 不是执行器说的",
@@ -233,7 +239,9 @@ HOPS: dict[str, tuple[str, ...]] = {
         "already_produced", "readable", "resume",
     ),
     "receipt": (
-        "deliver", "produced", "report", "agent_answer", "next",
+        # `asked` 紧跟在【交付】后面：它在要信息时，**那句问题就是这条回执的主角**
+        # （条件段，同 produced/agent_answer —— 只有 waiting 才有）
+        "deliver", "asked", "produced", "report", "agent_answer", "next",
         "fault",   # 只在平台故障时出现（条件段，同 produced/agent_answer）
     ),
     "receipt_rejected": (

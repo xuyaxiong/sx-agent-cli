@@ -181,11 +181,17 @@ def main() -> None:
           "write_artifact" in nudge and "ask_user" in nudge)
 
     # ── ⑨ 试答（平台 → 主 agent）──
+    # ⚠️ `asked` 与 `report` **故意不同**：试答提示词里那两行取自**两个字段**
+    #    （"它要的信息" ＝ `ask_user` 的参数原话；"它最后说的那段" ＝ `report`）。
+    #    两处共用一个值的话，"两行其实同源"这件事在断言上**看不出来** ——
+    #    而原来那条 `LONG in ask` 正是这么假绿的（名字叫"执行器问的"，满足它的是 `report`）。
+    ASKED_LONG = "这一条是它申报要的信息：" + "要素。" * 100
     outcome = ExecOutcome(status="waiting_for_input", artifacts=[], report=LONG, rounds=1,
-                          )
+                          asked=ASKED_LONG)
     ask = _ask_prompt("s", "超长任务：" + "细节。" * 200, outcome,
                       [HumanMessage(LONG), AIMessage(LONG)])
-    check("⑨ 试答 · 执行器问的全文在", LONG in ask)
+    check("⑨ 试答 · 执行器**申报要的那句原话**全文在", ASKED_LONG in ask)
+    check("⑨ 试答 · 它最后说的那段（`report`）全文在", LONG in ask)
     check("⑨ 试答 · 主 agent 上下文里那条长消息**全文在**", LONG in ask)
     check("⑨ 试答 · 主 agent 上下文里那条长回复**全文在**", ask.count(LONG) >= 2)
     check("⑨ 试答 · 没有「最近 N 条」这种无声范围限制", "最近" not in ask.split("你的上下文")[1][:40])

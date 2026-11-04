@@ -94,6 +94,26 @@ def build_receipt(outcome: Any, *, agent_answer: str = "", note: str = "") -> Re
     else:
         sections["deliver"] = DELIVERY["failed"].format(outcome.rounds)
 
+    # ①b 它要的信息：**`ask_user` 的参数原话**（结构 ✓ —— 不是从它的话里挑出来的）
+    #
+    # 🔴 **为什么回执里必须有它**（2026-11-04 日志定位）：主 agent 的回复**写在
+    #    `finalize` 注入问题之前**。实测同一轮（`logs/proto-20261104-152230.log`）：
+    #    回执 15:23:14.770 → 它回复 15:23:19.193 → 平台注入问题 15:23:19.198。
+    #    也就是说它写"派了什么、还差什么"时**根本不知道问的是什么** —— 只能编
+    #    （实测编出"比如年级、课时、学情等"，而执行器问的是**课型**）。
+    #    透传保证**用户**不丢，但主 agent 那句话是假的，而它正是要写回复的人。
+    #
+    # ⚠️ **不塞进【交付】**：那是平台的框架话，混进执行器的原话就串了来源标注
+    #    （这套代码一直在治"哪句是谁说的"）。也**不是【执行器说】**：那段是它
+    #    最后说的**整段话**，混着过场 —— 用户要答的是问题，不是那段独白。
+    # ⚠️ `asked` 缺失时（fixture / 手写 state）**不许静默降级**：说清"这一条没留下
+    #    问题原话"，再让下面的【执行器说】把那段话摆出来（同 `finalize._one`）。
+    if kind == "waiting":
+        asked = str(getattr(outcome, "asked", "") or "").strip()
+        sections["asked"] = asked or (
+            "（**这一条没留下问题原话** —— 下面是它最后说的那段，可能混着过场）"
+        )
+
     # ② 产出的产物：逐条列，**带真实路径**（主 agent 要答"文件在哪"）
     produced = [a for a in (outcome.artifacts or []) if a]
     if produced:
