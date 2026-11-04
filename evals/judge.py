@@ -96,10 +96,17 @@ def _reports(turn: dict) -> str:
 # ──────────────────────────── rubrics ────────────────────────────
 
 
+class _FieldAsked(BaseModel):
+    """**一个字段**的判定 —— 每个字段一条，**不许合并**。"""
+
+    field: str = Field(description="字段名 —— **原样照抄**给定列表里的那一个")
+    asked: bool = Field(description="助手**确实**在向用户索要它 → true；没索要 → false")
+
+
 class _RepeatQuestion(BaseModel):
-    asked: list[str] = Field(
+    items: list[_FieldAsked] = Field(
         default_factory=list,
-        description="被向用户索要的字段，逐条列出（原话摘录）；一个都没有就留空",
+        description="给定列表里的**每一个**字段都要有一条（**包括没索要的**）",
     )
 
 
@@ -109,6 +116,13 @@ def rubric_no_repeat_question(run: dict, turn: dict, fields: list[str]) -> Resul
 
     ⚠️ 为什么不能靠代码算：中文里「三年级」包含子串「年级」，
     子串匹配必然误伤。这是少数**必须**语义判断的地方。
+
+    🔴 **2026-11-05 修 schema**（实测踩到假红）：原来 `asked: list[str]` ——
+    模型想表达"没问"时**无处可写**，只好把否定塞进那个肯定列表里：
+    实测拿到 `asked=['年级没有索要', '课时没有索要', '难度没有索要']` →
+    断言读成"又向用户索要了" ✗ **假红**（判对了却标红，比漏判更坏：
+    它会让人去查一个没坏的东西）。现在**每个字段一条 `{field, asked}`** ——
+    "没问"有了正规写法，模型不必再发明否定式 ✓。
     """
     prompt = (
         "下面是一段用户与助手的对话，以及助手内部派出去的工作向它索要的信息。\n\n"
@@ -118,7 +132,7 @@ def rubric_no_repeat_question(run: dict, turn: dict, fields: list[str]) -> Resul
         f"请判断：**助手有没有向用户索要下面这些信息**？\n"
         f"字段：{'、'.join(fields)}\n\n"
         "注意：用户已经说过的信息，再问一遍就算「索要」。\n"
-        "只把**确实在向用户索要**的字段列进 asked，摘原话；没有就留空。\n"
+        "**每个字段都要给一条**：确实在向用户索要的 → `asked=true`；没索要的 → `asked=false`。\n"
         "（助手内部向它自己索要、但助手没转达给用户的，不算。）"
     )
     try:
@@ -129,8 +143,9 @@ def rubric_no_repeat_question(run: dict, turn: dict, fields: list[str]) -> Resul
     _log(run, "no_repeat_question", prompt, r)
     if r is None:
         return False, "⚠️ 评分调用失败（两次都挂），无法判定"
-    if r.asked:
-        return False, f"又向用户索要了：{r.asked}"
+    asked = [i.field for i in (r.items or []) if i.asked]
+    if asked:
+        return False, f"又向用户索要了：{asked}"
     return True, f"没有重复索要 {fields}"
 
 

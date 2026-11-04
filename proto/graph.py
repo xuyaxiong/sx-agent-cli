@@ -360,6 +360,15 @@ def build():
                 trace.note(line)
                 logs.append(line)
         if not out:  # 理论上不会（stream 至少吐一次最终 state）—— 兜一下，别把状态弄丢
+            # 🔴 **这条兜底必须说话**（2026-11-05 修）：`invoke` 会把整个 agent 循环**跑完**
+            #    才返回 —— 也就是**这一趟全程没有流式日志**，正是 `node_agent` 存在的
+            #    全部理由要治的黑屏（实测一次真实会话：连调 8 个工具、**336 秒日志一行不动**）。
+            #    原来这里一个字都不写 ✗ —— 真走到这条路上，读日志的人只会以为"卡住了"。
+            trace.note(
+                "⚠️ 流式**一步都没吐** → 退回 `invoke` 兜底：**这一趟没有流式日志**，"
+                "跑完才回来。正常不该发生 —— 见到这条要查 `stream` 为什么是空的。",
+                kind="stream_empty",
+            )
             return main_agent.invoke(state, config)
         return {**out, "log": logs} if logs else out
 

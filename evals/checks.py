@@ -458,6 +458,20 @@ def check_artifact_writes_multithreaded(run: dict, turn: dict) -> Result:
 
 
 @_reg
+def check_task_faulted(run: dict, turn: dict, skill: str = "") -> Result:
+    """**平台故障落进了 `Task`**（`Task.fault` 非空）—— 台账据此说真话（2026-11-05 修 A3）。
+
+    ⚠️ 断的是**平台写进对象里的那个字段**，不是"回执/台账那句话说得对不对" ——
+    文案怎么改都不影响这条（判据：断言读对象，不读渲染串）。
+    """
+    ts = _by_skill(turn, skill) if skill else _tasks(turn)
+    hit = [t["id"] for t in ts if str(t.get("fault") or "").strip()]
+    detail = (f"{hit} 记着平台故障" if hit
+              else f"没有任何 Task 记着 fault（{'、'.join(t['id'] + '=' + str(t.get('stage')) for t in ts)}）")
+    return bool(hit), detail
+
+
+@_reg
 def check_no_exception(run: dict, turn: dict) -> Result:
     err = run.get("error")
     return not err, f"⚠️ 整轮炸了：{err[:300]}" if err else "无异常"
@@ -465,9 +479,19 @@ def check_no_exception(run: dict, turn: dict) -> Result:
 
 @_reg
 def check_fault_fired(run: dict, turn: dict) -> Result:
-    """**测试有效性断言**：注入的故障真的发生了。"""
-    f = run.get("fault") or {}
-    return f.get("fired", 0) > 0, f"注入触发 {f.get('fired', 0)} 次"
+    """**测试有效性断言**：注入的故障真的发生了。
+
+    ⚠️ **两种注入都要认**（2026-11-05 修）：`fault.structured`（`safe_structured` 那条路）
+    与 `fault.stream`（流式那条路）**各有各的计数器** —— 原来只读前者，于是用 `stream`
+    注入的 case（`e12-fault-stream`）**故障明明发生了，这条却报"触发 0 次"** ✗
+    （实测：`results.json` 里 `Task.fault` 已经写着 `TimeoutError: （注入）流式调用抖动`，
+    这条却红着 —— **一条把"有效"报成"无效"的断言，比没有更坏**：它会让人去查一个没坏的东西）。
+    """
+    st = run.get("fault") or {}
+    sr = run.get("stream_fault") or {}
+    n = int(st.get("fired", 0)) + int(sr.get("fired", 0))
+    return n > 0, (f"注入触发 {n} 次"
+                   f"（structured {st.get('fired', 0)} ＋ stream {sr.get('fired', 0)}）")
 
 
 @_reg

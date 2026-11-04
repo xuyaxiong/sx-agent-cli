@@ -184,6 +184,9 @@ KINDS = frozenset({
     "ask_main", "llm_io",
     # trace.stream_agent（`retry` = 这一轮抖动、已重试一次）
     "retry",
+    # graph.node_agent（`stream_empty` = 流式**一步都没吐** → 退回 `invoke` 兜底，
+    # 这一趟**全程没有流式日志** —— 正是那个函数要治的黑屏，所以必须让用户看见）
+    "stream_empty",
     # executor.run_task（`run_fault` = 重试过仍失败，这一轮没跑成；
     # `ask` = 申报要信息 / `delivered` = 交付产物 → 这一轮结束，两者都是**结构事实**）
     "run_fault", "ask", "delivered",

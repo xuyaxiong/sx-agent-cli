@@ -76,10 +76,20 @@ def safe_structured(
         )
     import time
 
-    t0 = time.time()
     for attempt in (1, 2):
+        # ⚠️ **计时起点在循环里**（2026-11-05 修）：原来在**外面** —— 第二次尝试的
+        #    `RESPONSE（N.Ns）` 显示的是**两次累计**的秒数，日志里那个数字会骗人
+        #    （看起来"这次调用怎么这么慢"，其实第一次失败那段时间也被算进去了）。
+        t0 = time.time()
         try:
             r = get_model().with_structured_output(schema).invoke(prompt)
+            # 🔴 **`None` 也算失败**（2026-11-05 加）：`with_structured_output` 在模型吐了空
+            #    的时候可能**返回 `None` 而不抛** —— 那样调用方拿到 `None`，下一行
+            #    （`j.status` / `ans.can_answer`）直接 AttributeError，**整轮炸**；
+            #    而这条路上 `safe_structured` 的全部意义就是"别让一次抖动炸掉整轮"。
+            #    ⚠️ **没实测到过**（拿不到稳定复现）—— 代价 2 行，收益是堵死这条 AttributeError。
+            if r is None:
+                raise ValueError("结构化输出返回了 None（模型吐了空）")
             if log_response:
                 trace.block(f"RESPONSE（{time.time() - t0:.1f}s）", str(r), kind="llm_io")
             return r

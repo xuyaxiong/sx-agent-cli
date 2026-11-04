@@ -1,0 +1,42 @@
+id: e12-fault-stream
+family: 异常
+why: >
+  **"执行器抖动 → 回执【平台故障】→ 主 agent 原样重派"这条链，端到端从没跑过。**
+  `fault.stream` 的注入能力 2026-11-04 就加了，但只在单测里用过（假图）；
+  真跑的 case 目录里一个都没有（`grep` 只有 e11，注的是 `structured`）。
+  而这条链上恰好住着两个被修掉的缺陷：**A1**（重试边界：吐过东西就不再整轮重跑）
+  和 **A3**（故障要落进 `Task`，否则台账只能说"❌ 它没交付"这句假话）。
+  ——改了没验，等于没改。
+realism: 抖动实测发生过（`OpenAIConnectionError` 3 次 / 216 run）；故障出口本身只被注入触发过
+tier: audit
+skills_dir: evals/skills
+skills_mode: replace
+fault:
+  # 让**执行器**那条链的第一次流式调用直接死 → `run_task` 落 `outcome.fault`
+  # （注入点替换的是整个 `stream_agent`，**绕过内部那次重试** —— 见 `harness.install` ⑤′）
+  stream: 1
+  role: executor
+turns:
+  - "帮我出个随堂小测，三年级数学《分数的初步认识》，难度基础"
+  # 第 2 轮：让**下一轮的台账**渲染出来（故障的 Task 在里面 —— A3 修的就是它那句话）。
+  # ⚠️ 台账那句话**不在断言里**（文案不在 `checks.py` 的射程内，见判据）；
+  #    人看 `_run.md` 核对，机器只断对象。
+  - "好，就这样"
+checks:
+  # 🔬 有效性：注入真的触发了（不然下面几条的"通过"是假的）
+  - check: fault_fired
+  # 🔴 主断言之一：**抖动没有炸掉整轮**（N2/R8 的承诺）
+  - check: no_exception
+  # 🔴 主断言之二：**故障落进了 `Task`**（A3）—— 台账据此说"⚠️ 平台故障，原样再派"，
+  #    而不是照 stage 说"❌ 它没交付、也没说要什么"（假话：不是执行器干不成）。
+  #    ⚠️ `fault` 在 Task 被标 `superseded` 时**也保留**（`_supersede_old` 是整条拷贝）——
+  #    所以主 agent 同轮重派也好、不重派也好，这条都稳。
+  - check: task_faulted
+  # ⚠️ **不断 `task_stages`、也不断"主 agent 有没有原样重派"**：前者随"模型重不重派"
+  #    变化（重派 → 旧 Task 被取代、新 Task 走完；不重派 → 旧 Task 停在 failed），
+  #    后者直接就是模型的自由选择 —— 两条都必然脆（判据见 `checks.py` 顶部）。
+  #    平台保证的是"每一格都有确定的后果"，后果由上面三条钉住。
+soft:
+  # 语义证据：主 agent 有没有按回执说的做（原样重派、而不是换个说法或向用户道歉）
+  - check: no_repeat_question
+    fields: ["年级", "课时", "难度"]

@@ -812,7 +812,11 @@ settle(rec, outcome)          # 写字段 + 定 stage —— 状态迁移只有�
 | 主 agent 系统提示 | `agent._MAIN_PROMPT` | 两种做法 · **不要一律问** · **产出范围以用户明确说的为准** · 传 ID 不转述正文 · **产物正文不要搬进回复** |
 | 业务侧 | **skill 的 `instructions`** | "你需要知道 X"（哪些参数必答）—— **平台不猜，也不让模型猜** |
 
-### 4.4 评测期的硬判断（`evals/checks.py` · **33 条**）
+### 4.4 评测期的硬判断（`evals/checks.py`）
+
+> ⚠️ **这里不写条数**（原来写着"33 条"）：这个数字**一变就会漂**（2026-11-05 一天里
+> 先删一条、又加一条），而没有任何东西盯着它。要数就 `len(evals.checks.CHECKS)` ——
+> 按本仓库的规矩：**要么让规矩会红，要么别写**。
 
 > 📌 表里划掉的 3 条是 **2026-11-05 清掉的**（判据：**别拿文本当判据** ——
 > 断模型的措辞等于没效果）：两条扫判定的 `missing` / `progress`（判定退休后那两个字段没了）、
@@ -857,7 +861,8 @@ settle(rec, outcome)          # 写字段 + 定 stage —— 状态迁移只有�
 | | `llm_calls_under` | LLM 调用总数 ≤ n |
 | | `reply_contains` / `reply_excludes` / `reply_nonempty` | 回复含 / 不含这些子串；非空 |
 | | `no_duplicate_completed` | 同一技能最多一个 `completed` task（**不能用 `delegate_calls_max` 代替** —— 补救性重派是合法的） |
-| | `supersede_worked` | 重新委派同技能后 `superseded >= 1` 且 `waiting_for_input == 0` |
+| | `task_faulted` | **平台故障落进了 `Task`**（`Task.fault` 非空）—— 台账据此说"⚠️ 平台故障，原样再派"，而不是照 `stage` 说"❌ 它没交付、也没说要什么"（那是假话：不是执行器干不成） |
+| | ~~`supersede_worked`~~ | **2026-11-05 删** —— 它要求"重派同技能后旧的**待答**必须被取代"（`waiting_for_input == 0`），而 `_supersede_old` 2026-10-29 就改成**只取代 `failed`**（理由：重派不该**静默抹掉一个用户从没回答过的问题**，F7 实测踩过）。它**零 case 在用**（死断言），但仍是地雷：谁挂上它，红了就会引导人去改实现 —— 把用户的问题弄丢 |
 
 **🔬 标记的是"测试有效性"断言** —— 它们断的不是产品行为，而是"**这条 case 真的压到了那条路径吗**"。
 `report.py` 里 `VALIDITY_CHECKS = {"artifact_writes_multithreaded", "fault_fired"}`，
@@ -924,7 +929,7 @@ html_ids = [aid for aid, a in arts.items() if file_ext(a.get("type") or "") == "
 
 | rubric | 断言什么 | 喂给它的材料 | 输出 |
 |---|---|---|---|
-| `no_repeat_question` | 主 agent / 执行器有没有向用户索要**用户其实已经说过的**字段 | ① 到该轮为止的**全部用户原话** ② 该轮回复 ③ 每个 task 的 `report`（**保头保尾，预算 800**）④ 待查字段清单 | `asked: list[str]`（非空 → 失败） |
+| `no_repeat_question` | 主 agent / 执行器有没有向用户索要**用户其实已经说过的**字段 | ① 到该轮为止的**全部用户原话** ② 该轮回复 ③ 每个 task 的 `report`（**保头保尾，预算 800**）④ 待查字段清单 | `items: [{field, asked: bool}]`（**每个字段一条**；任一条 `asked=true` → 失败） |
 | `artifact_derives_from_source` | 后序产物**内容上**是否真的基于源产物（依赖成立的语义证据） | 源产物正文（**截 2500 字**）+ 每份其他产物（**截 1500 字**）+ 各自的标题 | `derived: list[str]` / `generic: list[str]` / `evidence: str` |
 | `reply_is_summary` | 产物正文有没有被搬进主 agent 的回复（隔离的另一面） | 产物清单（ID + 字数）+ 该轮回复 | `pasted_body: bool`（true → 失败） |
 | `artifact_is_complete` | 产物**写完了没有**（模板残留 / 占位符 / 半成品）—— **只能语义判** | 每份产物正文（**保头，预算 2500 字**，带截断标注）+ 各自的标题 | `unfinished: list[str]`（非空 → 失败） |
@@ -936,6 +941,13 @@ html_ids = [aid for aid, a in arts.items() if file_ext(a.get("type") or "") == "
 
 > 🔴 **"助手内部向它自己索要、但没转达给用户"不算**（`no_repeat_question` 的判据里写死了这条）——
 > 否则试答那一步会被误判成"又问了一遍"。
+
+> 🔴 **`no_repeat_question` 的输出 schema 2026-11-05 改过**（实测踩到假红）：原来
+> `asked: list[str]`（"被索要的字段"）—— 模型想表达"**没问**"时**无处可写**，只好把否定
+> 塞进那个肯定列表：实测拿到 `asked=['年级没有索要', '课时没有索要', '难度没有索要']`，
+> 断言读成"又向用户索要了" ✗ **假红**（判对了却标红，比漏判更坏 —— 它会让人去查一个
+> 没坏的东西）。现在**每个字段一条 `{field, asked}`**：**"没问"有了正规写法**，
+> 模型不必再发明否定式 ✓。**让错的答案无法表达**，比在提示词里求它别写更靠得住。
 
 **留档（判错归因）**：每条 rubric 的**逐字 prompt 与 response** 追加进
 `runs/<tag>/artifacts/<case>__r<rep>/_run.md` 的 `## 软判断 · \`{name}\`` 一节，

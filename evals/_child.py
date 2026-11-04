@@ -107,7 +107,12 @@ def run_case(case: dict, rep: int, out_dir: Path | None = None) -> dict:
             }
             for k, v in artifacts.items()
         },
+        # 两种注入的计数器**都要带出来**（2026-11-05 修）：`fault` 是 `structured` 那条路
+        # （`safe_structured`），`stream_fault` 是流式那条路（`stream_agent`）——
+        # 原来只带前者，于是用 `fault.stream` 注入的 case **明明故障发生了，
+        # `check_fault_fired` 却报"触发 0 次"**（把"有效"报成"无效"，比没有更坏）。
         "fault": inst["fault"],
+        "stream_fault": inst["stream_fault"],
         "error": error,
         "wall_s": round(time.time() - t0, 1),
         #: 本次 run 的原始 trace 文件 —— 父进程判完软断言后把它作为附录并进 `_run.md`

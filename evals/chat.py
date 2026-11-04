@@ -368,6 +368,7 @@ _ROLE_BY_KIND: dict[str, str] = {
     "run_end": "exec",          # run_task 结束
     "feed": "plat",             # 平台把用户原话投给待答任务（section）
     "retry": "plat",            # 这一轮抖动、已重试一次（trace.stream_agent）
+    "stream_empty": "plat",     # 流式一步都没吐 → 退回 invoke 兜底（这一趟没有流式日志）
     "run_fault": "exec",        # 重试过仍失败 → 这一轮没跑成（executor.run_task）
     "ask": "exec",              # 执行器申报要信息（调了 `ask_user`）→ 这一轮结束
     "delivered": "exec",        # 执行器交付了产物 → 这一轮结束
