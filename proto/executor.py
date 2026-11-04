@@ -200,6 +200,11 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
     #: 🔴 **这次 run 写了哪些产物 —— 由工具自己记**（闭包，按 run 归属）。
     #: 原来是**扫消息文本**猜（`_recover_artifacts` + `preexisting` 差集）——
     #: 既不是结构化、也不是硬机制，而且并发时差集还会互相覆盖。见 `make_write_artifact`。
+    #:
+    #: ⚠️ **清单里没有"哪份是成品"这个概念 —— 这是定的，别再往这里加草稿/成品的区分**
+    #: （`docs/solution.md` §五 **X5**）：一轮里写两份就交两份。要平台标"最终版"＝要它
+    #: **读内容判断**"这次是重写还是又交了一样东西" —— 那是**质量判断**，判定就是死在
+    #: 这上面。真要做只能让**模型自己声明**（新机制、且靠自觉），没被咬到之前不造。
     created: list[str] = []
     #: `ask_user` 申报的内容（闭包按 run 归属，同 `created`）
     asked: dict = {}
