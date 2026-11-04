@@ -23,6 +23,7 @@
 
 from __future__ import annotations
 
+import re
 import sys
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -189,6 +190,18 @@ def main() -> None:
     # ⚠️ 原来这里还建了一个 `bare`（`completed` + 空产物）—— 它属于【成果在回复正文里】
     #    那一档；2026-11-05 判定退休后那个档位没了（`completed` 必然有产物），
     #    这行成了**定义了没人用**的死代码，删掉。
+
+    # ③' 🔴 **回执里点到的产物 ID，必须是这次真产出的那些**（2026-11-05 实测踩到）：
+    #     "要看就用 `read_artifact(...)` 读"那句原来**写死了 `art_001`** ——
+    #     实测 `x-prep-lotus`：这次产出的是 `art_002`（导学单），提示却让人去读 `art_001`
+    #     （那是上一份**教案**）。**指向"存在但内容不对"的出处，比指不到更坏**（同 E2 那条）。
+    #     ⚠️ 这条**必须用一个不是 `art_001` 的产物**来断 —— 写死的那个正好撞上就测不出来了。
+    #     （扫的是**平台自己渲染的模板**，不是 LLM 吐的东西 —— 确定性，能断言。）
+    _a2 = store_artifact("荷花-导学单", "课前预习用", "md", "正文" * 50)
+    _named = set(re.findall(r"art_\d+", _render(
+        ExecOutcome(status="completed", artifacts=[_a2], report="交好了", rounds=1))))
+    check("回执里点到的产物 ID 都是这次产出的（没有写死的）",
+          _named == {_a2}, f"点到 {sorted(_named)}；这次产出 {_a2}")
 
     # ④ 派发被拒那几个口：对象 → 文本 → 记录层，三边一致
     # ⚠️ ~~`rejected_turns`~~ **2026-11-03 删**：轮次不再由主 agent 点名

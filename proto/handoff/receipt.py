@@ -110,7 +110,12 @@ def build_receipt(outcome: Any, *, agent_answer: str = "", note: str = "") -> Re
             if a.get("path"):
                 block.append(f"  文件：{a['path']}")
         block.append(
-            "（正文在**产物库**里，你的上下文里没有 —— 要看就用 `read_artifact('art_001')` 读，"
+            # ⚠️ **不许写死 ID**（2026-11-05 实测踩到）：这里原来写的是 `read_artifact('art_001')`
+            #    —— 实测 `x-prep-lotus`：这次产出的是 `art_002`（导学单），提示却让人去读
+            #    `art_001`（那是上一份**教案**）。**指向"存在但内容不对"的出处，比指不到更坏**
+            #    （同 E2 那条教训）。用占位形式，和【下一步】那句**同一套**写法。
+            #    断言：`unit_receipt` ⑥ —— 拿一个**不是 art_001** 的产物断。
+            "（正文在**产物库**里，你的上下文里没有 —— 要看就用 `read_artifact('<产物 ID>')` 读，"
             "不要凭标题猜。回复里报 ID ＋ 路径就够了。）"
         )
         sections["produced"] = "\n".join(block)
