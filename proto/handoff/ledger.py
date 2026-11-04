@@ -20,7 +20,7 @@ from __future__ import annotations
 from proto import trace
 from proto.handoff import TaskStage
 
-#: `Task.stage` 的全部取值 —— **与 `judgement._Judgement.status` 前三个同名**。
+#: `Task.stage` 的全部取值 —— **与 `handoff.OutcomeStatus` 前三个同名**。
 #: 唯一的映射是 `incomplete → failed`（判定说"还没做完"，推满轮次后任务记"失败"）。
 #:
 #: ⚠️ **这些是"要管"的状态**；`superseded` 是"不用管了"（同技能被重新委派时自动标记），
@@ -34,11 +34,15 @@ from proto.handoff import TaskStage
 #:   - `cancelled`              —— 用户明确放弃时主动取消。需要给主 agent 新工具，
 #:                                 且该场景尚未实测到。等真遇到再加
 #: 键 = `TaskStage`（词汇表）—— 打错键名 mypy 会报；覆盖性由 `unit_handoff` 的守卫盯着（N4）。
+#: 🔴 **说事实，不下判决**（2026-11-05，判定退休）：三态是平台按**结构**算的
+#: （交了产物 / 申报要信息 / 都没有）—— 所以这里也照着事实说。
+#: 原来写的是"✅ 已完成 / ❌ 失败" ✗ —— 那是**判定的口吻**（"够不够"由主 agent 判 ✓），
+#: 平台只知道自己看见了什么 ✓。
 STAGE_MARK: dict[TaskStage, str] = {
     "running": "⏳ 进行中",
-    "completed": "✅ 已完成",
-    "waiting_for_input": "⚠️ 等用户答复",
-    "failed": "❌ 失败",
+    "completed": "✅ 它交付了产物",
+    "waiting_for_input": "⚠️ 它在要信息",
+    "failed": "❌ 它没交付、也没说要什么",
     "superseded": "🔁 已被新的委派取代（不用管了）",
 }
 
@@ -108,10 +112,8 @@ def render_ledger(tasks: list[dict]) -> str:
             # ⚠️ `run_by` 一路传下去：这三段**都来自同一轮**，全文在不在主 agent 上下文里
             #    是同一件事（见 `brief` 的 `_SRC`）。
             by = str(t.get("run_by") or "")
-            if t.get("progress"):
-                lines.append(f"      已做到（判定说）：{brief(t['progress'], 150, '已做到', run_by=by)}")
-            if t.get("missing"):
-                lines.append(f"      还缺（判定说）：{brief('；'.join(t['missing']), 200, '还缺', run_by=by)}")
+            # ⚠️ 原来这里还有"已做到（判定说）/ 还缺（判定说）"两行 —— 判定退休后
+            #    `Task.progress` / `Task.missing` 没有来源了，两行一起删（2026-11-05）。
             lines.append(f"      执行器说：{brief(t['report'], 150, '执行器说', run_by=by)}")
 
     waiting = [t for t in tasks if t.get("stage") == "waiting_for_input"]

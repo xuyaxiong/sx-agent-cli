@@ -76,7 +76,7 @@ def build_receipt(outcome: Any, *, agent_answer: str = "", note: str = "") -> Re
     if outcome.fault:
         kind = "fault"
     elif outcome.status == "completed":
-        kind = "completed" if outcome.artifacts else "completed_in_reply"
+        kind = "completed"
     elif outcome.status == "waiting_for_input":
         kind = "waiting"
     else:
@@ -89,8 +89,6 @@ def build_receipt(outcome: Any, *, agent_answer: str = "", note: str = "") -> Re
         sections["deliver"] = DELIVERY["fault"]
     elif kind == "completed":
         sections["deliver"] = DELIVERY["completed"].format(len(outcome.artifacts))
-    elif kind == "completed_in_reply":
-        sections["deliver"] = DELIVERY["completed_in_reply"]
     elif kind == "waiting":
         sections["deliver"] = DELIVERY["waiting"]
     else:
@@ -134,13 +132,8 @@ def build_receipt(outcome: Any, *, agent_answer: str = "", note: str = "") -> Re
     if report:
         sections["report"] = report
 
-    # ④ 判定给的进度 / 缺失项：**没完成才给**
-    if outcome.status != "completed":
-        if outcome.progress:
-            sections["progress"] = str(outcome.progress)
-        missing = [x for x in (outcome.missing or []) if x]
-        if missing:
-            sections["missing"] = "\n".join(f"- {x}" for x in missing)
+    # ⚠️ 原来这里出【已做到】/【还缺】两段（**判定**给的）—— 判定退休后没有来源了，
+    #    2026-11-05 一起删。"它说过的原话"仍在【执行器说】里 ✓ 那个来源是真的。
 
     # ⑤ 主 agent 自己试答补的信息（成对记进了 `qa`，这里回显一下）
     if agent_answer.strip():

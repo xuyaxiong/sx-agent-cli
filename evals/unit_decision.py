@@ -116,12 +116,13 @@ def main() -> None:
     check("`trace.decision` 发的是结构化决策事件（字段原样在 ev 里）",
           '"type": "decision"' in io.open("proto/trace.py", encoding="utf-8").read())
 
-    print("\n④ 两个决策点都走 `trace.decision`（不再是散装 note）")
-    for path in ("proto/executor.py", "proto/agent.py"):
-        s = io.open(path, encoding="utf-8").read()
-        check(f"`{path}` 调了 `trace.decision(`", "trace.decision(" in s)
-    check("`executor.py` 不再自己拼「判定输入」那条 note", 'f"判定输入：' not in
-          io.open("proto/executor.py", encoding="utf-8").read())
+    print("\n④ 决策点都走 `trace.decision`（不再是散装 note）")
+    # ⚠️ 2026-11-05 判定退休：**判定那次 LLM 调用整个没了**（三态改由平台按结构定），
+    #    全系统只剩**试答**一个 LLM 决策点 —— 在 `agent.py`。
+    s = io.open("proto/agent.py", encoding="utf-8").read()
+    check("`agent.py` 调了 `trace.decision(`", "trace.decision(" in s)
+    check("`executor.py` 不再有 LLM 决策（判定退休）",
+          "trace.decision(" not in io.open("proto/executor.py", encoding="utf-8").read())
 
     print("\n⑤ 段名**只有一份**：给 `DECISION` 加一段，两层都得跟着走")
     # 🔴 原来两边**各抄一份四段表**（记录器的 `vals` 一份、展示层的 `(标签, 键)` 一份）。

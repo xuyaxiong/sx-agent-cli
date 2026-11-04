@@ -50,7 +50,7 @@ def main() -> None:  # noqa: C901
 
     from proto import artifacts
     from proto.artifacts import store_artifact
-    from proto.executor import ExecOutcome, _Judgement
+    from proto.executor import ExecOutcome
 
     artifacts.clear()
     aid = store_artifact("《白桦》教案", "四年级诗歌教学", "md", "正文" * 80)
@@ -63,12 +63,11 @@ def main() -> None:  # noqa: C901
         "task": "生成导学单",
         "user_turns": [{"n": 1, "text": "帮我备课" * 30, "after": "好的"},
                        {"n": 2, "text": "这一轮很长" * 40, "after": "上一句也很长" * 20}],
-        "progress": "已完成目标", "missing": ["课时"],
         "report": "请问课时？", "qa": [{"by": "用户", "q": "用在哪？", "a": "预习"}],
         "artifacts": [aid], "refs": [aid],
     })
     row("① 交接书（平台→执行器）",
-        OK if all(s in brief for s in ("主 agent 交代的", "**用户说的**", "**判定说**",
+        OK if all(s in brief for s in ("主 agent 交代的", "**用户说的**",
                                        "（执行器原话）", "**答 1**（**用户**）")) else BAD,
         OK if ("read_user_turn" in brief and "…" in brief) else BAD,
         NA,
@@ -80,10 +79,10 @@ def main() -> None:  # noqa: C901
 
     rec = render_receipt(build_receipt(
         ExecOutcome(status="waiting_for_input", artifacts=[aid], report="我需要课时" * 40,
-                    rounds=2, progress="做了一半", missing=["课时"]),
+                    rounds=2, asked="这节课用几课时？"),
         agent_answer="用户说过是四年级", note="平台已登记为待答"))
     row("② 回执（执行器→主 agent）",
-        OK if all(s in rec for s in ("**它说的**", "**判定说**", "**你说的**")) else BAD,
+        OK if all(s in rec for s in ("**它说的**", "**你说的**")) else BAD,
         OK,  # 不截
         OK if '已知膨胀点' in _src('proto/handoff/receipt.py') else BAD,  # 判据③：注释里标了
         OK,   # Receipt（TypedDict）→ render_receipt
@@ -92,10 +91,12 @@ def main() -> None:  # noqa: C901
     # ── ③ 台账 ──
     from proto.handoff.ledger import render_ledger
 
-    led = render_ledger([{"id": "t1", "skill": "quiz", "stage": "waiting_for_input", "artifacts": [],
-                          "progress": "做了一半" * 40, "missing": ["课时"], "report": "问课时" * 40}])
+    led = render_ledger([{"id": "t1", "skill": "quiz", "stage": "waiting_for_input",
+                          "artifacts": [], "report": "问课时" * 60}])   # >150 字才触发台账截断
     row("③ 台账（平台→主 agent）",
-        BAD if "判定说" not in led else OK,          # ← 已做到/还缺 没标"判定说"
+        # ⚠️ 2026-11-05 判定退休：台账里「已做到 / 还缺（判定说）」两行删了（没有来源了），
+        #    只剩执行器自己的原话 —— 这一列断的是"它说的话**标了来源**"。
+        BAD if "执行器说" not in led else OK,
         # ②截断/出处：切了要标 + **说清全文在哪**。⚠️ 答案**由 `run_by` 决定**（E2）：
         # 这个 Task 没记 `run_by` → 走 fail-safe「不在你的上下文里」；
         # 两条路各自的断言在 `unit_handoff` ②（delegate→回执 / feed→没有回执）。
@@ -107,27 +108,25 @@ def main() -> None:  # noqa: C901
     # ── ④ 推回去 ──
     from proto.handoff.nudge import nudge_text
 
-    nud = nudge_text(_Judgement(status="incomplete", progress="做了一半", missing=["课时"]))
+    nud = nudge_text()
     row("④ 推回去（平台→执行器）",
-        BAD if "判定" not in nud else OK,             # ← 没标"这是判定说的"
+        # ⚠️ 判定退休后 nudge **不再带「判定说」**（没有来源了）—— 它说的是**结构事实**
+        #    （没交、没申报）＋ **两条出路**（交付 / `ask_user`）。
+        OK if ("既没有交付产物" in nud and "ask_user" in nud) else BAD,
         OK, NA, OK, OK)
 
-    # ── ⑤ 判定输入 ──
-    from proto.handoff.judgement import build_prompt as judge_prompt
-
-    jp = judge_prompt("产出 3 道题", [aid], "材料", "已知信息")
-    row("⑤ 判定输入（平台→判定）",
-        BAD if "判定" not in jp else NA,              # 无来源标注（但三段都是平台拼的）
-        OK if "平台截断" in judge_prompt("i", [], "头" * 5000 + "尾" * 5000, "b") else BAD,
-        NA, OK, OK)
+    # ── ⑤ ~~判定输入~~ —— **2026-11-05 整行删**：判定那次 LLM 调用退休了，
+    #    三态改由平台按结构定（申报要信息 / 交了产物 / 都没有），不再有"喂给判定的材料"这一跳。
 
     # ── ⑥ 试答 ──
     from proto.handoff.ask import build_prompt as ask_prompt
 
-    ap = ask_prompt("quiz", "出题", ExecOutcome(status="waiting_for_input", report="r",
-                                                progress="p", missing=["m"]), [HumanMessage("x")])
+    ap = ask_prompt("quiz", "出题",
+                    ExecOutcome(status="waiting_for_input", asked="用几课时？", report="r"),
+                    [HumanMessage("x")])
     row("⑥ 试答（平台→主 agent）",
-        BAD if "你写的" not in ap or "判定说" not in ap else OK,   # 任务＝主 agent 自己写的；进度/缺失＝判定说的
+        # 任务＝主 agent 自己写的；**它要什么＝`ask_user` 参数里的原话**（结构 ✓ 不是从话里挑的）
+        BAD if "你写的" not in ap or "用几课时？" not in ap else OK,
         OK, NA, OK, OK)
 
     # ── ⑦ 透传 ──

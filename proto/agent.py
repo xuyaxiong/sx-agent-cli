@@ -393,7 +393,6 @@ def delegate(
         "id": tid, "skill": skill_name, "task": task,
         "stage": "running", "artifacts": [], "report": "", "agent_tried": False,
         # 判定的产出也要进 Task 记录 —— 台账注入时主 agent 才看得到
-        "progress": "", "missing": [],
         # ⚠️ `artifacts` 是**产出**（产物 ID 列表），`refs` 是**输入引用** —— 两个方向，别混。
         # 待答投递（`graph._feed_waiting`）要按 refs 原样重建可读产物清单。
         "refs": refs,
@@ -451,13 +450,16 @@ def delegate(
     #    原来这里手写 `rec.update(stage=…, artifacts=outcome.artifacts, …)`，
     #    **无条件覆盖**会把"这一轮没产出就不抹掉上一轮产物"的保护当场抵消（实测踩过）。
     if outcome.status == "completed":
+        # 🔴 **平台不下"完成了"的结论**（2026-11-05）：三态是**结构算的**
+        #    （交没交产物 / 报没报要信息）—— "**够不够**"由主 agent 判：
+        #    回执把交付账（产物 ID + 梗概 + 正文入口）摆给它，它自己看 ✓。
         settle(rec, outcome)
-        if outcome.artifacts:
-            return _out(rec, outcome)
         return _out(
             rec, outcome,
-            note="成果在**执行器的回复里**（上面【执行器说】那段）——"
-                 "**请原样转达给用户，不要改写**：它可能是调用方要解析的协议块。",
+            note="**你判**：这次交付够不够？（不够就换个说法重派，或向用户说明）\n"
+                 "要核对内容就用 `read_artifact('<产物 ID>')` 读全文 —— 正文不在你的上下文里。\n"
+                 "⚠️ 它说的话在上面【执行器说】里，**过一眼** —— 它可能在话里说了什么"
+                 "（这次它没调 `ask_user`，平台不替它转达）。",
         )
 
     if outcome.status == "waiting_for_input":
@@ -484,9 +486,10 @@ def delegate(
             )
         # 补了信息之后反而变成 incomplete → 落到下面的 failed 分支
 
-    # ④ 只剩 `incomplete` —— 推了 N 轮仍既没完成、也没请求信息，执行器是真的干不了。
+    # ④ 只剩 `incomplete` —— 推了 N 轮，**既没交产物、也没申报要信息**。
     #    按评审人 E2「情况 A：执行失败」→ **交给主 agent 决定**，而不是拿去烦用户。
-    #    ⚠️ 附注必须带上 —— 主 agent 要知道"做到什么程度、还缺什么"才能决定下一步。
+    #    ⚠️ 平台**不猜**它为什么没交（不读正文 ✓）：可能它真干不了，也可能它把答案
+    #    **写在了回复里**（正文交付是反模式，平台不认）—— 两种都由主 agent 看回执决定 ✓。
     settle(rec, outcome)
     # 🔴 **平台故障 ≠ 执行器干不了**（2026-11-04 复审 N2/R8）：故障时那句"推了 N 轮"
     #    是假话（一轮都没跑完），而主 agent 该做的事也完全不同 —— 换说法重派 vs **原样重派**。
@@ -502,7 +505,10 @@ def delegate(
                kind="delegate_failed")
     return _out(
         rec, outcome,
-        note="你可以**换个说法再 delegate 一次**；或者向用户说明这次没做成。",
+        note="它推满了轮次**既没交产物、也没说要什么信息**。两种可能，你看回执定：\n"
+             "- 它**真的干不了** → 换个说法再 `delegate` 一次，或向用户说明这次没做成；\n"
+             "- 它其实**把答案写在了回复里**（上面【执行器说】）→ 平台不认正文交付，"
+             "但你可以**原样转达**给用户，或者让它**交付成产物**再来一次。",
     )
 
 

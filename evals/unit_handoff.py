@@ -124,7 +124,6 @@ def main() -> None:
     from proto import artifacts
     from proto.artifacts import store_artifact
     from proto.executor import ExecOutcome
-    from proto.handoff.judgement import _Judgement
     from proto.handoff.nudge import nudge_text as _nudge_text
     from proto.graph import node_prepare
 
@@ -146,7 +145,6 @@ def main() -> None:
     brief = render_briefing(task)
     check("④ 交接书 · 任务全文在", task["task"] in brief)
     check("④ 交接书 · 执行器上次说的全文在", LONG in brief)
-    check("④ 交接书 · 判定给的进度全文在", task["progress"] in brief)
     check("④ 交接书 · 缺什么全文在", task["missing"][0] in brief)
     # 🔴 **用户原话走的是「清单 + 按需」**（不是"不截"）：索引行在、正文按需 ——
     # 见 `briefing.turn_lines` 的分层。超长输入下**常驻层不许跟着涨**。
@@ -158,13 +156,13 @@ def main() -> None:
     check("④ 交接书 · 问答对全文在", task["qa"][0]["a"] in brief)
 
     # ── ⑧ 推回去（平台 → 执行器）──
-    nudge = _nudge_text(_Judgement(status="incomplete", progress=LONG, missing=[LONG], reason=""))
-    check("⑧ 推回去 · 进度全文在", LONG in nudge)
-    check("⑧ 推回去 · 缺失项全文在", nudge.count(LONG) >= 2)
+    nudge = _nudge_text()
+    check("⑧ 推回去 · **两条出路都点明了**（交付 / ask_user）",
+          "write_artifact" in nudge and "ask_user" in nudge)
 
     # ── ⑨ 试答（平台 → 主 agent）──
     outcome = ExecOutcome(status="waiting_for_input", artifacts=[], report=LONG, rounds=1,
-                          progress=LONG, missing=[LONG])
+                          )
     ask = _ask_prompt("s", "超长任务：" + "细节。" * 200, outcome,
                       [HumanMessage(LONG), AIMessage(LONG)])
     check("⑨ 试答 · 执行器问的全文在", LONG in ask)
@@ -266,6 +264,21 @@ def main() -> None:
     check("回执的出口分类是 `fault`（不借 failed 的文案）",
           _build(out, note="（示例）")["kind"] == "fault")
 
+    # ── ⑮ **三态由结构定**（判定退休，2026-11-05）—— 全系统唯一决定"任务往哪走"的地方 ──
+    # 🔴 判定那次 LLM 调用退休后，"完成没"不再是**判出来的**，而是**平台看得见的三件事**：
+    #    申报要信息 / 交了产物 / 都没有。这条把它钉住（原来内联在 `run_task` 里，测不到）。
+    print("\n⑮ 三态由结构定：申报要信息 / 交了产物 / 都没有")
+    from proto.executor import ExecOutcome as _EO, _structural_status as _st
+
+    check("申报了要信息 → `waiting_for_input`（哪怕也交了产物 —— **申报优先**）",
+          _st(_EO(asked="用几课时？", artifacts=["art_001"])) == "waiting_for_input")
+    check("交了产物、没申报 → `completed`",
+          _st(_EO(artifacts=["art_001"])) == "completed")
+    check("都没交也没申报 → `incomplete`（推回去）",
+          _st(_EO(report="我说了一堆话")) == "incomplete")
+    check("**只说了话不算交付**（正文交付是反模式）—— 仍是 `incomplete`",
+          _st(_EO(report="成果都在我这段话里了" * 20)) == "incomplete")
+
     # ── ⑬ 状态词汇**只有一份**（N4：三态 ↔ 映射键、五态 ↔ STAGE_MARK 键，必须刚好对上）──
     # 🔴 2026-11-04 复审 N4：同一套状态原来在四处各写一遍字符串 —— `settle()` 收敛了**写法**，
     # **词汇**还靠人守同名：改一处状态名，其余三处**静默分叉**。
@@ -302,27 +315,23 @@ def main() -> None:
     from langchain_core.messages import AIMessage as _AI
 
     from proto.handoff.ask import build_prompt as _ask
-    from proto.handoff.judgement import _judge_material
     from proto.handoff.ledger import render_ledger as _ledger
     from proto.handoff.nudge import nudge_text as _nudge
 
     _fake_resp = {"messages": [_AI(content="执行器说的第一轮"), _AI(content="第二轮")]}
-    material = _judge_material([], _fake_resp)
-    check("⑫ `_judge_material`（无产物那条路）调得通", "第二轮" in material, material[:60])
-    check("⑫ `_judge_material` 超长时**保头保尾 + 带标记**",
-          "平台截断" in _judge_material([], {"messages": [_AI(content="头" * 3000 + "尾" * 3000)]}))
     check("⑫ `render_ledger` 调得通", "【平台提示】" in _ledger([short_task]))
-    check("⑫ `nudge_text` 调得通", "任务还没完成" in _nudge(_Judgement(status="incomplete")))
+    check("⑫ `nudge_text` 调得通", "两条路" in _nudge())
     # 判据①：进度 / 缺失项是**判定说的**（第三方评审，它可能判错）—— 必须标出来，
     # 否则执行器会把"判定说你做完了"当成"事实是你做完了"。
-    # ⚠️ 这条**在真 run 里可能压不到**（要有 incomplete 轮次才有 nudge）—— 所以在这里断。
-    _nud = _nudge(_Judgement(status="incomplete", progress="做了一半", missing=["课时"]))
-    check("⑫ `nudge_text` 标了**判定说**（判据①）",
-          _nud.count("（判定说）") == 2, _nud)
-    _led = _ledger([{**short_task, "stage": "waiting_for_input",
-                     "progress": "做了一半", "missing": ["课时"]}])
-    check("⑫ `render_ledger` 标了**判定说**（判据①）",
-          "已做到（判定说）" in _led and "还缺（判定说）" in _led, _led)
+    # ⚠️ 这条**在真 run 里可能压不到**（要有"没交也没问"的轮次才有 nudge）—— 所以在这里断。
+    # 🔴 2026-11-05 判定退休：nudge **不再带判定的 progress/missing**（没有来源了），
+    #    改成点明**两条出路**（交付 / `ask_user`）—— 这是"平台造路"的正面形式。
+    _nud = _nudge()
+    check("⑫ `nudge_text` 点明了**两条出路**（`write_artifact` / `ask_user`）",
+          "write_artifact" in _nud and "ask_user" in _nud, _nud)
+    _led = _ledger([{**short_task, "stage": "waiting_for_input", "report": "它在问课时"}])
+    check("⑫ `render_ledger` 里**只有执行器的原话**（判定的两行随判定退休删了）",
+          "执行器说" in _led and "判定说" not in _led, _led)
     check("⑫ `ask.build_prompt` 调得通",
           "你的上下文" in _ask("quiz", "出题", ExecOutcome(status="waiting_for_input", report="r"),
                               [HumanMessage("x")]))

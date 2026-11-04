@@ -152,7 +152,6 @@ def main() -> None:
     ]
     expect = render_briefing(delivered)
     check("提示词 == render_briefing(投递后的 Task)", prompt == expect, f"实际：\n{prompt[:400]}")
-    check("上一轮的进度也带上了", "已完成学习目标" in prompt)
     check("它上次问过什么也带上了", "请问用在哪" in prompt)
 
     print("\n⑤ 用户原话跟着 Task 走（快照在 Task 上 → 这条重入路径**自动**带上）")

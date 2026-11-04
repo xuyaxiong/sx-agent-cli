@@ -46,7 +46,6 @@ SECTION: dict[str, str] = {
     # ⚠️ 2026-11-03 改名：原来叫【你上次说到哪】，里面**混着两方的话**
     # （判定的 progress/missing ＋ 执行器自己的 report）。现在 `report` 挪进
     # 【问答经过】按时间序排，这一段**只剩判定的话** —— 段名跟着变成"判定"。
-    "last_round": "【上次判定】",
     # ⚠️ 2026-11-03 改名：原来叫【已经答复过的信息】，但它现在也承载
     # "**它最后说的那句**"（可能还没人答）—— 旧名字在那条上就是**假话**。
     "answered": "【问答经过】",
@@ -57,8 +56,6 @@ SECTION: dict[str, str] = {
     "deliver": "【交付】",
     "produced": "【产出的产物】",
     "report": "【执行器说】",
-    "progress": "【已做到】",
-    "missing": "【还缺】",
     "agent_answer": "【你补的信息】",
     "next": "【下一步】",
     #: 平台故障（`receipt.py`）：这一轮**根本没跑成** —— 与"执行器没干成"是两回事，
@@ -82,12 +79,9 @@ SOURCE_NOTE: dict[str, str] = {
     # ── 委托单（`briefing.py`）──
     "task": "**主 agent 交代的** —— 它根据对话写的，可能补了用户没说的东西",
     "user_turns": "**用户说的** —— 平台直接搬，未经转述",
-    "last_round": "**判定说** —— 这是**上一轮的情况**，不是本轮的结论",
     "answered": "**按时间顺序**，新的在下 —— 一问一答成对，免得「答」脱离了「问」",
     # ── 回执（`receipt.py`）──
     "report": "**它说的** —— 原样，未经改写",
-    "progress": "**判定说**",
-    "missing": "**判定说**",
     "agent_answer": "**你说的** —— 已成对记进 Task，下次重入还会带上",
     "fault": "**平台说的** —— 不是执行器说的，也不是判定说的",
 }
@@ -99,7 +93,7 @@ SOURCE_LABEL = "来源："
 # ──────────────────────────── 状态词汇 ────────────────────────────
 #
 # 🔴 **为什么收在这里**（2026-11-04 复审 N4）：同一套状态原来在**四处**各写一遍字符串
-# （`executor.OutcomeStatus` · `judgement._Judgement.status` · `briefing._STATUS_TO_STAGE`
+# （`executor.OutcomeStatus` · `briefing._STATUS_TO_STAGE`
 # 的键 · `ledger.STAGE_MARK` 的键）—— `settle()` 收敛的是**写法**，**词汇**还靠人守同名：
 # 改一处状态名，其余三处**静默分叉**。这正是 `registry` 在技能表上刚治过的病的翻版。
 # 词汇表本来就是本模块的职责（段名 / 来源标注 / 出口分类都在这），状态名一并在这一份里。
@@ -107,7 +101,8 @@ SOURCE_LABEL = "来源："
 # ⚠️ 覆盖性由 `unit_handoff` 的守卫盯着（三态 ↔ 映射键、五态 ↔ `STAGE_MARK` 键），
 #    不是靠"记得改另外三处"。
 
-#: **执行器三态** —— 判定的结论（`_Judgement.status`）与 `ExecOutcome.status` 用的是它。
+#: **执行器三态** —— `ExecOutcome.status` 用的就是它。⚠️ 2026-11-05 起它**由平台按结构算**
+#: （申报要信息 / 交了产物 / 都没有），**不是**某次 LLM 调用的结论（判定已退休）。
 OutcomeStatus = Literal["completed", "waiting_for_input", "incomplete"]
 
 #: **Task 五态** —— 台账 / 展示用的任务状态机（`Task.stage`）。
@@ -200,11 +195,18 @@ INJECTED: dict[str, str] = {
 #:
 #: ⚠️ **哪一种是"出口分类"这件事，记在对象上**（`Receipt.kind`），
 #: **不是从渲染出来的那一行反推**（同 `handoff/__init__.py` 开头那条硬规矩）。
+#: **回执的第一行：说事实，不下判决**（2026-11-05）。
+#:
+#: 🔴 原来这里是平台的**判决**（"✅ 已完成 —— 交付 N 个产物"）—— 而"完成没"是**判定**
+#: 给的 ✗，主 agent 只是照转。现在判定退休了，平台只说自己**看得见的事实**：
+#: 交了几样 / 它在要信息 / 什么都没给。"**够不够**"由主 agent 判（回执摆交付账 ✓）。
+#:
+#: ⚠️ `completed_in_reply` 那条**删了**：三态由平台按结构算之后，"completed"必然有产物
+#: （没有产物就是 incomplete → 推回去让它交付 ✓ 正文交付本来就是反模式）。
 DELIVERY: dict[str, str] = {
-    "completed": "✅ 已完成 —— 交付 {} 个产物",
-    "completed_in_reply": "✅ 已完成 —— 成果在执行器的回复里（**没有产物**）",
-    "waiting": "⏳ 没完成 —— **它在请求信息**",
-    "failed": "❌ 失败 —— 推了 {} 轮，仍然既没完成、也没说明需要什么信息",
+    "completed": "它交付了 {} 个产物",
+    "waiting": "它在**要信息**（调了 `ask_user`）",
+    "failed": "它既没交付产物、也没说要什么信息（推了 {} 轮）",
     #: ⚠️ **单独一条**：故障时那句"推了 N 轮"是**假话**（一轮都没跑完），
     #: 而且主 agent 该做的事完全不同（原样重派 vs 换说法重派）。
     "fault": "⚠️ 没跑成 —— **平台故障**（重试过一次仍失败）",
@@ -227,11 +229,11 @@ DELIVERY: dict[str, str] = {
 #: **多出一段没声明的就红**，那正是"加了段忘了登记"。
 HOPS: dict[str, tuple[str, ...]] = {
     "briefing": (
-        "task", "user_turns", "last_round", "answered",
+        "task", "user_turns", "answered",
         "already_produced", "readable", "resume",
     ),
     "receipt": (
-        "deliver", "produced", "report", "progress", "missing", "agent_answer", "next",
+        "deliver", "produced", "report", "agent_answer", "next",
         "fault",   # 只在平台故障时出现（条件段，同 produced/agent_answer）
     ),
     "receipt_rejected": (

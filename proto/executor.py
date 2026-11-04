@@ -30,15 +30,10 @@ from langchain_core.messages import AIMessage, HumanMessage
 from proto import trace
 from proto.config import get_model
 from proto.handoff import OutcomeStatus as _OutcomeStatus  # 状态词汇（唯一一份）
-from proto.handoff.judgement import (  # 判定：schema + 输入模板（搬去 handoff 包）
-    material_items,  # 材料有几段（**一处定义**，别数渲染串）
-    _Judgement,
-    _judge_material,
-    build_prompt,
-)
+# ⚠️ 判定那套（`_Judgement` / 规则 / 材料 / 截断 / `build_prompt`）**整块退休**（2026-11-05）：
+#    "任务结没结束"不再由一次 LLM 调用判 —— 现在是三件**平台看得见的**结构事实
+#    （申报要信息 / 交了产物 / 都没有，见 `run_task` 末尾）；"够不够"由主 agent 判。
 from proto.handoff.nudge import nudge_text  # 推回去的模板
-from proto.llm import safe_structured
-from proto import artifacts as artifacts_mod  # 产物领域（唯一入口是它的读 API）
 from proto.artifacts import (
     read_artifact,
     make_write_artifact,
@@ -88,10 +83,8 @@ class ExecOutcome:
     两个布尔值有 4 种组合、只有 3 种合法，"矛盾组合"只能靠约定排除；
     枚举则**从类型上就闭合**。
 
-    ⚠️ **`progress` / `missing` 必须一路传到主 agent**（用户原则 ①：信息交接要传细节），
-    不能只在"推回去"那一步用。否则主 agent 只知道"没做成"，
-    不知道"做到什么程度、还缺什么"，就没法决定是**换个说法重派**还是**向用户说明**。
-    （这个坑踩过一次：failed 分支一开始只传了 `report`。）
+    ⚠️ 2026-11-05：原来还有 `progress` / `missing`（**判定**吐的"已做到 / 还缺"）——
+    判定退休后没有来源了，两个字段整条链一起摘掉（`Task` / 交接书 / 台账 / 回执）。
     """
 
     #: 三态之一 —— 与 `Task.stage` **前三个同名**（`completed` / `waiting_for_input`），
@@ -101,10 +94,11 @@ class ExecOutcome:
     report: str = ""
     #: 实际 react 了几轮
     rounds: int = 0
-    #: 判定给出的：**已经做到什么程度**（非 completed 时有）
-    progress: str = ""
-    #: 判定给出的：**还缺什么**（incomplete 时有）
-    missing: list[str] = field(default_factory=list)
+    #: 🔴 **它申报要的信息**（`ask_user` 工具里那句原话；空 = 没申报）。
+    #:
+    #: 2026-11-05：在这之前，"我要信息"只能**写在回复正文里**，靠判定读文本猜 ✗。
+    #: 现在它是**结构**：执行器调了 `ask_user` → 平台直接看见 ✓ → 走"试答 → 转用户"。
+    asked: str = ""
     #: 🔴 **平台故障**（非空 = 这一轮**根本没跑成**，不是执行器干不了）。
     #:
     #: 2026-11-04 复审 N2/R8：`stream_agent` 抖两次之后抛到这里，`run_task` 把它接住、
@@ -116,87 +110,38 @@ class ExecOutcome:
     fault: str = ""
 
 
-def _judge(skill: Skill, arts: list[str], material: str, briefing: str = "") -> _Judgement:
-    """判定任务状态：`completed` / `waiting_for_input` / `incomplete`。
+def make_ask_user(asked: dict):
+    """造 `ask_user` 工具 —— 执行器**要信息**的唯一出口（**结构**，不是正文里的一句话）。
 
-    ⚠️ 四个要点，**全是实测踩出来的**：
+    🔴 2026-11-05（判定退休）：在这之前，"我要信息"只能**写在回复正文里**，
+    平台得**读文本**才知道（那是判定的活 ✗）—— 于是"要不要把执行器说的话喂给判定"
+    成了死结（喂了：礼貌收尾被当成在要信息 ✗；不喂：真问题被吞 ✗）。
 
-    1. **问"任务完成了没"，不是"产物生成了没"** ——
-       产物只是证据之一：纯分析任务没有文件也算完成，半成品有文件也不算完成。
-    2. **必须把 `instructions` 带进提示词** ——
-       否则"按任务要求判断"是空话，模型看不到要求，只能凭常识猜。
-       （实测：不带时，"有产物但内容是残次品"会被误判成"在问用户"。）
-    3. **必须把 `briefing` 也带进去** ——
-       否则判定不知道执行器**已经拿到了什么**，会把"它没问"当成"它缺"。
-       （实测：给了"第1课时"却没带进去，判定说"未询问用户课时信息" → 误判成 waiting_for_input。
-         **这是同一个 bug 的第二次出现**——判定看不到它需要的信息，就只能猜。）
-    4. **规则要写得人能看懂** ——
-       对比过五种提示词（`experiments/debug_judge_variants.py`，6 个用例）。
-       ⚠️ **单次采样的分数会漂，别拿单个数字当论据**：
-       2026-10-28 重跑（deepseek-v4-pro）A/B/C/E **全是 5/6**，
-       只有 **F（用户模板）6/6** —— 早先记的 "A 3/6 · C 4/6 · E 6/6" 已不可复现。
-       另注：该实验**有混淆**（A–E 用两个布尔 schema，F 用三态枚举），
-       所以只能说"F 更好"，不能说"F 的提示词更好"。
-       `criteria` 被砍的理由是**没有增量价值**（要求已在 instructions 里），不是分数低。
+    现在它**调工具**，平台**直接看见**两件事：
+      - **它卡住了**（要信息）✓ 不用猜
+      - **它要什么**（`question` 里那句**原话**）✓ 不用从正文里挑哪句是问题
+
+    之后：平台先让主 agent 试答（它上下文里可能就有）→ 答不上把 `question` **原样**转用户。
+
+    ⚠️ **这一轮到此结束**：`run_task` 看到调用就 `break`（不等它继续说 ✓ 结构 ✓）——
+    它调完工具还会接着往下说，那半截话不进这一轮的结论。
+    ⚠️ 和 `make_write_artifact` 一样用**闭包**（按 run 归属），不用模块级全局。
     """
-    # ⚠️ 判定**输入**只记构成，不逐字复述 —— 里面既有产物正文、又有技能原文，两样都另有出处。
-    # 这条构成摘要现在由**调用方**（`run_task` 的轮次循环）并进那条「决策记录」的**前提**里 ——
-    # 用户 2026-11-03：一次决策就该是**一条**记录（前提 → 问题 → 结果 → 下一步），
-    # 不是两条隔着一整次 LLM 调用的 note。
-    # 提示词怎么拼在 `proto/handoff/judgement.py`（schema 与模板放一起）
-    prompt = build_prompt(skill.instructions, arts, material, briefing)
-    # 判定这一跳**不逐字记 prompt**（内含产物正文，另有出处）—— 但交了多少、从哪来要记。
-    trace.handoff("判定输入", "平台", "判定", prompt,
-                  structured=f"_Judgement 出参；material {len(material)} 字（逐字不记，见上一行构成）")
-    return safe_structured(
-        _Judgement,
-        prompt,
-        # 两次都失败时保守当作「没完成、也不问用户」→ 会让它再 react 一轮
-        _Judgement(status="incomplete", reason="判定调用失败，保守处理"),
-        tag="run_task → 判定任务状态",
-        kind="judge",
-        # 🔴 判定 prompt 里嵌着**产物正文**（`_judge_material` 喂的）和**技能原文**
-        # （【任务要求】那段）—— 两样都另有出处（产物落盘 / `evals/skills/`），
-        # 日志只记上一行"判定输入"的构成，不逐字复述（用户要求）。
-        log_prompt=False,
-    )
 
+    @tool
+    def ask_user(question: str) -> str:
+        """你**没法往下干**了，需要一条你自己拿不到的信息 —— 用这个问。
 
-def _material_note(arts: list[str]) -> str:
-    """判定那份「实际执行结果」**是从哪取的** —— 有产物取产物正文，没有才取**它说的话**。
+        Args:
+            question: **具体、能直接回答**的一句话（如"这节课用几课时？"）。
+                一次问一件；**能自己判断的别问**（会打扰用户）。
 
-    见 `judgement._judge_material` 的表格：**两条路的取材不同，别合并**
-    （有产物时把**它说的话**也喂进去，实测会把"需要调整吗？"这类礼貌收尾判成"在要信息"）。
-    """
-    return (
-        "、".join(
-            f"{a}（{len(artifacts_mod.get(a)['content'])} 字）"
-            for a in arts
-            if artifacts_mod.has(a)
-        )
-        or "执行器说的话（无产物）"
-    )
+        ⚠️ **要信息必须用它**：写在回复正文里**平台看不到**（平台不读正文）。
+        """
+        asked["question"] = str(question or "").strip()
+        return "（已登记：平台会先问主 agent，它答不上再转用户）"
 
-
-def _judge_next(status: str, outcome: ExecOutcome, round_i: int) -> str:
-    """判定结果 → **平台接下来实际走哪条路**。
-
-    ⚠️ 这三条就是 `run_task` 出口那段**三态枚举**的穷举，措辞跟着代码走 ——
-    看日志的人判完立刻知道"所以接下来会发生什么"，不用去读源码。
-    """
-    if status == "completed":
-        # ⚠️ **两个子出口**（`agent.delegate` 里分的）：有产物 vs 成果只在回复正文里 ——
-        # 后者的回执会多带一句"**原样转达，不要改写**"，措辞别在这儿写反了。
-        return (
-            f"回执给主 agent（交付 {len(outcome.artifacts)} 个产物）→ 由它转达用户"
-            if outcome.artifacts
-            else "回执给主 agent（**没有产物**，成果在它的回复正文里）→ 由它**原样转达**用户"
-        )
-    if status == "waiting_for_input":
-        return "登记待答 → 平台强制主 agent 试答 → 答不上就**原样透传**给用户"
-    if round_i + 1 < MAX_REACT_ROUNDS:
-        return f"推回去让它继续（第 {round_i + 2}/{MAX_REACT_ROUNDS} 轮，带上「还缺」逐条）"
-    return "推的轮数用完了 → 交给用户（没干完、也没说要什么）"
+    return ask_user
 
 
 def _user_turn_reader(user_turns: list[dict]):
@@ -256,7 +201,14 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
     #: 原来是**扫消息文本**猜（`_recover_artifacts` + `preexisting` 差集）——
     #: 既不是结构化、也不是硬机制，而且并发时差集还会互相覆盖。见 `make_write_artifact`。
     created: list[str] = []
-    tools = [make_write_artifact(created), read_artifact, read_skill_file]
+    #: `ask_user` 申报的内容（闭包按 run 归属，同 `created`）
+    asked: dict = {}
+    tools = [
+        make_write_artifact(created),
+        read_artifact,
+        read_skill_file,
+        make_ask_user(asked),
+    ]
     if user_turns:
         tools.append(_user_turn_reader(user_turns))
     agent = create_agent(
@@ -303,7 +255,6 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
         kind="executor_briefing",
     )
     t0 = time.time()
-
     messages: list = [HumanMessage(task_text)]
     outcome = ExecOutcome()
     for round_i in range(MAX_REACT_ROUNDS):
@@ -337,87 +288,86 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
         outcome.report = _last_ai_text(resp)
         outcome.rounds = round_i + 1
 
-        # 判定看的「实际执行结果」= 产物正文（如有）+ **所有轮次**的 AI 产出，
-        # 每一项各自保头保尾、显式标注省略（见 `_judge_material`）。
-        material = _judge_material(outcome.artifacts, resp)
-
-        j = _judge(skill, outcome.artifacts, material, briefing)
-        # 进度与缺失项**记进 outcome**，让所有出口都能带出去（不只"推回去"那一步）
-        # ⚠️ 过滤空串：实测模型在 waiting_for_input 时也会填 missing，填了个 `['']`
-        outcome.status = j.status
-        outcome.progress = (j.progress or "").strip()
-        outcome.missing = [x.strip() for x in (j.missing or []) if x and x.strip()]
-        # 🔴 **一次决策 = 一条记录**（用户 2026-11-03）：前提 → 问题 → 结果 → 下一步。
-        # 原来前提（`_judge` 里那条 note）和结果（这里）是**两条**，中间隔着这次 LLM 调用 ——
-        # 读的人得自己拼，而"前提"正是判错时要第一个看的东西。
-        trace.decision(
-            f"判定（LLM）· {run_id} 第 {round_i + 1} 轮",
-            q="这个任务完成了没？没完成的话，是**在要信息**（waiting_for_input）还是**没干完**（incomplete）？",
-            given=[
-                f"技能 {skill.name}（instructions {len(skill.instructions)} 字，按名引用）",
-                f"已知信息 {len(briefing.strip())} 字（委派时给的）",
-                f"材料 {_material_note(outcome.artifacts)}｜"
-                # ⚠️ 段数**数结构**（`material_items` 一处定义），不数渲染串里的「【产出」——
-                #    数标记会被"产物正文里恰好出现同样字样"骗到（2026-11-04）。
-                f"判定看到 {len(material_items(outcome.artifacts, resp))} 段产出 "
-                f"+ {len(outcome.artifacts)} 个产物"
-                # ⚠️ 总数**另起一句**（`｜材料共 N 字`），不挂在"N 个产物"后面 ——
-                #    原来写的是"…+ 1 个产物（4111 字）"，语法上那 4111 像是**产物的字数**，
-                #    而产物其实是 5487 字、判定看到 4000 字 —— 同一个东西三个数，
-                #    读的人只会觉得自相矛盾（2026-11-04 审核）。
-                #    ⚠️ 它**不是**产物正文的账（那个在 `✂️ 截断` 那行）：这里含标签行与截断标记。
-                f"｜材料共 {len(material)} 字",
-            ],
-            # ⚠️ **日志不截断**（`trace.render_message` 那条契约）：判定理由**只写日志**，
-            # 它要是被切了，事后复盘误判就没得看了。
-            result=[
-                f"status = **{j.status}**",
-                f"理由：{j.reason or '（无）'}",
-                f"进度：{j.progress or '（无）'}",
-                "还缺：" + ("（无）" if not outcome.missing
-                          else "\n" + "\n".join(f"- {x}" for x in outcome.missing)),
-            ],
-            # 下一步＝平台**按这个结果实际走的那条路**（和下面那段分支一一对应）
-            nxt=_judge_next(j.status, outcome, round_i),
-        )
-
-        if j.status in ("completed", "waiting_for_input"):
+        # 🔴 **三件事按结构分派**（判定退休，2026-11-05）——平台只看自己看得见的：
+        #
+        # ① **它申报了要信息**（调了 `ask_user`）→ 这一轮到此结束
+        #    ⚠️ 平台**不等它继续说**（结构 ✓ 不靠提示词让它自觉 ✓）——
+        #    它调完工具还会接着往下说，那半截话不进这一轮的结论。
+        if asked.get("question"):
+            outcome.asked = asked["question"]
+            trace.note(
+                f"run_task 第 {round_i + 1} 轮：**申报要信息**（`ask_user`）→ 这一轮结束",
+                kind="ask",
+            )
             break
-        # 剩下只有 incomplete —— **穷举完了，没有第四种**
 
-        # 🔴 **incomplete → 不让它停**，推回去继续。
-        #    这才是"出口限制"的意义：执行器没干完活是**它的问题**，不该转嫁给用户。
-        #    判定给了 `missing` 就**精确告诉它缺什么**，比笼统一句"你还没做完"有效。
+        # ② **它交了产物** → 收工。
+        #    ⚠️ 平台只说"**交了东西**"这个**事实** ✓ —— "够不够、对不对"由主 agent 判
+        #    （回执把交付账摆给它 ✓）。平台**不判质量**（那是判定的活，判定的毛病就在这）。
+        if outcome.artifacts:
+            trace.note(
+                f"run_task 第 {round_i + 1} 轮：交付 {len(outcome.artifacts)} 个产物 → 收工",
+                kind="delivered",
+            )
+            break
+
+        # ③ **既没交、也没申报** → 推回去（照结构事实说，不编"还缺什么"）
+        #    🔴 这才是"出口限制"的意义：没干完活是**它的问题**，不该转嫁给用户。
         if round_i + 1 < MAX_REACT_ROUNDS:
-            nudge = nudge_text(j)
-            trace.note(f"⚠️ 第 {round_i + 1} 轮 incomplete → 推它继续（提示词见下）",
-                       kind="nudge")
+            nudge = nudge_text()
+            trace.note(
+                f"⚠️ 第 {round_i + 1} 轮**既没交付、也没申报要信息** → 推它继续（提示词见下）",
+                kind="nudge",
+            )
             trace.handoff("推回去", "平台", "执行器", nudge,
-                          structured=f"_Judgement(status=incomplete) → nudge_text", full=True)
+                          structured="结构事实：本轮无产物 ＋ 没调 `ask_user`", full=True)
             messages = list(resp["messages"]) + [HumanMessage(nudge)]
         else:
-            # **显式写出这个分支**：推满了，不再推 → outcome 保持 incomplete → delegate 判 failed
-            trace.note(f"⚠️ 第 {round_i + 1} 轮 incomplete 且已到轮次上限 → 不再推，交给主 agent")
+            # **显式写出这个分支**：推满了，不再推 → 下面按结构定成 incomplete
+            trace.note(
+                f"⚠️ 第 {round_i + 1} 轮既没交付、也没申报，且已到轮次上限 → 不再推，交给主 agent"
+            )
+
+    outcome.status = _structural_status(outcome)
 
     trace.note(
         f"run_task 结束 · {run_id} · skill={skill.name}：status={outcome.status} "
         f"轮次={outcome.rounds} 产物={outcome.artifacts or '（无）'}"
-        f"{'　（多轮）' if outcome.rounds > 1 else ''}"
-        f"（{time.time() - t0:.1f}s）",
+        + (f"｜**申报要信息**：{outcome.asked}" if outcome.asked else "")
+        + (f"｜**平台故障**：{outcome.fault}" if outcome.fault else "")
+        + f"（{time.time() - t0:.1f}s）",
         kind="run_end",
     )
     return outcome
+
+
+def _structural_status(outcome: ExecOutcome) -> str:
+    """**三态由结构定**（判定退休，2026-11-05）—— 平台只看自己**看得见的三件事**：
+
+      - **申报了要信息**（调过 `ask_user`）→ `waiting_for_input`（走试答 → 转用户）
+      - **交了产物**（`write_artifact` 记账 ✓）→ `completed`
+      - **都没有** → `incomplete`（推回去；推满 3 轮交给主 agent）
+
+    🔴 抽成函数是为了**可单测**（原来内联在 `run_task` 里，测不到）——
+    这是全系统**唯一**决定"任务往哪走"的地方，必须钉住。
+
+    ⚠️ **顺序不能反**：申报优先（它可能在交了一部分之后卡住 —— 那时该去要信息 ✓）。
+    ⚠️ `completed` **只说"交了东西"这个事实**，不说"够不够/对不对"—— 那是主 agent 判的
+    （回执把交付账摆给它 ✓）。平台判质量是判定时代的做法，毛病就在那。
+    """
+    if outcome.asked:
+        return "waiting_for_input"
+    if outcome.artifacts:
+        return "completed"
+    return "incomplete"
 
 
 def _last_ai_text(resp: dict) -> str:
     """执行器的**报告** = 最后一条有内容的 AI 消息。
 
     ⚠️ **只用于「给主 agent 的摘要」**（`outcome.report`）—— 那里要的就是"最后说了什么"。
-
-    🔴 **绝不要拿它当判定的输入**：出口循环里消息是**累积**的，
-    只取最后一条会让判定看不到前面几轮的产出。
-    判定要的是**全部轮次** → 用 `_judge_material()`。
-    （这个错犯过，见 `_judge_material` 的 docstring。）
+    ⚠️ **它不参与任何判断**（2026-11-05 起）：平台只看结构（产物账 / `ask_user`），
+    "它说了什么"只**原样**进回执（标着"它说的"），由主 agent 读。
     """
     for m in reversed(resp["messages"]):
         if isinstance(m, AIMessage) and str(m.content).strip():

@@ -52,10 +52,10 @@ def safe_structured(
         prompt: 提示词全文。
         default: 重试仍失败时的返回值 —— **必须是保守的那个**。
         tag: 日志里显示的标题。
-        kind: 这次调用的**语义标签**（如 `ask_main` / `judge`）—— 原样发给 section 事件；
+        kind: 这次调用的**语义标签**（目前只有 `ask_main`）—— 原样发给 section 事件；
             它的 PROMPT / RESPONSE 块一律带 `kind="llm_io"`，展示层据此归并成同一块。
         log_prompt: 是否把提示词**逐字**写进日志。判定那类 prompt 里嵌着**产物正文**
-            （`_judge_material` 会把产物内容喂进去），产物本身已另存 —— 用户要求
+            （提示词里嵌着产物正文那种），产物本身已另存 —— 用户要求
             "日志只告知生成了产物、给点产物信息，不必全文放在那里"，故此时传 False，
             由调用方先记一行"喂了什么"的结构化摘要。
         log_response: 是否把返回**原样**写进日志（`str(r)` ＝ pydantic repr）。

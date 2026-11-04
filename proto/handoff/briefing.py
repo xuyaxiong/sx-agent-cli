@@ -94,8 +94,8 @@ class Task(TypedDict, total=False):
     artifacts: list[str]  # **产出**的产物 ID
     refs: list[str]  # **输入引用**的产物 ID（两个方向，别混）
     report: str  # 执行器最后一轮的原话（**覆盖写**）
-    progress: str  # 判定说：已做到什么程度
-    missing: list[str]  # 判定说：还缺什么
+    # ⚠️ 原来还有 `progress` / `missing`（**判定**吐的"已做到 / 还缺"）——
+    #    2026-11-05 判定退休后**没有任何东西再写它们**，两个字段整条链一起摘掉。
     qa: list[QA]
     user_turns: list[Turn]  # 派发那一刻的快照
     agent_tried: bool  # 平台强制试答过没有
@@ -268,22 +268,9 @@ def render_briefing(task: dict) -> str:
                 f"（{len(report)} 字，原样不重复贴）"
             )
 
-    # ── ④ 上次判定：**第三方评审**的话（和上面两段的"当事人原话"不是一回事）──
-    progress = (task.get("progress") or "").strip()
-    missing = [m for m in (task.get("missing") or []) if m]
-    if progress or missing:
-        # 🔴 **子段也要标来源**（用户 2026-11-02）：「已做到 / 还缺」是**判定**说的
-        # （第三方评审，它可能判错）—— 而"它上次说的那句"已经按时间序挪进【问答经过】，
-        # 这一段现在**只有判定的话**，所以段名就叫【上次判定】、来源标注一次写死。
-        block = section_head("last_round")
-        if progress:
-            block.append(f"{BODY}- 已做到：")
-            block += body_lines(progress, BODY * 2)
-        if missing:
-            block.append(f"{BODY}- 还缺：")
-            for m in missing:
-                block += bullet_lines(m, BODY * 2)
-        blocks.append("\n".join(block))
+    # ⚠️ 原来这里有一段【上次判定】（判定给的"已做到 / 还缺"）—— **2026-11-05 整段删掉**：
+    #    判定退休，**没有任何东西再写 `Task.progress` / `Task.missing`** ✓。
+    #    执行器"上次说到哪"仍然在【问答经过】里（**它自己的原话** ✓ 按时间序 ✓ 那个来源是真的）。
 
     def _index(aids: list[str]) -> list[str]:
         """产物 ID 列表 → 清单行（**含缺失**）。
@@ -323,7 +310,7 @@ def render_briefing(task: dict) -> str:
             f"{BODY}（这是清单，不是正文。要用哪一份就用 read_artifact 读全文，不要凭标题猜。）",
         ]))
 
-    if progress or missing or report or qa:
+    if report or qa:
         # 只有**重入**才说这句：首跑说"接着干"会让它以为有前情
         blocks.append("\n".join([
             *section_head("resume"),
@@ -338,8 +325,6 @@ def absorb_outcome(rec: dict, outcome: Any) -> None:
     ⚠️ `artifacts` 只在非空时覆盖：执行器可能这一轮没产出，不能把上一轮的抹掉。
     """
     rec["report"] = outcome.report
-    rec["progress"] = outcome.progress
-    rec["missing"] = list(outcome.missing)
     if outcome.artifacts:
         rec["artifacts"] = list(outcome.artifacts)
 

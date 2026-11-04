@@ -183,8 +183,9 @@ KINDS = frozenset({
     "ask_main", "judge", "llm_io",
     # trace.stream_agent（`retry` = 这一轮抖动、已重试一次）
     "retry",
-    # executor.run_task（`run_fault` = 重试过仍失败，这一轮没跑成）
-    "run_fault",
+    # executor.run_task（`run_fault` = 重试过仍失败，这一轮没跑成；
+    # `ask` = 申报要信息 / `delivered` = 交付产物 → 这一轮结束，两者都是**结构事实**）
+    "run_fault", "ask", "delivered",
 })
 
 

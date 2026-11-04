@@ -74,8 +74,6 @@ def _outcome(status: str) -> ExecOutcome:
         artifacts=[AID] if status == "completed" else [],
         report=LONG_REPORT,
         rounds=3,
-        progress="已完成学习目标与预习任务",
-        missing=["填写形式", "篇幅"],
     )
 
 
@@ -86,26 +84,22 @@ def main() -> None:
     #: 平台故障那一档（2026-11-04 复审 N2/R8）—— 也是**一个可达出口**，
     #: 所以「声明的段都用到了」那条守卫要把它算进来（否则 `fault` 看着像死段）。
     faulted = ExecOutcome(status="incomplete", artifacts=[], report="", rounds=1,
-                          progress="", missing=[], fault="TimeoutError: 抖动")
+                          fault="TimeoutError: 抖动")
 
     print("① 三态各有自己的回执，且**每个字段都渲染了**")
     for label, out in (("completed", completed), ("waiting_for_input", waiting), ("incomplete", failed)):
         text = _render(out)
         check(f"[{label}] 有【交付】段", text.startswith("【交付】"), text[:60])
-        # status 是英文枚举，回执里该是**人话**；断的是"三态各不相同"
+        # 🔴 回执第一行说的是**事实**（交了几样 / 它在要信息 / 什么都没给），
+        #    **不是判决**（"✅ 已完成"那种是判定给的，判定退休了）—— 断的是"三态各不相同"。
         heads = {
-            "completed": "已完成",
-            "waiting_for_input": "在请求信息",
-            "incomplete": "失败",
+            "completed": "它交付了",
+            "waiting_for_input": "要信息",
+            "incomplete": "既没交付产物、也没说要什么信息",
         }
         check(f"[{label}] 状态说成了人话", heads[label] in text)
-        # ⚠️ 进度 / 缺失项**只在"没完成"时才给**（完成了就不该再提"还缺"）——
-        #    所以这里分两路断，不是漏测
-        if label == "completed":
-            check("[completed] 不该出现【还缺】（它已经完成了）", "【还缺】" not in text)
-        else:
-            check(f"[{label}] 【已做到】渲染了", out.progress in text)
-            check(f"[{label}] 【还缺】逐条渲染了", all(x in text for x in out.missing))
+        # ⚠️ 原来这里还分两路断"进度 / 缺失项只在没完成时才给" ——
+        #    2026-11-05 判定退休，那两段（【已做到】/【还缺】）整块删了，这条随之作废。
         if label == "incomplete":
             check("[incomplete] `rounds` 出现在话里", str(out.rounds) in text)
         for aid in out.artifacts:
@@ -122,20 +116,21 @@ def main() -> None:
         check(f"[{label}] 结尾标记没丢", "**结尾标记**" in text)
         check(f"[{label}] 没有截断省略号", "…（" not in text and "…\n" not in text)
 
-    print("\n③ 来源标注：**哪句是执行器说的、哪句是判定说的、哪句是主 agent 说的**")
+    print("\n③ 来源标注：**哪句是执行器说的、哪句是主 agent 说的**")
+    # ⚠️ 2026-11-05 判定退休：原来这里还断"判定说"标了两处 —— 判定的段整块删了。
     text = _render(waiting, agent_answer="用户之前说过是四年级")
     check("【执行器说】标了是它说的", "**它说的**" in text)
-    check("【已做到】【还缺】标了是判定说的", text.count("**判定说**") >= 2)
     check("【你补的信息】标了是主 agent 说的", "**你说的**" in text)
     check("补的信息**全文**在（不截断）", "用户之前说过是四年级" in text)
 
     print("\n④ 条件出现：没有的段不许凭空冒出来")
-    bare = ExecOutcome(status="completed", artifacts=[], report="成果在这里", rounds=1,
-                       progress="", missing=[])
+    # ⚠️ "completed 但没有产物"**现在结构上不可能**（三态由平台按结构算：有产物才 completed）
+    #    —— 所以这一档改成**真实的那一档**：没交也没申报 → incomplete。
+    bare = ExecOutcome(status="incomplete", artifacts=[], report="成果在这里", rounds=3)
     t = _render(bare)
     check("没产物 → 没有【产出的产物】", "【产出的产物】" not in t)
-    check("没产物 → 交付行说明了这件事", "没有产物" in t)
-    check("没 progress/missing → 两段都不出", "【已做到】" not in t and "【还缺】" not in t)
+    check("没交也没申报 → 交付行**说事实**（不是判决）",
+          "既没交付产物、也没说要什么信息" in t)
     check("没试答 → 没有【你补的信息】", "【你补的信息】" not in t)
     check("没给 note → 没有【下一步】", "【下一步】" not in t)
     check("成果在回复里时，正文**原样**在", "成果在这里" in t)
@@ -192,7 +187,6 @@ def main() -> None:
           and build_receipt(waiting)["kind"] == "waiting"
           and build_receipt(failed)["kind"] == "failed")
     bare = ExecOutcome(status="completed", artifacts=[], report="成果在这里", rounds=1)
-    check("正文交付 → `kind` 分得对", build_receipt(bare)["kind"] == "completed_in_reply")
 
     # ④ 派发被拒那几个口：对象 → 文本 → 记录层，三边一致
     # ⚠️ ~~`rejected_turns`~~ **2026-11-03 删**：轮次不再由主 agent 点名

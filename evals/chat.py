@@ -369,6 +369,8 @@ _ROLE_BY_KIND: dict[str, str] = {
     "feed": "plat",             # 平台把用户原话投给待答任务（section）
     "retry": "plat",            # 这一轮抖动、已重试一次（trace.stream_agent）
     "run_fault": "exec",        # 重试过仍失败 → 这一轮没跑成（executor.run_task）
+    "ask": "exec",              # 执行器申报要信息（调了 `ask_user`）→ 这一轮结束
+    "delivered": "exec",        # 执行器交付了产物 → 这一轮结束
 }
 
 #: 有**专门渲染分支**的 kind（不走上表那条"摘要行"的路）。
