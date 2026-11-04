@@ -172,6 +172,38 @@ def main() -> None:
           "这半行来自第1次尝试" in log, repr(log[-300:]))
     check("第 2 次那半行也在（重试真的重跑了）", "这半行来自第2次尝试" in log, repr(log[-300:]))
 
+    print("\n⑥ 抖动落在**第一步之后**：不再重试，原样抛（2026-11-05「做法二」）")
+    # 🔴 **为什么画这条边界**：从头重跑 = `state` 干净、**副作用不干净** ——
+    #    重试会把这一轮**已经做过的工具调用再做一遍**（`delegate` 重跑 = 执行器再跑
+    #    60–120 秒 ＋ 再写一份产物；而模型在重试的 state 里看不到自己刚派过，很可能再派一次）。
+    #    边界画在**第一个 super-step 走完**：`_stream_agent` 只在**每步结束时** yield
+    #    （流式的字是发 `stream` 事件，不走 yield），所以"吐过东西"＝"至少一步走完了"。
+    #    抖在那之前 = 什么都还没干 → 重试白赚（④ 守的就是这个）；之后 → 如实抛。
+    #    ⚠️ 把这条判据拿掉（恢复无条件重试）→ 下面「只被调了 1 次」当场红。
+
+    class _FlakyAfterStep:
+        """吐完**一个 super-step** 之后才抛 —— 这时已经动过手了。"""
+
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def stream(self, state, config, stream_mode=None):  # noqa: ARG002
+            self.calls += 1
+            yield "values", {"messages": ["第一步走完了（比如 delegate 已经跑过）"]}
+            raise TimeoutError("（模拟）第二步抖动")
+
+    g = _FlakyAfterStep()
+    raised, got = False, []
+    try:
+        for _c in trace.stream_agent(g, {}, {}, "测试", role=trace.AGENT):
+            got.append(_c)
+    except TimeoutError:
+        raised = True
+    check("第一步走完后再抖 → **原样抛**（不静默重做一遍）", raised, f"calls={g.calls}")
+    check("确实**没有**再跑一次（`stream` 只被调了 1 次）", g.calls == 1, f"calls={g.calls}")
+    check("第一步的产出**照常交出去**（不是吞掉）",
+          bool(got) and "第一步走完了" in str(got[0]), repr(got))
+
     print("\n" + "═" * 78)
     print(f"{'全部通过' if not FAIL else '有失败'}：{len(PASS)}/{len(PASS) + len(FAIL)}")
     for name in FAIL:

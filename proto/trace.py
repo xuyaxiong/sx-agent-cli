@@ -406,33 +406,65 @@ def stream_agent(graph, state, config, who: str, *, role: str):
 
 
 def _stream_with_retry(graph, state, config, who: str, role: str):
-    """跑 `_stream_agent`；**基础设施抖动就重试一次**，两次都失败才抛。
+    """跑 `_stream_agent`；基础设施抖动就重试一次（**边界见下**），仍失败才抛。
 
     🔴 **为什么兜在这一层**（2026-11-04 复审 N2/R8）：
       - 这是**两条链唯一共用的缝** —— 主 agent 的循环、执行器的循环都从这过。
         放这儿，两边一起有兜底，不会"改了一条忘了另一条"（那正是 R8 的形状：
         `executor.py` / `agent.py` 全文一个 try/except 都没有）。
-      - **降级不在这里**：两条链该怎么退化不一样（执行器 → 落"这轮没跑成"交主 agent 决定；
-        主 agent → 让**会话不死**，用户再说一遍就行）。这里只做最保守的一步：
+      - **降级不在这里**：两条链该怎么退化不一样（执行器 → `run_task` 落"这轮没跑成"
+        交主 agent 决定；主 agent → 由**入口**兜）。这里只做最保守的一步：
         重试一次，然后把异常**原样抛给调用方**。
       - 形状同 `llm.safe_structured`（重试一次 → 仍失败才退化）—— **先例在，别另立一套**。
 
-    ⚠️ 重试是**整轮重跑**（`graph.stream` 从头来）：两条链的内层 agent 都**没有 checkpointer**
-      （`InMemorySaver` 在外层主图上），所以 **state** 是干净重来，消息不会叠两遍。
-    🔴 **但副作用不干净**（2026-11-04 深度审计实测，**未修**）：重跑会把这一轮**已经做过的
-      工具调用再做一遍** —— `delegate` 重跑 = 执行器再跑 60–120 秒 ＋ **再写一份产物**；
-      模型在重试的 state 里**看不到自己刚派过**（`Command` 的 update 没提交），很可能再派一次。
-      **正解：只在"还没吐过任何 chunk"的窗口里重试**（吐过就按 fault 收场，`run_task` 已经
-      把 fault 兜住了）—— 见 `tmp/audit-2026-11-04.md` §P0-1。改之前别把这里读成"重试无代价"。
+    ⚠️ **"会话不死"目前只在交互式 CLI 成立**（`proto/__main__.py` 的 `turn()` 捕获）；
+      跑批入口（`evals/_child.py`）会**整轮判失败** —— 这是**已知缺口**（深度审计 P0-2），
+      修法是 `graph.node_agent` 自己兜一层（异常 → "这一轮没跑成，请原样再说一遍"）。
+
+    ## 重试的**边界**：只在"还没走完第一步"时重试（2026-11-05）
+
+    🔴 **从头重跑 = `state` 干净，副作用不干净**。实测（`tmp/probe_retry_side_effects.py`）：
+      重试会把这一轮**已经做过的工具调用再做一遍** —— `delegate` 重跑 = 执行器再跑 60–120 秒
+      ＋ **再写一份产物**；而模型在重试的 `state` 里**看不到自己刚派过**（`Command` 的 update
+      没提交），于是**很可能再派一次**。用户等的时间翻倍、账单翻倍，产物库里多一份
+      **没人指向的**产物（而且第二次的 `task` 是模型重写的，两份内容可能不一样）。
+
+    **所以：第一个 super-step 走完就不再重试** —— `_stream_agent` **只在每步结束时**
+    `yield`（流式的字是发 `stream` 事件，不走 yield），所以"吐过东西"＝"至少一步走完了"。
+    抖在那之前 = 什么都还没干，重试是**白赚**；抖在那之后 = 已经动过手，
+    **如实抛出去**比静默重做一遍强。
+
+    ⚠️ **代价如实说**：落在"第二步之后"的抖动，这一轮就**真的失败了** —— 执行器那条有
+      `run_task` 的 fault 出口接着（回执【平台故障】→ 主 agent 原样重派）；
+      主 agent 那条由入口兜。**数据**：216 个历史 run 里整轮炸 10 个，其中**真·瞬时的只有 3 个**
+      （其余是配额超限 / 代码 bug，重试也救不了），而这 3 个里**有 2 个死在"已经动过手之后"**
+      —— 正是这里不再重试的位置。
+
+    ## 📌 记一个**没做**的更彻底做法（2026-11-05 用户定："先按做法二，做法三以后再试"）
+
+    **从最后一个走完的 super-step 接着跑**，而不是从头来：`stream_mode="values"` 每一步都吐
+    完整 `state`，把它留着，异常时拿它当输入再 `stream` 一次 —— 已经跑过的 `delegate` /
+    `write_artifact` **不会再跑**（它们的 `ToolMessage` 和 `tasks` 更新都在那个 `state` 里），
+    模型**看得见自己刚派过**，重放窗口缩到"失败的那一个 super-step"。
+    这样"第二步之后抖动"也能救回来，用户完全无感。
+
+    **为什么现在不做**：① 要先验"拿一个 `create_agent` 子图的**中间 state** 再 `stream` 一次"
+    行为是否真如预期（step 计数 / pending writes / 消息会不会重）—— 得先做 spike，不能直接上；
+    ② 它和 `docs/solution.md` §五 **X4**（"不写草稿 / 断点外置"）是**同一族**，得先把边界说清
+    —— 这是**单轮、内存内**的续跑，不是把断点外置。
+
     ⚠️ 已经流出去的字**不收回**（记录层是原始记录）—— 所以重试前先发一条 `retry` 事件，
       把"上面那半段作废、现在重来"说破；不然读日志的人会以为模型把话说重了。
     """
+    stepped = False   # 第一个 super-step 走完了没有 —— 它一旦为真，就**不许再重试**
     for attempt in (1, 2):
         try:
-            yield from _stream_agent(graph, state, config, who, role)
+            for chunk in _stream_agent(graph, state, config, who, role):
+                stepped = True
+                yield chunk
             return
         except Exception as e:  # noqa: BLE001 —— 抖动的种类不可穷举（网络/超时/限流/网关）
-            if attempt == 2:
+            if attempt == 2 or stepped:
                 raise
             _publish({
                 "type": "note", "kind": "retry", "ts": stamp(),
