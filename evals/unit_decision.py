@@ -66,7 +66,7 @@ def _sample() -> None:
         q="这个任务完成了没？",
         given=[
             "技能 lesson-prep（instructions 2532 字，按名引用）",
-            "材料 执行器散文（无产物）",
+            "材料 执行器说的话（无产物）",
         ],
         result=[
             "status = **waiting_for_input**",

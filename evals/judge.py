@@ -228,3 +228,56 @@ def rubric_reply_is_summary(run: dict, turn: dict) -> Result:
     if r is None:
         return False, "⚠️ 评分调用失败（两次都挂），无法判定"
     return (not r.pasted_body), ("回复搬运了产物正文：" + r.evidence[:150]) if r.pasted_body else "回复是摘要，没搬正文"
+
+
+class _IsComplete(BaseModel):
+    unfinished: list[str] = Field(
+        default_factory=list, description="确实没写完的产物 ID（模板残留 / 留了以后再说 / 半截）"
+    )
+    evidence: str = Field(default="", description="判定依据，摘原话")
+
+
+@_reg
+def rubric_artifact_is_complete(run: dict, turn: dict, budget: int = 2500) -> Result:
+    """产物**写完了没有** —— 模板残留 / 占位符 / 半成品。**只能语义判**。
+
+    🔴 2026-11-05：这条原来是**代码侧找词**（`check_artifact_no_placeholder`：在产物正文里
+    搜「待补充」「TODO」「此处省略」…）。两个毛病：
+      ① 它断言的是**模型吐出来的东西** —— 模型换个写法（"稍后补""此处从略"）就漏 ✗；
+         而正文里**引用**了这几个字的正常产物又会被误伤 ✗ —— **过了不代表对，挂了不代表错**；
+      ② 词表只能越加越长（case 里还要按技能追加"模板残留"的词 ✗）——
+         那是把问题修得更聪明，不是修掉。
+    "写完了没有"本来就是语义判断（判定规则第 1 条一直这么要求，它原来是判定的活）——
+    所以搬到这里：让评分模型读产物正文判，**判断过程留档**（`_log`，判错了能看出是模型判错
+    还是喂的材料不对）。
+    """
+    arts = run.get("artifact_final") or {}
+    if not arts:
+        return False, "没有任何产物"
+    blocks = "\n\n".join(
+        f"【产物 {aid}】{a.get('title', '')}（{len(str(a.get('content') or ''))} 字）\n"
+        f"---\n{_clip_head(str(a.get('content') or ''), budget)}\n---"
+        for aid, a in arts.items()
+    )
+    prompt = (
+        "下面是这次任务交付的产物正文（超长的保头并标注）。\n\n"
+        f"{blocks}\n\n"
+        "请判断：**这些产物是不是「写完了的成品」？**\n"
+        "- 算**没写完**：模板残留没替换（如「（活动名称）」「XX」「【待定】」这种占位）、"
+        "写着「待补充」「待填写」「此处省略」「TODO」这类留给以后的话、明显半截"
+        "（列了小标题却没有内容、步骤只写到一半）。\n"
+        "- 算**写完了**：正常的省略与概括、作者有意留的教学提示、正文里**引用**了这些词"
+        "（比如在讲「怎么识别占位符」）。\n"
+        "把**确实没写完**的产物 ID 列进 unfinished，摘原话；都写完了就留空。"
+    )
+    try:
+        r = safe_structured(_IsComplete, prompt, None, tag="评分 · 产物写完了没有")
+    except Exception as e:  # noqa: BLE001
+        _log(run, "artifact_is_complete", prompt, f"⚠️ 调用失败：{e}")
+        return False, f"⚠️ 评分调用失败，无法判定：{type(e).__name__}: {e}"
+    _log(run, "artifact_is_complete", prompt, r)
+    if r is None:
+        return False, "⚠️ 评分调用失败（两次都挂），无法判定"
+    if r.unfinished:
+        return False, f"没写完：{'、'.join(r.unfinished)}（{r.evidence[:120]}）"
+    return True, f"{len(arts)} 份产物都写完了"

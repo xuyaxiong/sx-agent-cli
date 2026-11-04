@@ -10,8 +10,6 @@ turns:
 #   原来断言 `task_count: 3` 只认 ②，把 ① 判成了失败 —— 那是**实现细节**，不是需求。
 #   真正要守的是「不重复问」和「不重复派」。
 checks:
-  - check: missing_excludes
-    words: ["年级", "学科"]
   # 只在走了委派路径时有意义；没派发就自动过（那条路由下面的软断言守）
   - check: all_tasks_given_contain
     subs: ["三年级", "数学"]

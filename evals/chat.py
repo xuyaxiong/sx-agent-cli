@@ -480,7 +480,12 @@ def _role_of(ev: dict) -> str:
 #: 每个事件重建一次，于是跨事件那一半配不上，屏幕上是 `? 的返回：`。
 #: 旧文本契约时代靠"跨段 FIFO 队列"猜着补，删掉它时没做等价替换（漏了）。
 #: id 本身全局唯一，所以这张表全局共享反而是**对的**（并行执行器交错也配得上）。
+#:
+#: ⚠️ **加个上限**（2026-11-04 复审 N5）：它只增不减，长会话会一直涨。
+#: 配对**只发生在同一轮之内**（tool_call 与它的返回都在同一次 `graph.invoke` 里），
+#: 所以到顶就整体清空 —— 丢的都是早就配完对的旧 id，不影响任何一次配对。
 _TOOL_NAMES: dict[str, str] = {}
+_TOOL_NAMES_CAP = 2000
 
 
 def _on_dump(ev: dict) -> None:
@@ -492,6 +497,8 @@ def _on_dump(ev: dict) -> None:
     """
     who = _ROLE_LABEL.get(_role_of(ev), "未知角色")
     for m in ev["messages"]:
+        if len(_TOOL_NAMES) >= _TOOL_NAMES_CAP:
+            _TOOL_NAMES.clear()   # 见上面的注释：配对只在同一轮内，清空是安全的
         for c in getattr(m, "tool_calls", None) or []:
             if c.get("id"):
                 _TOOL_NAMES[c["id"]] = str(c.get("name"))

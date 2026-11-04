@@ -173,15 +173,36 @@ def _clip(text: str, budget: int = JUDGE_ITEM_BUDGET) -> str:
 
 
 
+def material_items(arts: list[str], resp: dict) -> list[tuple[str, str]]:
+    """判定材料**有哪几段** —— `(标签, 原文)`，**一处定义**（拼材料与"报段数"都用它）。
+
+    🔴 2026-11-04：`run_task` 那条决策记录里原来写的是 `material.count("【产出")` ——
+    **数渲染串里的标记**来推结构：产物正文里只要恰好出现「【产出」三个字，那个数就错
+    （判据一同族的味道）。现在数**结构**（`len(material_items(...))`）。
+
+    - 有产物 → 交付物就是产物正文，**不掺它说的话**（每份产物一段）
+    - 无产物 → 交付物只能从 AI 产出里找，**全部轮次都要给**（每条有内容的 AI 消息一段）
+    """
+    if arts:
+        return [(f"产物 {aid}", a["content"]) for aid in arts if (a := artifacts_mod.get(aid))]
+    return [
+        (f"产出 {n}", str(m.content))
+        for n, m in enumerate(
+            (m for m in resp["messages"] if isinstance(m, AIMessage) and str(m.content).strip()),
+            1,
+        )
+    ]
+
+
 def _judge_material(arts: list[str], resp: dict) -> str:
     """判定要看的「实际执行结果」—— **两条路的取材不同，别合并**。
 
-    | | 交付物是什么 | 执行器的散文是什么 |
+    | | 交付物是什么 | 它说的话是什么 |
     |---|---|---|
     | **有产物** | **产物正文**（就是它） | **过程话术**（含"需要调整吗？"这类礼貌收尾）—— **不是交付物** |
     | **无产物** | 只能从 AI 产出里找 → **全部轮次都要给** | **就是交付物本身** |
 
-    🔴 **有产物时不要把散文喂进来。** 实测踩过：执行器在产物之后补了句
+    🔴 **有产物时不要把它说的话也喂进来。** 实测踩过：执行器在产物之后补了句
     "……如果需要进一步压缩，我马上帮你收紧。**需要调整吗？**"，
     判定看到后把它当成"明确请求继续所必需的信息" → 判成 `waiting_for_input`，
     而产物其实**已经完整交付**了。
@@ -210,21 +231,7 @@ def _judge_material(arts: list[str], resp: dict) -> str:
       还不足以触发；但它是同一个病的早期形状，再出现"推测 + 事后发现真有问题"就该动手。
       设计草图与代价（多一轮调用、延迟翻倍）见 `docs/solution.md` §4.3「📌 已记档、暂不做」。
     """
-    parts: list[str] = []
-
-    if arts:
-        # 有产物 → 交付物就是产物正文，**不含散文**
-        for aid in arts:
-            a = artifacts_mod.get(aid)
-            if a:
-                parts.append(f"【产物 {aid}】\n{_clip(a['content'])}")
-    else:
-        # 无产物 → 交付物只能从 AI 产出里找，**全部轮次都要给**
-        n = 0
-        for m in resp["messages"]:
-            if isinstance(m, AIMessage) and str(m.content).strip():
-                n += 1
-                parts.append(f"【产出 {n}】\n{_clip(str(m.content))}")
+    parts = [f"【{label}】\n{_clip(text)}" for label, text in material_items(arts, resp)]
 
     if not parts:
         return "（执行者一句话都没说，也没产出任何文件）"

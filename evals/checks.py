@@ -31,6 +31,8 @@ case 也可以用 `initial_tasks` 直接注入一个"等用户答复"的 Task，
 
 from __future__ import annotations
 
+from html.parser import HTMLParser  # 核 HTML 骨架（不在正文里找标记）
+
 from typing import Any, Callable
 
 Result = tuple[bool, str]
@@ -133,25 +135,6 @@ def check_all_tasks_given_contain(run: dict, turn: dict, subs: list[str]) -> Res
     return not bad, "；".join(bad) if bad else f"{len(_tasks(turn))} 个 task 都含 {subs}"
 
 
-@_reg
-def check_missing_excludes(run: dict, turn: dict, words: list[str]) -> Result:
-    """没了结的 task 的 `missing` 里不该出现这些词 —— 验 P1「不重复问」。
-
-    ⚠️ **只扫 `missing`，不扫 `progress` / `report`** —— 那两个是自由散文，
-    子串必然误伤。实测踩过：`progress` 里写"已收到**三年级**数学备课任务"，
-    扫 "年级" 就命中了，把一次**正确**的行为判成了重复问。
-    要判散文得用 `soft:` 的 LLM 评分。
-    """
-    bad: list[str] = []
-    for t in _tasks(turn):
-        if t.get("stage") not in ("waiting_for_input", "failed", "incomplete"):
-            continue
-        blob = " ".join(t.get("missing") or [])
-        hit = [w for w in words if w in blob]
-        if hit:
-            bad.append(f"{t['id']}({t['skill']}) 又缺 {'/'.join(hit)}：{blob[:80]}")
-    return not bad, "；".join(bad) if bad else f"没重复问 {words}"
-
 
 @_reg
 def check_every_task_has_artifact(run: dict, turn: dict) -> Result:
@@ -209,18 +192,6 @@ def check_artifact_writes_timing(run: dict, turn: dict, max_gap_s: float = 0.1) 
         f"{len(w)} 次写入 / {threads} 个线程，**最小间隔 {gap:.2f}s**（要 ≤{max_gap_s}s 才算真并发）"
     )
 
-
-@_reg
-def check_missing_includes(run: dict, turn: dict, words: list[str]) -> Result:
-    """至少有一个没了结的 task 的 `missing` 里出现这些词 —— 验"确实在要信息"。"""
-    blobs = [
-        f"{t.get('progress', '')} {' '.join(t.get('missing') or [])}"
-        for t in _tasks(turn)
-        if t.get("stage") in ("waiting_for_input", "failed", "incomplete")
-    ]
-    blob = " ".join(blobs)
-    missing = [w for w in words if w not in blob]
-    return not missing, f"没找到 {'/'.join(missing)}；实际：{blob[:200] or '（空）'}"
 
 
 # ──────────────────────────── 委派与兜底 ────────────────────────────
@@ -348,53 +319,6 @@ def check_artifact_count(run: dict, turn: dict, n: int) -> Result:
 
 # ──────────────────────────── 产物正文（交付完整性） ────────────────────────────
 
-#: **作者写的**占位符 —— 判定规则第 1 条说它们"不能视为完成"，这里用代码直接抓。
-#: ⚠️ 只收**明确**的写法：单个「略」字不能收（"策略""省略"都会误伤）。
-#: 技能模板里的原样残留（如「（活动名称）」）由 case 用 `words:` 追加 —— 模板是各技能自己的。
-PLACEHOLDER_WORDS: tuple[str, ...] = (
-    "待补充",
-    "待填写",
-    "待完善",
-    "此处省略",
-    "TODO",
-    "TBD",
-    "占位",
-)
-
-
-@_reg
-def check_artifact_no_placeholder(run: dict, turn: dict, words: list[str] | None = None) -> Result:
-    """产物正文里不许出现作者写的占位符 —— 交付完整性的代码侧读数。"""
-    words = list(words) if words else list(PLACEHOLDER_WORDS)
-    arts = run.get("artifact_final") or {}
-    if not arts:
-        return False, "没有任何产物"
-    hits: list[str] = []
-    for aid, a in arts.items():
-        content = str(a.get("content") or "")
-        for w in words:
-            if w in content:
-                hits.append(f"{aid} 含「{w}」")
-    return (not hits), ("；".join(hits) if hits else f"{len(arts)} 份产物无占位符（扫 {len(words)} 个词）")
-
-
-def _strip_leading_comments(text: str) -> str:
-    """剥掉开头的空白与 HTML 注释（**只为核对**，不是判类型）。
-
-    技能契约明确允许「`<!DOCTYPE html>` 之前先放一段 `<!-- 设计说明 -->` 注释」，
-    所以核对"这份 html 完不完整"必须先剥注释 —— 用"开头 N 字里找标记"这种近似窗口会误判：
-    实测（`t2-refs5`）设计说明写了 36 行，`<!DOCTYPE html>` 落在 1000 字开外，
-    产物完全合规却被判成"不是 HTML"。
-    """
-    s = text.lstrip()
-    while s.startswith("<!--"):
-        end = s.find("-->")
-        if end == -1:
-            break
-        s = s[end + 3 :].lstrip()
-    return s
-
-
 @_reg
 def check_artifact_html_complete(run: dict, turn: dict, min_count: int = 1) -> Result:
     """**声明为 `html` 的产物**要"有头有尾"（文档头开头、`</html>` 结尾）—— 验"网页"这种交付形态。
@@ -405,6 +329,13 @@ def check_artifact_html_complete(run: dict, turn: dict, min_count: int = 1) -> R
     这里只做一件事：核对"声明了 html 的那几份，正文是不是真的完整"。
 
     > 判据的差别：不是"看着像 HTML 就算网页"，而是"**你说了是网页，那就得是完整的网页**"。
+
+    🔴 **用解析器看文档骨架，不在正文里找字符串**（2026-11-05）：
+    原来是 `content.startswith("<!doctype html")` + `"</html>" in content` ✗ ——
+    那是在**正文里找标记**：正文里**引用**了这三个字的地方（讲 HTML 的正文、代码块）也会命中 ✗，
+    而"前面先放一段设计说明注释"又得靠 `_strip_leading_comments` 那种剥字符串的 hack 去绕 ✗。
+    现在交给 `html.parser`：它把文档**拆成 token**（doctype 声明 / 标签 ✓），
+    标记是不是"真在文档骨架的位置上"由**解析结果**说了算，不由"出现过没有"说了算 ✓。
     """
     from proto.artifacts import file_ext
 
@@ -415,16 +346,48 @@ def check_artifact_html_complete(run: dict, turn: dict, min_count: int = 1) -> R
     ok_ids: list[str] = []
     bad: list[str] = []
     for aid in html_ids:
-        s = _strip_leading_comments(str(arts[aid].get("content") or "")).lower()
-        if not (s.startswith("<!doctype html") or s.startswith("<html")):
-            bad.append(f"{aid} 声明 html，但正文不是从文档头开始")
-        elif "</html>" not in s:
-            bad.append(f"{aid} 声明 html，有开头但没有 </html>")
+        shape = _doc_shape(str(arts[aid].get("content") or ""))
+        if not shape["doctype"]:
+            bad.append(f"{aid} 声明 html，但没有 `<!DOCTYPE>` 声明")
+        elif not (shape["html_open"] and shape["html_close"]):
+            bad.append(f"{aid} 声明 html，但文档骨架不全（<html> / </html> 没配齐）")
         else:
             ok_ids.append(aid)
     if len(ok_ids) >= min_count:
         return True, f"{len(ok_ids)} 份完整 HTML：{ok_ids}；{'；'.join(bad)}"
     return False, f"完整 HTML 只有 {len(ok_ids)} 份（要 {min_count}）：{ok_ids}；{'；'.join(bad)}"
+
+
+class _DocShape(HTMLParser):  # noqa: D101 —— 只用来收骨架标记，见 `_doc_shape`
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.doctype = False
+        self.html_open = False
+        self.html_close = False
+
+    def handle_decl(self, decl: str) -> None:
+        # 解析器给的**是一个声明 token**（"DOCTYPE html"），不是"正文里有没有这几个字" ✓
+        if decl.strip().lower().startswith("doctype"):
+            self.doctype = True
+
+    def handle_starttag(self, tag: str, attrs) -> None:  # noqa: ANN001
+        if tag == "html":
+            self.html_open = True
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "html":
+            self.html_close = True
+
+
+def _doc_shape(content: str) -> dict[str, bool]:
+    """把 HTML 拆成 token，只看**文档骨架**在不在（doctype / `<html>` 起止）。"""
+    p = _DocShape()
+    try:
+        p.feed(content)
+        p.close()
+    except Exception:  # noqa: BLE001 —— 解析器对畸形输入也会抛；抛了就是骨架不全
+        pass
+    return {"doctype": p.doctype, "html_open": p.html_open, "html_close": p.html_close}
 
 
 @_reg

@@ -228,7 +228,7 @@ def render_briefing(task: dict) -> str:
           if isinstance(x, dict) and str(x.get("a") or "").strip()]
     report = (task.get("report") or "").strip()
     # 🔴 **确定性去重**（判据：见模块 docstring ②）—— 逐字比较两个**我们自己写的字段**，
-    # 不是从散文里反结构化。成立与否是"恒成立"而不是"碰巧"，所以能断言。
+    # 不是从文本里反结构化。成立与否是"恒成立"而不是"碰巧"，所以能断言。
     folded = bool(qa) and bool(report) and str(qa[-1].get("q") or "").strip() == report
     if qa or report:
         block = section_head("answered")

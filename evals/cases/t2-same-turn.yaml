@@ -31,20 +31,6 @@ checks:
   - check: artifact_titles_contain
     subs: ["教案", "导学单"]
   - check: artifact_html_complete
-  - check: artifact_no_placeholder
-    # 默认词表 + 适配版模板里的原样残留（模板没被替换成真内容 = 没写完）
-    words:
-      - 待补充
-      - 待填写
-      - 待完善
-      - 此处省略
-      - TODO
-      - TBD
-      - 占位
-      - （本课课题）
-      - （本课年级）
-      - （活动名称）
-      - （同上结构）
   - check: artifact_chars_over
     n: 6000
   # ⚠️ 主 agent 的上下文大小 / 有没有读产物正文 —— **只记录、不判**（2026-10-30 用户定）：
@@ -54,6 +40,9 @@ checks:
     n: 1500
   - check: no_exception
 soft:
+  # 产物**写完了没有**（模板残留 / 占位符 / 半成品）—— 只能语义判：
+  # 找词的写法断的是"模型有没有写那几个字"，换个说法就漏、引用一下就误伤
+  - check: artifact_is_complete
   # 语义证据：后序产物内容上是不是真的基于教案（机制证据见上面的 task_refs_contain）
   - check: artifact_derives_from_source
     source: 教案

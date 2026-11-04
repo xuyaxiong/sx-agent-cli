@@ -238,7 +238,8 @@ def install(case: dict) -> dict:
         )
         return aid
 
-    # `write_artifact` 的工具体在 `skills.py` 里按**模块全局**找 `store_artifact`，所以这里改得到
+    # `write_artifact` 的工具体在 `artifacts.py` 里按**模块全局**找 `store_artifact`，所以这里改得到
+    # （⚠️ 2026-11-04 修：这句原来写的是 `skills.py` —— 10-30 就搬去 `artifacts.py` 了）
     proto.artifacts.store_artifact = rec_store
 
     # ③′ 执行器调用流水 —— 记「哪个线程在跑哪个 skill」，用来判产物归属
@@ -568,11 +569,11 @@ def _receipt_sections(handoff: dict) -> list[tuple[str, str]]:
     不拆开就只能靠读者从一大段文字里猜哪句是谁说的。
 
     🔴 **读对象，不读文本**（用户 2026-11-03：*"禁止你反结构化任何 llm 正文输出"*）。
-    原来这里靠**解析渲染出来的散文**（`_split_receipt` 按段名切），
+    原来这里靠**解析渲染出来的文本**（`_split_receipt` 按段名切），
     2026-11-02 回执一改措辞就**全部静默失效**（实测：新格式 0/8 命中、旧格式 38/38），
     后果是回执在 `_run.md` 里既丢了"谁写的"分段、又掉进 1200 字兜底截断
     （实测一次把 **12560 字切成 1200**）。**那条路已经删掉** ——
-    结构一旦渲染成散文就回不去了，不要试图解析回来。
+    结构一旦渲染成文本就回不去了，不要试图解析回来。
     """
     from proto.handoff import HOPS
 

@@ -31,6 +31,7 @@ from proto import trace
 from proto.config import get_model
 from proto.handoff import OutcomeStatus as _OutcomeStatus  # 状态词汇（唯一一份）
 from proto.handoff.judgement import (  # 判定：schema + 输入模板（搬去 handoff 包）
+    material_items,  # 材料有几段（**一处定义**，别数渲染串）
     _Judgement,
     _judge_material,
     build_prompt,
@@ -162,10 +163,10 @@ def _judge(skill: Skill, arts: list[str], material: str, briefing: str = "") -> 
 
 
 def _material_note(arts: list[str]) -> str:
-    """判定那份「实际执行结果」**是从哪取的** —— 有产物取产物正文，没有才取散文。
+    """判定那份「实际执行结果」**是从哪取的** —— 有产物取产物正文，没有才取**它说的话**。
 
     见 `judgement._judge_material` 的表格：**两条路的取材不同，别合并**
-    （有产物时把散文也喂进去，实测会把"需要调整吗？"这类礼貌收尾判成"在要信息"）。
+    （有产物时把**它说的话**也喂进去，实测会把"需要调整吗？"这类礼貌收尾判成"在要信息"）。
     """
     return (
         "、".join(
@@ -173,7 +174,7 @@ def _material_note(arts: list[str]) -> str:
             for a in arts
             if artifacts_mod.has(a)
         )
-        or "执行器散文（无产物）"
+        or "执行器说的话（无产物）"
     )
 
 
@@ -356,7 +357,10 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
                 f"技能 {skill.name}（instructions {len(skill.instructions)} 字，按名引用）",
                 f"已知信息 {len(briefing.strip())} 字（委派时给的）",
                 f"材料 {_material_note(outcome.artifacts)}｜"
-                f"判定看到 {material.count('【产出')} 段产出 + {len(outcome.artifacts)} 个产物"
+                # ⚠️ 段数**数结构**（`material_items` 一处定义），不数渲染串里的「【产出」——
+                #    数标记会被"产物正文里恰好出现同样字样"骗到（2026-11-04）。
+                f"判定看到 {len(material_items(outcome.artifacts, resp))} 段产出 "
+                f"+ {len(outcome.artifacts)} 个产物"
                 # ⚠️ 总数**另起一句**（`｜材料共 N 字`），不挂在"N 个产物"后面 ——
                 #    原来写的是"…+ 1 个产物（4111 字）"，语法上那 4111 像是**产物的字数**，
                 #    而产物其实是 5487 字、判定看到 4000 字 —— 同一个东西三个数，

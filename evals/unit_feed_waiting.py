@@ -291,6 +291,36 @@ def main() -> None:
           _log_refs("evals/harness.py") == ["dump_run_record", "snapshot"],
           repr(_log_refs("evals/harness.py")))
 
+    # 🔴 断言**不许在非结构化文本里找词**（用户 2026-11-05：*"不准在任何非结构化的文本里
+    # 通过关键字或者正则匹配的方式来做强逻辑判断 —— 绝对禁止"*）。
+    # 硬断言只许断言**平台自己的事实**（任务状态 / 平台动作 / 产物账 / 谁写的）；
+    # 模型吐出来的东西（产物正文、回复、判定写的字段）→ 要么走 `judge.py` 的软 rubric
+    # （明说是概率判断），要么不断 —— **找词那种，过了不代表对、挂了不代表错**。
+    # ⚠️ 扫的是 **AST**（真的调用），不是源码文本 —— 注释和 docstring 里为了说明"原来错在哪"
+    #    会引用旧写法，那不是代码（踩过一次：第一版按文本扫，被自己注释里的旧写法判红 ✗）。
+    tree = ast.parse(io.open("evals/checks.py", encoding="utf-8").read())
+    attrs = [
+        f"{n.func.value.id}.{n.func.attr}"
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Call)
+        and isinstance(n.func, ast.Attribute)
+        and isinstance(n.func.value, ast.Name)
+    ]
+    check("`checks.py` 里没有正则（`re.*`）", not [a for a in attrs if a.startswith("re.")], repr(attrs))
+    bad_calls = [a for a in attrs if a.split(".")[-1] in ("count", "partition", "split", "startswith")]
+    check("`checks.py` 里没有对文本 count / partition / split / startswith", not bad_calls, repr(bad_calls))
+    # 子串匹配的形状：**字符串字面量在左、`in` 在右**（`"xxx" in ln`）——
+    # 容器成员判断（`aid in arts`）左边是变量，不在此列 ✓
+    substr = [
+        n.lineno
+        for n in ast.walk(tree)
+        if isinstance(n, ast.Compare)
+        and any(isinstance(op, (ast.In, ast.NotIn)) for op in n.ops)
+        and isinstance(n.left, ast.Constant)
+        and isinstance(n.left.value, str)
+    ]
+    check("`checks.py` 里没有「字符串字面量 in 文本」", not substr, f"第 {substr} 行")
+
     # 闭环：那三条断言**真的读得到**动作（合成一份 run record，纯函数、秒级）
     from evals.checks import CHECKS
 
