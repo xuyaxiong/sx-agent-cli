@@ -520,18 +520,15 @@ def check_llm_calls_under(run: dict, turn: dict, n: int) -> Result:
 # ──────────────────────────── 回复文本 ────────────────────────────
 
 
-@_reg
-def check_reply_contains(run: dict, turn: dict, subs: list[str]) -> Result:
-    r = turn.get("reply") or ""
-    miss = [s for s in subs if s not in r]
-    return not miss, f"回复里没找到 {miss}｜回复：{r[:200]}"
-
-
-@_reg
-def check_reply_excludes(run: dict, turn: dict, subs: list[str]) -> Result:
-    r = turn.get("reply") or ""
-    hit = [s for s in subs if s in r]
-    return not hit, f"回复里出现了 {hit}｜回复：{r[:200]}" if hit else f"回复不含 {subs}"
+# ⚠️ ~~`check_reply_contains` / `check_reply_excludes`~~ **2026-11-05 删**：
+#    它们在**模型说的话**里找词（`s in turn["reply"]`）—— 用户原话：
+#    *"评测层那几个根据字符匹配的断言本质上没任何效果 都是自欺欺人 …… 你是在断言
+#    llm 吐出来的东西啊 这个不现实"*。
+#    **过了不代表对**（换个说法就漏）、**挂了不代表错**（同义表达就误伤），
+#    而且它们红了会引导人去改**提示词**（去凑那几个词）—— 那是把病治到模型身上。
+#    真要判"回复里有没有 X"，那是**语义判断** → 走软 rubric（评分模型判、判断留档）。
+#    🔴 **守卫**：`unit_feed_waiting` ⑪ —— `checks.py` 里不许再出现"读 `turn["reply"]`
+#    找内容"的断言（AST 扫，名字也不许再出现）。
 
 
 @_reg

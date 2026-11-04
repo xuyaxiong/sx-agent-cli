@@ -405,6 +405,33 @@ def main() -> None:
     ]
     check("`checks.py` 里没有「字符串字面量 in 文本」", not substr, f"第 {substr} 行")
 
+    # 🔴 **断言不许在"模型说的话"里找内容**（2026-11-05；用户原话：*"评测层那几个根据
+    #    字符匹配的断言本质上没任何效果 都是自欺欺人 …… 你是在断言 llm 吐出来的东西啊"*）。
+    #    判据是**形状**、不是名字（改名也逃不掉）：一个函数里**既读 `turn["reply"]`、
+    #    又做 `in` 子串比较** —— 那就是在拿模型的话当判据 ✗（`reply_contains` /
+    #    `reply_excludes` 就是这么被删掉的）。真要判语义 → 走软 rubric（判断留档）。
+    _reply_checks: list[str] = []
+    for _fn in ast.walk(ast.parse(io.open("evals/checks.py", encoding="utf-8").read())):
+        if not isinstance(_fn, ast.FunctionDef):
+            continue
+        # ⚠️ **两种写法都要抓**（第一版只认下标 `turn["reply"]`，而代码里用的是
+        #    `turn.get("reply")` —— 探针当场证明那条守卫**不挡人** ✗）。
+        #    所以判据是"函数里出现了 `"reply"` 这个常量"（`.get("reply")` / `["reply"]` 都中）。
+        _reads = any(
+            isinstance(n, ast.Constant) and n.value == "reply" for n in ast.walk(_fn)
+        )
+        # ⚠️ **`in` 和 `not in` 都要认**（第二版只认 `In`，而 `s not in r` 是 `NotIn` ✗
+        #    —— 又是探针抓出来的）。
+        _has_in = any(
+            isinstance(n, ast.Compare)
+            and any(isinstance(op, (ast.In, ast.NotIn)) for op in n.ops)
+            for n in ast.walk(_fn)
+        )
+        if _reads and _has_in:
+            _reply_checks.append(_fn.name)
+    check("`checks.py` 里没有「读 reply ＋ 子串判断」的断言（模型的话不是判据）",
+          not _reply_checks, repr(_reply_checks))
+
     # 闭环：那三条断言**真的读得到**动作（合成一份 run record，纯函数、秒级）
     from evals.checks import CHECKS
 
