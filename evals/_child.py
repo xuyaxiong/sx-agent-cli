@@ -6,7 +6,7 @@
 
 | 状态 | 存在哪 | 不隔离的后果 |
 |---|---|---|
-| `skills.ARTIFACTS` | **模块级全局 dict** | 上轮的产物带进下轮，产物 ID 递增、`_recover_artifacts` 扫描范围越来越大 |
+| 产物库（`proto.artifacts`） | **模块级全局**（对外只有函数） | 上轮的产物带进下轮，产物 ID 递增、`_recover_artifacts` 扫描范围越来越大 |
 | `trace.LOG_FILE` | **进程级**，导入时开文件 | 所有 run 混进同一个日志 |
 | `config.get_model` | `lru_cache` | 跨 run 复用同一个模型实例 |
 | 崩了 | 整个进程 | 一个 case 炸掉整批 |
@@ -48,7 +48,7 @@ from evals.harness import dump_artifacts, dump_run_record, install, snapshot
 
 def run_case(case: dict, rep: int, out_dir: Path | None = None) -> dict:
     from proto import trace
-    from proto.artifacts import ARTIFACTS
+    from proto import artifacts
 
     inst = install(case)
 
@@ -91,7 +91,7 @@ def run_case(case: dict, rep: int, out_dir: Path | None = None) -> dict:
         "per_call_tokens": inst["counter"].per_call,
         "artifact_writes": inst["writes"],
         "run_tasks": inst["run_tasks"],
-        "artifact_ids": list(ARTIFACTS.keys()),
+        "artifact_ids": artifacts.ids(),
         # 正文全文一并带上：`artifact_no_placeholder` / `artifact_html_complete` 这类
         # **纯代码**断言要扫正文，而快照里只有字数的话它们无从判起。
         "artifact_final": {
@@ -105,7 +105,7 @@ def run_case(case: dict, rep: int, out_dir: Path | None = None) -> dict:
                 "chars": len(v["content"]),
                 "content": v["content"],
             }
-            for k, v in ARTIFACTS.items()
+            for k, v in artifacts.items()
         },
         "fault": inst["fault"],
         "error": error,

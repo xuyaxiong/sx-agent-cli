@@ -68,7 +68,7 @@ def build_receipt(outcome: Any, *, agent_answer: str = "", note: str = "") -> Re
     ⚠️ 各段是**有条件**的（有产物才出【产出的产物】、试答过才出【你补的信息】）——
     条件写在这里，`HOPS['receipt']` 声明的 7 段是**上限**。
     """
-    from proto.artifacts import ARTIFACTS
+    from proto import artifacts as artifacts_mod
 
     if outcome.status == "completed":
         kind = "completed" if outcome.artifacts else "completed_in_reply"
@@ -94,7 +94,7 @@ def build_receipt(outcome: Any, *, agent_answer: str = "", note: str = "") -> Re
     if produced:
         block: list[str] = []
         for aid in produced:
-            a = ARTIFACTS.get(aid)
+            a = artifacts_mod.get(aid)
             if not a:
                 block.append(f"- {aid}（**产物库里没有这一条**）")
                 continue

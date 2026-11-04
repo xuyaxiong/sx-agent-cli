@@ -20,7 +20,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from proto import trace
 from proto.config import describe
 from proto.graph import build
-from proto.artifacts import ARTIFACTS
+from proto import artifacts as artifacts_mod
 
 BAR = "─" * 74
 
@@ -67,7 +67,7 @@ def _dump(result: dict) -> None:
         if t.get("agent_tried"):
             print(f"   │     主 agent 试答过；执行器说={t['report']!r}")
     ctx = _ctx_chars(result.get("messages") or [])
-    body = sum(len(v["content"]) for v in ARTIFACTS.values())
+    body = artifacts_mod.chars()
     print(f"   │ ★ 主 agent 上下文 = {ctx} 字 ｜ 产物库正文 = {body} 字")
     if body and ctx:
         print(f"   │ ★ 隔离效果：产物正文是主上下文的 {body / ctx:.1f} 倍，全在产物库里")

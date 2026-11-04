@@ -33,7 +33,7 @@ from langgraph.graph.message import add_messages
 
 from proto import trace
 from proto.agent import build_agent
-from proto.handoff.briefing import absorb_outcome, render_briefing
+from proto.handoff.briefing import render_briefing, settle
 from proto.handoff.ledger import render_ledger
 from proto.registry import registry  # 技能注册表（唯一持有者）
 
@@ -143,9 +143,11 @@ def _feed_waiting(state: State) -> tuple[list[dict], list[str]]:
         # ⚠️ `refs` 要一起带上：不重建可读产物清单，执行器在续跑时就"看不见"前序产物了
         # 用户原话也一起带上（快照在 Task 上，所以这条重入路径**自动**有它）
         outcome = run_task(skill, render_briefing(rec), rec.get("user_turns"))
-        absorb_outcome(rec, outcome)
+        # ⚠️ 状态迁移走 `settle()`（**唯一一处**）—— 三条分支只决定"日志怎么说"。
+        #    原来这里手写 `rec.update(stage="completed", artifacts=outcome.artifacts)`，
+        #    会把"这一轮没产出就不抹掉上一轮产物"的保护抵消（2026-11-03 审核实测踩到）。
+        settle(rec, outcome)
         if outcome.status == "completed":
-            rec.update(stage="completed", artifacts=outcome.artifacts)
             logs.append(
                 f"prepare: ✅ {t['id']}（{t['skill']}）答复后**完成**"
                 f"　产物={outcome.artifacts or '（在回复里）'}"
@@ -153,7 +155,6 @@ def _feed_waiting(state: State) -> tuple[list[dict], list[str]]:
         elif outcome.status == "waiting_for_input":
             logs.append(f"prepare: ⏳ {t['id']}（{t['skill']}）答复后**还是缺信息** → 仍待答")
         else:
-            rec.update(stage="failed")
             logs.append(f"prepare: ❌ {t['id']}（{t['skill']}）答复后仍未完成 → failed")
         out.append(rec)
     return out, logs

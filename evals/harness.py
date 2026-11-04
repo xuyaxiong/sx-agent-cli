@@ -190,7 +190,7 @@ def install(case: dict) -> dict:
     import proto.skills
 
     # ① 产物库清空 —— 全局 dict，不清就会带上上一轮
-    proto.artifacts.ARTIFACTS.clear()
+    proto.artifacts.clear()
 
     # ② 技能集（case 可以带自己的：`skills_dir` 读目录 / `skills` 内联）
     #
@@ -252,7 +252,7 @@ def install(case: dict) -> dict:
         #    对不上（实测 threads 完全不重合），按线程判会**永远不报**。
         # ⚠️ 签名要跟着 `proto.executor.run_task` 走：它变过两次（`given`→`briefing`、
         #    去掉 `artifacts` 参数），**每次都漏改这里、每次都整轮崩** —— 改签名时记得搜一遍。
-        before = set(proto.artifacts.ARTIFACTS)
+        before = set(proto.artifacts.ids())
         out = orig_run_task(skill, briefing, user_turns)
         run_tasks.append(
             {
@@ -260,7 +260,7 @@ def install(case: dict) -> dict:
                 "skill": skill.name,
                 "t": round(time.time(), 3),
                 # 这次真交付的产物（差集）
-                "produced": sorted(set(proto.artifacts.ARTIFACTS) - before),
+                "produced": sorted(set(proto.artifacts.ids()) - before),
             }
         )
         return out
@@ -361,7 +361,7 @@ def _sys_prompt_chars() -> int:
 
 def snapshot(state: dict, user: str, prev_len: int, idx: int, wall_s: float) -> dict:
     from proto import trace
-    from proto.artifacts import ARTIFACTS
+    from proto import artifacts
 
     msgs = state.get("messages") or []
     new = msgs[prev_len:]
@@ -384,8 +384,8 @@ def snapshot(state: dict, user: str, prev_len: int, idx: int, wall_s: float) -> 
         "tasks": state.get("tasks") or [],
         "main_ctx_chars": _ctx_chars(msgs),
         "sys_prompt_chars": _sys_prompt_chars(),
-        "artifacts_chars": sum(len(v["content"]) for v in ARTIFACTS.values()),
-        "artifacts": {k: len(v["content"]) for k, v in ARTIFACTS.items()},
+        "artifacts_chars": artifacts.chars(),
+        "artifacts": {k: len(v["content"]) for k, v in artifacts.items()},
         "delegate_calls": delegates,
         "tool_calls": tool_calls,
         #: 本轮**全部新消息**（原文，不截断）—— 逐轮审计文件靠它渲染"运行全记录"：
@@ -436,18 +436,18 @@ def dump_artifacts(out_dir: Path, case_id: str, rep: int, result: dict) -> Path:
 
     落 `runs/<tag>/artifacts/<case>__r<rep>/`：每个产物一个文件 + 一份 `_index.md`。
     """
-    from proto.artifacts import ARTIFACTS
+    from proto import artifacts
 
     d = out_dir / "artifacts" / f"{case_id}__r{rep}"
     d.mkdir(parents=True, exist_ok=True)
-    if not ARTIFACTS:
+    if not artifacts.count():
         (d / "_index.md").write_text("# （本次没有产物）\n", encoding="utf-8")
         return d
 
     from proto.artifacts import artifact_body
 
     rows = ["| 产物 | 标题 | 字数 | 类型 | 文件 |", "|---|---|---|---|---|"]
-    for aid, a in ARTIFACTS.items():
+    for aid, a in artifacts.items():
         # 类型和文件名都取**记录里那份**（`store_artifact` 按声明的类型定好的）——
         # 这里另算一遍的话，会和它当场落盘时写的那份对不上。
         fn = a.get("file") or f"{aid}_{_slug(a['title'])}{a.get('ext', '.md')}"
@@ -459,7 +459,7 @@ def dump_artifacts(out_dir: Path, case_id: str, rep: int, result: dict) -> Path:
 
     (d / "_index.md").write_text(
         f"# {case_id} · 第 {rep} 遍 · 产物原文\n\n"
-        f"共 {len(ARTIFACTS)} 个，合计 {sum(len(v['content']) for v in ARTIFACTS.values())} 字。\n\n"
+        f"共 {artifacts.count()} 个，合计 {artifacts.chars()} 字。\n\n"
         + "\n".join(rows)
         + "\n\n> **这是判定看不到的原文** —— 判「完整性」以这里为准，不以判定的话为准。\n",
         encoding="utf-8",

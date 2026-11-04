@@ -49,6 +49,16 @@ class _Waiting:
     missing: list[str] = []
 
 
+class _CompletedNoArtifact:
+    """假的 ExecOutcome：**完成了，但这一轮没写新产物**（成果在回复里）—— 见 ⑥。"""
+
+    status = "completed"
+    artifacts: list[str] = []
+    report = "按你说的改完了"
+    progress = ""
+    missing: list[str] = []
+
+
 def _capture() -> list[tuple[str, list | None]]:
     """把 `run_task` 换成记录器，返回它每次收到的 **（提示词, 用户原话）**。
 
@@ -102,9 +112,10 @@ def main() -> None:
     check("**两条都在**（历次累积，不覆盖）", "课前预习" in prompt, prompt[-240:] if prompt else "")
 
     print("\n③ 可读产物清单照旧要带上（否则续跑时执行器看不见前序产物）")
-    from proto.artifacts import ARTIFACTS, store_artifact
+    from proto import artifacts
+    from proto.artifacts import store_artifact
 
-    ARTIFACTS.clear()
+    artifacts.clear()
     readable = store_artifact("《白桦》教案", "四年级诗歌教学", "md", "教案正文" * 20)
     seen = _capture()
     state["tasks"][0]["refs"] = [readable]
@@ -147,6 +158,28 @@ def main() -> None:
     check("清单进了交接书", "第 1 轮" in prompt and "直接生成不用再问我" in prompt, prompt[-260:])
     # 🔴 交接书里只有清单，**全文走 `read_user_turn`** —— 所以原话必须一路传到 run_task
     check("原话也传给了执行器（read_user_turn 要用）", bool(turns), "" if turns else "传了个空的")
+
+    print("\n⑥ 重入**完成**但这一轮没产出 → 上一轮交付的产物不许被抹掉")
+    # 🔴 2026-11-03 审核实测到的真 bug：settle 那行原来写的是
+    #    `rec.update(stage="completed", artifacts=outcome.artifacts)` —— **无条件覆盖**，
+    #    把 `absorb_outcome` 的保护（"这一轮没产出，不能把上一轮的抹掉"）当场抵消。
+    #    后果：台账 / 终端任务表 / `_run.md` / 断言 `every_task_has_artifact`
+    #    看到的都是"这个任务没交付过东西"。同一形状在 failed 分支上踩过一次
+    #    （见 `checks.check_every_task_has_artifact` 的 docstring）。
+    proto.executor.run_task = lambda *a, **k: _CompletedNoArtifact()  # type: ignore[assignment]
+    state6 = {
+        "messages": [HumanMessage("就按这个改")],
+        "tasks": [{
+            "id": "t1", "skill": "guided-learning", "task": "生成导学单",
+            "stage": "waiting_for_input", "artifacts": ["art_001"],   # ← 上一轮交付的
+            "refs": [], "qa": [{"by": "用户", "q": "用在哪？", "a": "课前预习"}],
+            "report": "请问用在哪？", "progress": "", "missing": [],
+        }],
+    }
+    out6, _ = graph._feed_waiting(state6)
+    check("stage 照常迁移到 completed", out6[0]["stage"] == "completed", out6[0]["stage"])
+    check("**上一轮交付的产物还在**（没被这一轮的空 artifacts 抹掉）",
+          out6[0]["artifacts"] == ["art_001"], repr(out6[0]["artifacts"]))
 
     print("\n" + "═" * 78)
     print(f"{'全部通过' if not FAIL else '有失败'}：{len(PASS)}/{len(PASS) + len(FAIL)}")

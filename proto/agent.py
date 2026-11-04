@@ -31,11 +31,11 @@ from proto.config import get_model
 from proto.executor import run_task
 from proto.handoff import SECTION  # 交接的**段名**（唯一来源）
 from proto.handoff.ask import build_prompt as ask_prompt  # 试答
-from proto.handoff.briefing import absorb_outcome, render_briefing  # 委托单
+from proto.handoff.briefing import absorb_outcome, render_briefing, settle  # 委托单
 from proto.handoff.receipt import build_receipt, build_rejection, render_receipt  # 回执
 from proto.llm import safe_structured
-from proto.artifacts import (  # 产物领域
-    ARTIFACTS,
+from proto import artifacts as artifacts_mod  # 产物领域（唯一入口是它的读 API）
+from proto.artifacts import (
     artifact_index_lines,
     list_artifacts,
     read_artifact,
@@ -341,7 +341,7 @@ def delegate(
     # 产物引用**当场校验**：编出来的 ID 直接拒掉，并给出真实清单 ——
     # 放行的话，执行器读不到会自己找补，错误被埋进产物里。
     refs = [a for a in (artifacts or []) if a]
-    unknown = [a for a in refs if a not in ARTIFACTS]
+    unknown = [a for a in refs if not artifacts_mod.has(a)]
     if unknown:
         have = "；".join(artifact_index_lines()) or "（本会话还没有产物）"
         return _reject(
@@ -408,8 +408,11 @@ def delegate(
     absorb_outcome(rec, outcome)
 
     # ② 按**三态枚举**分派 —— 穷举，没有第四种（用户「封闭原则」）
+    # ⚠️ 状态迁移一律走 `settle()`（**唯一一处**：写字段 + 定 stage）——
+    #    原来这里手写 `rec.update(stage=…, artifacts=outcome.artifacts, …)`，
+    #    **无条件覆盖**会把"这一轮没产出就不抹掉上一轮产物"的保护当场抵消（实测踩过）。
     if outcome.status == "completed":
-        rec.update(stage="completed", artifacts=outcome.artifacts)
+        settle(rec, outcome)
         if outcome.artifacts:
             return _out(rec, outcome)
         return _out(
@@ -430,20 +433,17 @@ def delegate(
                          {"by": "主 agent", "q": outcome.report, "a": answer}]
             # 试答后重跑也是**重入**：走同一份交接书（带上刚才那一轮的进度 / 它问过什么）
             o2 = run_task(skill, render_briefing(rec), rec.get("user_turns"))
-            absorb_outcome(rec, o2)
             if o2.status == "completed":
-                rec.update(stage="completed", artifacts=o2.artifacts, report=o2.report)
+                settle(rec, o2)
                 return _out(rec, o2, agent_answer=answer)
             outcome = o2  # 补了还是不行 → 用新的结果去问用户（三态可能变成 incomplete）
 
         if outcome.status == "completed":
-            rec.update(stage="completed", artifacts=outcome.artifacts, report=outcome.report)
+            settle(rec, outcome)
             return _out(rec, outcome, agent_answer=answer)
 
         if outcome.status == "waiting_for_input":
-            rec.update(stage="waiting_for_input", report=outcome.report,
-                       agent_tried=rec["agent_tried"],
-                       progress=outcome.progress, missing=list(outcome.missing))
+            settle(rec, outcome)
             trace.note(f"delegate · {tid} 登记待答（平台负责转达，不由主 agent 代问）",
                        kind="waiting")
             return _out(
@@ -457,8 +457,7 @@ def delegate(
     # ④ 只剩 `incomplete` —— 推了 N 轮仍既没完成、也没请求信息，执行器是真的干不了。
     #    按评审人 E2「情况 A：执行失败」→ **交给主 agent 决定**，而不是拿去烦用户。
     #    ⚠️ 附注必须带上 —— 主 agent 要知道"做到什么程度、还缺什么"才能决定下一步。
-    rec.update(stage="failed", report=outcome.report,
-               progress=outcome.progress, missing=list(outcome.missing))
+    settle(rec, outcome)
     trace.note(f"delegate · {tid} status=incomplete（推了 {outcome.rounds} 轮）→ failed",
                kind="delegate_failed")
     return _out(

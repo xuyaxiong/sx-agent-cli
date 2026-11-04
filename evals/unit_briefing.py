@@ -17,6 +17,8 @@
 
 from __future__ import annotations
 
+import ast
+import io
 import sys
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -24,7 +26,35 @@ if hasattr(sys.stdout, "reconfigure"):
 
 from proto.handoff import BODY, SECTION
 from proto.handoff.briefing import _flat, _one_line_limit, render_briefing
-from proto.artifacts import ARTIFACTS, store_artifact
+from proto import artifacts
+from proto.artifacts import store_artifact
+
+
+def _declared_fields() -> list[str]:
+    """`briefing.Task` 声明的字段（AST，不看注释）。"""
+    src = io.open("proto/handoff/briefing.py", encoding="utf-8").read()
+    for n in ast.walk(ast.parse(src)):
+        if isinstance(n, ast.ClassDef) and n.name == "Task":
+            return [s.target.id for s in n.body if isinstance(s, ast.AnnAssign)]
+    return []
+
+
+def _built_fields() -> list[str]:
+    """`agent.delegate` 里那个 `rec` 字面量的键（AST）。
+
+    ⚠️ 认的是**形状**（`rec: dict[str, Any] = {…}`），不是行号 —— 挪了位置也照样找得到；
+    找不到就返回空，由断言报红（**不静默放过**）。
+    """
+    src = io.open("proto/agent.py", encoding="utf-8").read()
+    for n in ast.walk(ast.parse(src)):
+        if (
+            isinstance(n, ast.AnnAssign)
+            and isinstance(n.target, ast.Name)
+            and n.target.id == "rec"
+            and isinstance(n.value, ast.Dict)
+        ):
+            return [k.value for k in n.value.keys if isinstance(k, ast.Constant)]
+    return []
 
 #: **显式排除名单** —— 这些字段不进交接书，每一条都要有理由。
 #: ⚠️ 加字段的人只有两条路：渲染它，或者在这里写清楚为什么不渲染。
@@ -54,7 +84,7 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 
 def _full_task() -> dict:
     """**所有字段都填满**的 Task —— 空字段测不出"漏渲染"。"""
-    ARTIFACTS.clear()
+    artifacts.clear()
     produced = store_artifact("《白桦》导学单", "课前预习用填空式导学单", "md", "导学单正文" * 40)
     readable = store_artifact("《白桦》教案", "四年级下册诗歌教学", "md", "教案正文" * 60)
     return {
@@ -271,6 +301,17 @@ def main() -> None:
     check("多行的「答」续行**整块缩进**（不顶回 0 列）",
           all(ma_lines.get(k, "").startswith(BODY * 2) for k in ("第二行", "第三行")),
           repr([ma_lines.get(k) for k in ("第二行", "第三行")]))
+
+    print("\n⑪ **建**（`delegate` 的字面量）和**声明**（`Task`）字段表必须一致")
+    # 🔴 这一对原来**没有守卫**（2026-11-03 审核补）：①/② 管的是"声明 → 渲染"那一侧，
+    #    而"建了没声明 / 声明了没建"没人管 —— 靠人眼对齐两张 12 项的清单。
+    #    用 AST 抽两边的字段表直接对（不看注释、不跑代码）。
+    declared, built = _declared_fields(), _built_fields()
+    check("`Task` 声明的字段抽得到（AST）", bool(declared), "没抽到 —— 类名改了？")
+    check("`delegate` 建的字段抽得到（AST）", bool(built), "没抽到 —— 那个 `rec` 字面量改名/挪窝了？")
+    check("两边**字段集完全一致**", set(declared) == set(built),
+          f"建了没声明：{sorted(set(built) - set(declared))}；"
+          f"声明了没建：{sorted(set(declared) - set(built))}")
 
     print("\n" + "═" * 78)
     print(f"{'全部通过' if not FAIL else '有失败'}：{len(PASS)}/{len(PASS) + len(FAIL)}")

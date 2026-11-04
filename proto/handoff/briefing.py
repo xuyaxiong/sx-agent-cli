@@ -168,7 +168,7 @@ def render_briefing(task: dict) -> str:
     *"你显示给我看的，就是传给 llm 看的"*）—— 日志里 `📥 INJECT` dump 的是
     这个函数的返回值本身，不是它的改写。
     """
-    from proto.artifacts import ARTIFACTS
+    from proto import artifacts as artifacts_mod
 
     blocks: list[str] = []
 
@@ -268,10 +268,10 @@ def render_briefing(task: dict) -> str:
 
     def _index(aids: list[str]) -> list[str]:
         return [
-            f"- {aid}《{ARTIFACTS[aid]['title']}》（{len(ARTIFACTS[aid]['content'])} 字）"
-            f"—— {ARTIFACTS[aid].get('summary') or '（无梗概）'}"
+            f"- {aid}《{a['title']}》（{len(a['content'])} 字）"
+            f"—— {a.get('summary') or '（无梗概）'}"
             for aid in aids
-            if aid in ARTIFACTS
+            if (a := artifacts_mod.get(aid))
         ]
 
     produced = _index([a for a in (task.get("artifacts") or []) if a])
@@ -309,3 +309,35 @@ def absorb_outcome(rec: dict, outcome: Any) -> None:
     rec["missing"] = list(outcome.missing)
     if outcome.artifacts:
         rec["artifacts"] = list(outcome.artifacts)
+
+
+#: 执行器三态 → `Task.stage` —— **只有这一处**映射（`ExecOutcome.status` 是封闭枚举，
+#: 所以这里是穷举的：`completed` / `waiting_for_input` / **其余一律 failed**）。
+_STATUS_TO_STAGE: dict[str, str] = {
+    "completed": "completed",
+    "waiting_for_input": "waiting_for_input",
+    "incomplete": "failed",
+}
+
+
+def settle(rec: dict, outcome: Any) -> str:
+    """**把一次执行结果落进 Task** —— 状态迁移的唯一入口（原来散在 7 处手写）。
+
+    两件事一起做完，顺序不能反：
+      ① `absorb_outcome`：report / progress / missing / artifacts
+         （**artifacts 只在非空时覆盖** —— 这一轮没产出，不能把上一轮交付的抹掉）；
+      ② `stage`：由 `outcome.status` 映射（见 `_STATUS_TO_STAGE`）。
+
+    🔴 **为什么要收敛**（2026-11-03 审核实测到的真 bug）：原来那 7 处写的是
+    `rec.update(stage="completed", artifacts=outcome.artifacts, …)` —— **无条件覆盖**，
+    把 ① 的保护**当场抹掉**：待答重入后这一轮没产出，Task 上原来记的产物 ID
+    就没了（台账 / 终端 / 断言看到的都是"这个任务没交付过东西"）。
+    同一形状 `check_every_task_has_artifact` 的 docstring 里记过一次（failed 分支），
+    这是它在 completed 分支上的翻版。
+
+    ⚠️ 调用方常常已经先 `absorb_outcome` 过一次（重入前要 `render_briefing`）——
+    这里再写一遍是**幂等**的，换来的是"不可能漏写"。
+    """
+    absorb_outcome(rec, outcome)
+    rec["stage"] = _STATUS_TO_STAGE[outcome.status]
+    return rec["stage"]

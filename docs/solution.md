@@ -510,8 +510,9 @@ lesson-prep/
 **产物库**（"文件系统"的替身，**上下文隔离的落点**）：
 
 ```python
-ARTIFACTS: dict[str, dict[str, str]] = {}     # ⚠️ 内存 dict，生产必换
-_ART_SEQ = itertools.count(1)                 # ID 发号器 —— **不能用 len(ARTIFACTS)+1**（见下）
+_ARTIFACTS: dict[str, dict[str, str]] = {}    # ⚠️ 内存 dict（**私有**），生产换真表只动这个文件
+_ART_SEQ = itertools.count(1)                 # ID 发号器 —— **不能用 len(_ARTIFACTS)+1**（见下）
+get / has / ids / items / count / chars / clear  # 读 API —— 对外**只给函数**，不给 dict
 
 def store_artifact(title, summary, content) -> str   # 返回 art_001 这样的 ID
 @tool write_artifact(title, summary, content) -> str # 梗概由**产出方**在交付时一起给

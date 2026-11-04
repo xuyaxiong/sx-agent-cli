@@ -121,7 +121,8 @@ def main() -> None:
     from proto.handoff.ask import build_prompt as _ask_prompt
     from proto.handoff.briefing import render_briefing
     from proto.handoff.receipt import build_receipt, render_receipt
-    from proto.artifacts import ARTIFACTS, store_artifact
+    from proto import artifacts
+    from proto.artifacts import store_artifact
     from proto.executor import ExecOutcome
     from proto.handoff.judgement import _Judgement
     from proto.handoff.nudge import nudge_text as _nudge_text
@@ -130,7 +131,7 @@ def main() -> None:
     print("\n② 逐个交接点：喂超长输入，断**一个字都没丢**")
 
     # ── ④ 交接书（平台 → 执行器）──
-    ARTIFACTS.clear()
+    artifacts.clear()
     aid = store_artifact("超长产物", "梗概" * 40, "md", "正文" * 900)
     # ⚠️ 用户原话用**另一个**长串：`qa` 的「答」是**全文**渲染的（那是执行器自己问来的），
     # 若两处共用 `LONG`，"正文没进上下文"这条断言会被 qa 那一份顶成**假绿**。
@@ -176,7 +177,7 @@ def main() -> None:
     check("⑩ 回执 · 执行器说的全文在（详见 unit_receipt.py）", LONG in receipt)
 
     # ── ② 台账注入（平台 → 主 agent）—— **每轮重复注入的索引，允许短，但必须标 ──
-    ARTIFACTS.clear()
+    artifacts.clear()
     st = {
         "messages": [AIMessage("（没有 HumanMessage，免得触发投递）")],
         "tasks": [{"id": "t1", "skill": "s", "stage": "waiting_for_input",
@@ -249,7 +250,7 @@ def main() -> None:
     # 再用 `preexisting` 差集补"读来的被算成写出来的" —— 既不是结构化、也不是硬机制，
     # 而且并发时差集还会互相覆盖。现在改成**每次 run 造一个自己的 write_artifact**（闭包）。
     print("\n⑬ 产物归属：记账，不扫文本")
-    from proto.artifacts import ARTIFACTS as _A
+    from proto import artifacts as _A
     from proto.artifacts import make_write_artifact, read_artifact
     from proto.artifacts import write_artifact as _main_writer
 

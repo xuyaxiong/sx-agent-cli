@@ -38,8 +38,8 @@ from proto.handoff.judgement import (  # 判定：schema + 输入模板（搬去
 )
 from proto.handoff.nudge import nudge_text  # 推回去的模板
 from proto.llm import safe_structured
-from proto.artifacts import (  # 产物领域
-    ARTIFACTS,
+from proto import artifacts as artifacts_mod  # 产物领域（唯一入口是它的读 API）
+from proto.artifacts import (
     read_artifact,
     store_artifact,
     make_write_artifact,
@@ -159,7 +159,11 @@ def _material_note(arts: list[str]) -> str:
     （有产物时把散文也喂进去，实测会把"需要调整吗？"这类礼貌收尾判成"在要信息"）。
     """
     return (
-        "、".join(f"{a}（{len(ARTIFACTS[a]['content'])} 字）" for a in arts if a in ARTIFACTS)
+        "、".join(
+            f"{a}（{len(artifacts_mod.get(a)['content'])} 字）"
+            for a in arts
+            if artifacts_mod.has(a)
+        )
         or "执行器散文（无产物）"
     )
 

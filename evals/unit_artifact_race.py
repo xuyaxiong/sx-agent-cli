@@ -42,15 +42,33 @@
 
 from __future__ import annotations
 
+import ast
+import io
 import sys
 import threading
 import time
 from collections import Counter
+from pathlib import Path
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from proto.artifacts import ARTIFACTS, store_artifact
+from proto import artifacts
+from proto.artifacts import store_artifact
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def _py_files() -> list[Path]:
+    out: list[Path] = []
+    for d in ("proto", "evals"):
+        out += [p for p in (ROOT / d).rglob("*.py") if "__pycache__" not in p.parts]
+    return sorted(out)
+
+
+def _tree(p: Path) -> ast.Module:
+    return ast.parse(io.open(p, encoding="utf-8").read(), str(p))
+
 
 THREADS = 8
 ROUNDS = 3000
@@ -82,9 +100,9 @@ def main() -> None:
     print(f"线程 {THREADS} × 每个写 {ROUNDS} 次 = {THREADS * ROUNDS} 次写入\n")
 
     # ── 被测：原样的 store_artifact ──
-    ARTIFACTS.clear()
+    artifacts.clear()
     n, lost = hammer(store_artifact, "原样")
-    print(f"【原样】     写入 {n}｜实存 {len(ARTIFACTS)}｜**撞掉 {lost}**")
+    print(f"【原样】     写入 {n}｜实存 {artifacts.count()}｜**撞掉 {lost}**")
 
     # ── 对照：窗口撑开（只为验证这个测试有探测能力，不是在测产品代码）──
     D: dict = {}
@@ -102,6 +120,33 @@ def main() -> None:
     if lost2 == 0:
         print("⚠️ **对照组也没炸 —— 这个测试没有探测能力，上面的'没撞上'不算数。**")
         return
+
+    # ── ② 产物库的**接口边界**（2026-11-03 审核收口）──
+    #
+    # 这张表原来叫 `ARTIFACTS` 且**公开**，于是 9 个模块直接读写它 ——
+    # "换真存储（表 / 按会话分库）"就成了 9 处散点改造，谁漏一处谁静默读旧库。
+    # 现在对外只有函数（`get/has/ids/items/count/chars/clear`），表本身私有。
+    # 🔴 私有化让**运行时**的越界当场炸（NameError）；这条守卫扫**源码**，
+    #    把"还没跑到"的那条路也堵上：谁把 `_ARTIFACTS` / `ARTIFACTS` 写回来，这里红。
+    print("\n② 产物库只有一个入口：外部不许碰私有表")
+    bad: list[str] = []
+    for p in _py_files():
+        if p.name == "artifacts.py":
+            continue
+        for n in ast.walk(_tree(p)):
+            if isinstance(n, ast.Name) and n.id in ("_ARTIFACTS", "ARTIFACTS"):
+                bad.append(f"{p.relative_to(ROOT)}:{n.lineno}（名字）")
+            elif isinstance(n, ast.Attribute) and n.attr in ("_ARTIFACTS", "ARTIFACTS"):
+                bad.append(f"{p.relative_to(ROOT)}:{n.lineno}（属性）")
+            elif isinstance(n, ast.ImportFrom) and n.module == "proto.artifacts":
+                bad += [
+                    f"{p.relative_to(ROOT)}:{n.lineno}（import {a.name}）"
+                    for a in n.names
+                    if a.name in ("_ARTIFACTS", "ARTIFACTS")
+                ]
+    print(f"  {'✅' if not bad else '❌'} 除 `proto/artifacts.py` 外没人引用那张表" + (f"\n      {bad}" if bad else ""))
+    if bad:
+        raise SystemExit(1)
 
     print(f"✅ 对照组炸了（{lost2} 次），说明测试**能**探到碰撞。")
     if lost:

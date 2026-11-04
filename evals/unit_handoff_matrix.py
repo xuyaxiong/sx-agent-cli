@@ -48,12 +48,13 @@ def row(hop: str, c1: str, c2: str, c3: str, c4: str, c5: str) -> None:
 def main() -> None:  # noqa: C901
     from langchain_core.messages import AIMessage, HumanMessage
 
-    from proto.artifacts import ARTIFACTS, store_artifact
+    from proto import artifacts
+    from proto.artifacts import store_artifact
     from proto.executor import ExecOutcome, _Judgement
 
-    ARTIFACTS.clear()
+    artifacts.clear()
     aid = store_artifact("《白桦》教案", "四年级诗歌教学", "md", "正文" * 80)
-    ARTIFACTS[aid]["path"] = r"C:\runs\art_001.md"
+    artifacts.get(aid)["path"] = r"C:\runs\art_001.md"
 
     # ── ① 交接书 ──
     from proto.handoff.briefing import render_briefing
@@ -149,7 +150,7 @@ def main() -> None:  # noqa: C901
 
     # ── ⑨ 产物归属（执行器 → 平台）──
     # 2026-11-03 第 5 步：从"扫消息文本 + preexisting 差集"改成**按 run 记账**（闭包）。
-    from proto.artifacts import ARTIFACTS as _A
+    from proto import artifacts as _A
     from proto.artifacts import make_write_artifact, read_artifact
 
     _A.clear()

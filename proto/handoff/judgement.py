@@ -18,7 +18,7 @@ from typing import Literal
 from langchain_core.messages import AIMessage
 from pydantic import BaseModel, Field
 
-from proto.artifacts import ARTIFACTS
+from proto import artifacts as artifacts_mod
 
 #: 判定提示词里，**每一项**（一条 AI 产出 / 一个产物）的字符预算。
 #: 超了就**保头保尾 + 显式标注省略** —— 不是简单截尾。
@@ -198,8 +198,9 @@ def _judge_material(arts: list[str], resp: dict) -> str:
     if arts:
         # 有产物 → 交付物就是产物正文，**不含散文**
         for aid in arts:
-            if aid in ARTIFACTS:
-                parts.append(f"【产物 {aid}】\n{_clip(ARTIFACTS[aid]['content'])}")
+            a = artifacts_mod.get(aid)
+            if a:
+                parts.append(f"【产物 {aid}】\n{_clip(a['content'])}")
     else:
         # 无产物 → 交付物只能从 AI 产出里找，**全部轮次都要给**
         n = 0

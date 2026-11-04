@@ -31,7 +31,8 @@ if hasattr(sys.stdout, "reconfigure"):
 from proto.handoff import BODY, SECTION
 from proto.handoff.briefing import _flat
 from proto.handoff.receipt import build_receipt, render_receipt
-from proto.artifacts import ARTIFACTS, store_artifact
+from proto import artifacts
+from proto.artifacts import store_artifact
 from proto.executor import ExecOutcome
 
 #: **显式排除名单** —— 这些字段不进回执，每一条都要有理由。
@@ -57,9 +58,9 @@ LONG_REPORT = (
 
 
 #: 三态共用同一个产物 —— **只建一次**（每次都清库的话，先前那两条的 ID 就悬空了）
-ARTIFACTS.clear()
+artifacts.clear()
 AID = store_artifact("白桦-导学单", "课前预习用填空式导学单", "md", "正文" * 900)
-ARTIFACTS[AID]["path"] = r"C:\runs\art_001_白桦-导学单.md"
+artifacts.get(AID)["path"] = r"C:\runs\art_001_白桦-导学单.md"
 
 
 def _render(outcome: ExecOutcome, **kw) -> str:
@@ -105,7 +106,7 @@ def main() -> None:
             check("[incomplete] `rounds` 出现在话里", str(out.rounds) in text)
         for aid in out.artifacts:
             check(f"[{label}] 产物 ID 渲染了", aid in text)
-            check(f"[{label}] 产物**真实路径**渲染了", ARTIFACTS[aid]["path"] in text)
+            check(f"[{label}] 产物**真实路径**渲染了", artifacts.get(aid)["path"] in text)
 
     print("\n② 🔴 **一个字都不许截断** —— 这是这条规矩的由来")
     for label, out in (("completed", completed), ("waiting_for_input", waiting), ("incomplete", failed)):

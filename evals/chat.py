@@ -47,7 +47,7 @@ from evals.harness import (  # noqa: E402
 from proto import artifacts as proto_artifacts  # noqa: E402
 from proto import trace  # noqa: E402
 from proto.graph import build  # noqa: E402
-from proto.artifacts import ARTIFACTS  # noqa: E402
+from proto import artifacts as artifacts_mod  # noqa: E402
 from proto.registry import registry  # noqa: E402
 
 # ⚠️ 路径一律走 `harness`（`ROOT` / `RUNS_DIR` / `DEFAULT_SKILLS_DIR`）——
@@ -758,7 +758,7 @@ def main() -> None:
         "usage": inst["counter"].snapshot(),
         "artifact_writes": inst["writes"],
         "run_tasks": inst["run_tasks"],
-        "artifact_ids": list(ARTIFACTS.keys()),
+        "artifact_ids": artifacts_mod.ids(),
         "artifact_final": {
             k: {
                 "title": v["title"],
@@ -770,7 +770,7 @@ def main() -> None:
                 "chars": len(v["content"]),
                 "content": v["content"],
             }
-            for k, v in ARTIFACTS.items()
+            for k, v in artifacts_mod.items()
         },
         "fault": inst["fault"],
         "error": error,

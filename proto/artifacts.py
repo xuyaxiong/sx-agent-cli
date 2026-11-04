@@ -50,8 +50,54 @@ def artifact_slug(s: str, n: int = 40) -> str:
 
 
 # ──────────────────────────── 产物库（= 文件系统替身） ────────────────────────────
+#
+# 🔴 **对外只有函数，不给 dict**（2026-11-03 审核收口，同 `proto/registry.py` 的铁律）。
+#
+# 这张表原来叫 `ARTIFACTS` 且**公开**，于是 9 个模块直接读写它（proto/ 6 个 +
+# evals/ 3 个）——"换成真存储（表 / 按会话分库）"就变成 9 处散点改造，谁漏一处谁静默读旧库。
+# 收口之后：**换实现只动这个文件**，调用方只认下面这几个函数。
+#
+# ⚠️ **导入本模块**（`from proto import artifacts`），别 `from proto.artifacts import get`
+#    —— 这些名字太通用，裸导入迟早撞名。
 
-ARTIFACTS: dict[str, dict[str, str]] = {}
+_ARTIFACTS: dict[str, dict[str, str]] = {}
+
+
+def get(aid: str) -> dict[str, str] | None:
+    """按 ID 取**产物记录**（含正文）；没有就 None。
+
+    ⚠️ 返回的是**记录本身**（不复制）—— 读没问题；写请走 `store_artifact`。
+    """
+    return _ARTIFACTS.get(aid)
+
+
+def has(aid: str) -> bool:
+    """这条产物在不在库里（"在不在"与"内容是什么"是两个问题，分开问）。"""
+    return aid in _ARTIFACTS
+
+
+def ids() -> list[str]:
+    """全部产物 ID（顺序 = 写入顺序）。"""
+    return list(_ARTIFACTS)
+
+
+def items() -> list[tuple[str, dict[str, str]]]:
+    """（ID, 记录）的**快照** —— 遍历用，加进来的新产物不会中途冒出来。"""
+    return list(_ARTIFACTS.items())
+
+
+def count() -> int:
+    return len(_ARTIFACTS)
+
+
+def chars() -> int:
+    """产物库正文合计字数 —— **隔离效果的读数之一**（`snapshot` / `__main__` 用它）。"""
+    return sum(len(a["content"]) for a in _ARTIFACTS.values())
+
+
+def clear() -> None:
+    """清空 —— 跑批每个 case 开始前调它（`harness.install`）。"""
+    _ARTIFACTS.clear()
 
 #: 产物 ID 的**发号器** —— 用 `itertools.count()` 而不是 `len(ARTIFACTS) + 1`。
 #:
@@ -121,7 +167,7 @@ def store_artifact(title: str, summary: str, file_type: str, content: str) -> st
         p = ARTIFACT_DIR / rec["file"]
         p.write_text(artifact_body(aid, rec), encoding="utf-8")
         rec["path"] = str(p)
-    ARTIFACTS[aid] = rec
+    _ARTIFACTS[aid] = rec
     return aid
 
 
@@ -155,7 +201,7 @@ def make_write_artifact(created: list[str] | None = None):
         aid = store_artifact(title, summary, file_type, content)
         if created is not None:
             created.append(aid)
-        a = ARTIFACTS[aid]
+        a = _ARTIFACTS[aid]
         # 返回里**带上文件类型和保存地址** —— 用户和后面的代码都要靠它找到这份产物
         where = f"\n文件：{a['path']}" if a.get("path") else ""
         return f"已写入产物 {aid}（{len(content)} 字，{a['ext'].lstrip('.')}）{where}"
@@ -174,7 +220,7 @@ def read_artifact(artifact_id: str) -> str:
     ⚠️ **读了就进你的上下文**，长产物会一直占着。只有确实要看内容时才读；
     只是把它交给下一个任务，用 `delegate(..., artifacts=[...])` 传 ID 就够了。
     """
-    a = ARTIFACTS.get(artifact_id)
+    a = get(artifact_id)
     return f"【{a['title']}】\n{a['content']}" if a else f"产物 {artifact_id} 不存在"
 
 
@@ -183,7 +229,7 @@ def artifact_index_lines() -> list[str]:
     return [
         f"- {aid}《{a['title']}》（{len(a['content'])} 字，{a.get('ext', '.md').lstrip('.')}）"
         f"—— {a.get('summary') or '（无梗概）'}"
-        for aid, a in ARTIFACTS.items()
+        for aid, a in _ARTIFACTS.items()
     ]
 
 
@@ -193,6 +239,6 @@ def list_artifacts() -> str:
 
     要判断"该把哪份产物交给下一个任务"时用它；正文按需用 `read_artifact` 读。
     """
-    if not ARTIFACTS:
+    if not _ARTIFACTS:
         return "本会话还没有产物。"
     return "本会话已交付的产物：\n" + "\n".join(artifact_index_lines())

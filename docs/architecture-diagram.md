@@ -45,7 +45,7 @@
 | `registry.py` | **技能注册表** | `{name: Skill}` 的**唯一持有者** · `get/all/values/names/catalog` · 变更只走 `replace/extend/reset` | 不定义 Skill 的语义 · **对外不给 dict** |
 | `skills.py` | **技能领域** | `Skill`（`name`/`description`/`instructions`）· **内置表**（登记进 `registry`）· `read_skill` 工具 | **不做磁盘 I/O** · **不持有表** |
 | `skill_pack.py` | **技能包 I/O** | 文件夹形态 → `Skill`：`split_frontmatter` / `load_skill_pack` / `load_skills_dir`；自带文件的**列与读**（`list_skill_files` / `read_skill_file`） | 不定义 Skill 的语义 |
-| `artifacts.py` | **产物领域** | 产物库 `ARTIFACTS` · ID 发号器 · 类型→扩展名**硬性派发** · 当场落盘 · `write/read/list_artifact` | 不管技能 |
+| `artifacts.py` | **产物领域** | 产物库（**私有表 + 读 API** `get/has/ids/items/count/chars`）· ID 发号器 · 类型→扩展名**硬性派发** · 当场落盘 · `store/read/list_artifact` | 不管技能 |
 | `executor.py` | 执行器 | `_PLATFORM_RULE` · 三态判定 · 出口限制循环 · `run_task()` · `ExecOutcome` · **`read_user_turn`**（闭包造，见 §3.2.2） | **不持有状态、不跨轮、不直接问用户** |
 | `agent.py` | 主 agent | `_MAIN_PROMPT` · `delegate` 工具（含平台强制的四步）· **交接书** `render_briefing` · **用户原话快照** `_user_turns` · `absorb_outcome` | **不解析、不抽取参数** |
 | `graph.py` | 图 | `State`/`AgentState` · `prepare`（投递 + 台账注入）· `agent` · `finalize`（透传）· `build()` | 不做业务判断 |
@@ -118,7 +118,7 @@ config ──► trace ──► (所有模块都在写日志)
 │                                                                     │
 │   ⓪ _feed_waiting：把用户这条消息**原话**投给所有 waiting_for_input 的 Task │
 │        └─► run_task(skill, render_briefing(rec))   ← 重入执行器        │
-│        └─► absorb_outcome(rec, outcome)  → 结果写回 Task              │
+│        └─► settle(rec, outcome)  → 写字段 + 定 stage（唯一一处迁移）   │
 │        ⚠️ 不判断"用户是不是在回答" —— 那是语义判断，平台不做            │
 │                                                                     │
 │   ① 渲染台账 → SystemMessage【平台提示】注入 messages                  │
@@ -201,7 +201,7 @@ ExecOutcome{status, artifacts, report, rounds, progress, missing}
 | **台账** | `graph.node_prepare` | `state["messages"]`（SystemMessage） | 主 agent |
 | **Task** | `agent.delegate` | `state["tasks"]`（按 id 合并） | 台账渲染 · `_feed_waiting` · `_supersede_old` |
 | **交接书** | `agent.render_briefing` | 不存（现场渲染） | 执行器（作为 HumanMessage） |
-| 产物正文 | 执行器 / 主 agent 的 `write_artifact` | `artifacts.ARTIFACTS`（+ 磁盘文件） | 判定 · `read_artifact` · 用户（打开文件） |
+| 产物正文 | 执行器 / 主 agent 的 `write_artifact` | 产物库（`proto.artifacts`，+ 磁盘文件） | 判定 · `read_artifact` · 用户（打开文件） |
 | 产物 ID | 同上（返回值） | Task 的 `artifacts` / `refs` | 主 agent · 台账 · 判定 |
 | 判定结果 | `executor._judge` | `ExecOutcome` → Task 的 `progress`/`missing`/`stage` | 执行器（推回去）· 主 agent（台账 / 工具返回）· 用户（透传） |
 | 轨迹日志 | `trace.*` | `logs/proto-<时间戳>.log` | 人（事后复盘）· CLI（tail） |
@@ -232,7 +232,7 @@ ExecOutcome{status, artifacts, report, rounds, progress, missing}
 | ② | **台账注入** | 平台 → 主 agent | `SystemMessage` | 见 §3.2.1 | **显式截断**（150/200 字，带标记＋指向回执） | 每轮重复注入的**索引**，所以允许短；但**切了必须说** |
 | ③ | **派发** | 主 agent → 平台 | `delegate` 工具参数 | `skill_name` / `task` / `artifacts[]` / **`based_on_turns[]`** | 不截（LLM 自己写的） | 轮次/产物 ID 不存在 → 当场拒绝 |
 | ④ | **交接书** | 平台 → 执行器 | `HumanMessage` | 见 §3.2.2 | **不截** | 用户原话＝**清单 + `read_user_turn` 按需全文**（点名那几轮直给全文） |
-| ⑤ | 执行器产出 | 执行器 → 产物库 | `ARTIFACTS` + 磁盘 | 7 字段（§5.4） | 不截（正文全文落库） | 正文**不进主 agent 上下文**，用 `read_artifact` 按需读 |
+| ⑤ | 执行器产出 | 执行器 → 产物库 | 产物库（`proto.artifacts`）+ 磁盘 | 7 字段（§5.4） | 不截（正文全文落库） | 正文**不进主 agent 上下文**，用 `read_artifact` 按需读 |
 | ⑥ | **判定输入** | 平台 → 判定 | 结构化调用 prompt | 见 §3.2.3 | **显式截断**（保头保尾 + 显式标记） | 判定**没有工具循环**，取不了全文 —— 所以标记必须说清"你看不到这部分，别据此判未完成" |
 | ⑦ | 判定结果 | 判定 → 平台 | `_Judgement` | `status` / `progress` / `missing` / `reason` | 不截 | — |
 | ⑧ | **推回去** | 平台 → 执行器 | `HumanMessage`（追加） | 见 §3.2.4 | **不截** | — |
@@ -658,7 +658,7 @@ incomplete → 推回去 ｜ 推完轮数 → 交给用户），措辞跟分支�
 rec = {**t, "qa": [*(t.get("qa") or []),
                    {"by": "用户", "q": t.get("report") or "", "a": user}]}
 outcome = run_task(skill, render_briefing(rec))
-absorb_outcome(rec, outcome)
+settle(rec, outcome)          # 写字段 + 定 stage —— 状态迁移只有这一处
 ```
 
 > 🔴 **历次答复必须累积**：执行器用完即弃，每次投递都是全新的 `run_task`。
@@ -937,8 +937,8 @@ html_ids = [aid for aid, a in arts.items() if file_ext(a.get("type") or "") == "
 | `id` | `delegate` | `t{tool_call_id 尾部 8 位}` |
 | `skill` | `delegate` | 能力名 |
 | `task` | `delegate`（**主 agent 给的原话**） | 这件工作的具体要求 |
-| `stage` | `delegate` / `_feed_waiting` | 5 态（§6.2） |
-| `artifacts` | `absorb_outcome` / `delegate` | **产出**的产物 ID 列表（只在非空时覆盖） |
+| `stage` | **`settle()`**（`delegate` / `_feed_waiting` 都调它，唯一一处迁移） | 5 态（§6.2） |
+| `artifacts` | `absorb_outcome`（`settle()` 调；`delegate` 只建空表） | **产出**的产物 ID 列表（⚠️ **只在非空时覆盖** —— 这一轮没产出，不许抹掉上一轮交付的） |
 | `refs` | `delegate` | **输入引用**的产物 ID 列表（⚠️ 与 `artifacts` 方向相反） |
 | `report` | `absorb_outcome` | 执行器最后说的话 |
 | `progress` | `absorb_outcome` | 判定给的"已经做到什么程度" |
