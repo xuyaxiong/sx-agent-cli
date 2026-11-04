@@ -537,22 +537,11 @@ def check_llm_calls_under(run: dict, turn: dict, n: int) -> Result:
 #    用户那边看到的是一轮空回复 ✓，不需要一条专门断模型输出的断言。
 
 
-@_reg
-def check_no_duplicate_completed(run: dict, turn: dict, skills: list[str] | None = None) -> Result:
-    """同一个技能**最多只能有一个 `completed` 的 Task** —— 这才是 S14「不重复委派」。
-
-    ⚠️ 别用 `delegate_calls_max` 代替：**补救性的重派是合法的**
-    （执行器没按指令落库 → **平台按结构判** incomplete → 主 agent 换个说法重派 → 这次成了）。
-    实测踩过：`s01b` r1 用了 4 次委派完成 3 件事，那是**恢复路径生效**，不是缺陷。
-    真正的缺陷是"同一件事被做成了两份成品"。
-    """
-    skills = skills or sorted({t["skill"] for t in _tasks(turn)})
-    bad: list[str] = []
-    for s in skills:
-        done = [t["id"] for t in _by_skill(turn, s) if t["stage"] == "completed"]
-        if len(done) > 1:
-            bad.append(f"{s} 有 {len(done)} 个 completed：{done}")
-    return not bad, "；".join(bad) if bad else f"每个技能最多一个 completed（{len(skills)} 个技能）"
+# ⚠️ ~~`check_no_duplicate_completed`~~ **2026-11-05 删**（随 `s01b-dedup-at-dispatch`
+#    一起 —— 用户："删了呗"）：那条 case 删掉之后它**没人用了**（死断言 = 地雷：
+#    谁挂上它、红了会引导他去改实现）。**"同一件事不许做成两份成品"这条性质没丢** ——
+#    `every_task_has_artifact` / `artifact_no_cross_attribution` 仍在压产物归属 ✓。
+#    （判据同 `check_supersede_worked`：**零 case 用的断言要删，别留着当地雷**。）
 
 
 # ⚠️ ~~`check_supersede_worked`~~ **2026-11-05 删**（深度审计 §4.1）——
