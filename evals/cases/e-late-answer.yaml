@@ -2,25 +2,45 @@ id: e-late-answer
 family: 多轮
 why: >
   待答挂了 2 轮才被回答。**这条同时是 F7 的回归**：
-  改之前，主 agent 会在第 1 轮就自己编一个「难度：基础」重新委派、跳过用户（50% 概率）；
-  改之后，待答由平台投递和透传，主 agent 只该委派一次。
+  改之前，主 agent 会在第 1 轮就自己编一个「难度：基础」重新委派、跳过用户；
+  改之后，待答由平台投递和透传，主 agent **一次都不该重派**。
 realism: 实测发生过
 tier: full
+# 🔴 **平台造路**（2026-11-05 改）：原来靠"执行器会提问"把待答**造出来** —— 那是
+#    模型的自由选择 ✗（实测这条 `task_stages` 在 15 次里挂过 10 次：主 agent 自己
+#    把活干了、压根没派发）。现在**直接注入**一个待答 Task，那条路**必然**被走到 ✓
+#    （`t3-split-answers` 早就这么干了 —— 判据见 `checks.py` 顶部：
+#    "有效性不该押在模型的自由选择上"）。
+initial_tasks:
+  - id: t-injected
+    skill: quiz
+    task: 出随堂小测（三年级数学《分数的初步认识》，第一课时）
+    stage: waiting_for_input          # ← 关键：一上来就是"等用户答复"
+    artifacts: []
+    refs: []
+    report: 难度要哪一档？（基础 / 提升 / 挑战）
+    # 它申报的那句原话（`ask_user` 的参数）—— 透传从**对象**渲染（§0.65 Y1）
+    asked: 难度要哪一档？（基础 / 提升 / 挑战）
+    qa: []
+    agent_tried: false
+    user_turns:
+      - n: 1
+        text: 帮我出个随堂小测，人教版三年级数学《分数的初步认识》第一课时
 turns:
   - "帮我出个随堂小测，人教版三年级数学《分数的初步认识》第一课时"
+  # 换了话题、**没**回答它 —— 待答不能丢
   - "对了，我们班这周讲到哪了来着？"
   # 🔴 **标了它是在回答谁**（`solution.md` §0.65 Y1）：标识由**通道**填 ——
-  #    这里是脚本在替"用户在 `↩` 提示符下打字"（`@waiting` = 第一个待答）
-  - {text: "难度要基础的", answer_to: "@waiting"}
+  #    这里是脚本在替"用户在 `↩` 提示符下打字"。注入的 Task ID 写死，直接点名。
+  - {text: "难度要基础的", answer_to: "t-injected"}
 checks:
-  # 第 1 轮：执行器缺「难度」→ 登记待答
+  # 待答**从头到尾挂着**（注入的，确定 ✓）
   - check: task_stages
     at: 1
     stages: {quiz: waiting_for_input}
   # 🔴 F7 核心：平台必须**自己**把问题透传给用户，不许主 agent 编一个答案糊过去
   - check: platform_relayed
     at: 1
-  # 中间那轮换了话题、没回答 → 待答不能丢
   - check: task_stages
     at: 2
     stages: {quiz: waiting_for_input}
@@ -31,6 +51,8 @@ checks:
     stages: {quiz: completed}
   - check: no_task_stage
     stages: {quiz: [waiting_for_input, superseded]}
-  # 🔴 主 agent 全程只该委派 1 次（第 1 轮）。多于 1 次 = 它在重派 = F7 复发
+  # 🔴 **主 agent 一次都不该重派** —— 台账里写着"你**不用**重新委派它们"，
+  #    平台也真的会投递（上面那条断的就是它）。重派 = F7 复发（自己编个答案糊过去）。
+  #    ⚠️ 原来是 `n: 1`（"最多派一次"）—— 那是"靠执行器提问造待答"时代的写法 ✗
   - check: delegate_calls_max
-    n: 1
+    n: 0

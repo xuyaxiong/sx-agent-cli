@@ -6,10 +6,27 @@ why: >
   根本不再产生"旧待答"。所以这条现在测的是「答复后不留悬挂的待答」。
 realism: 实测发生过
 tier: smoke
+# 🔴 **平台造路**（2026-11-05 改）：原来靠"执行器会提问"把待答造出来 —— 模型的自由
+#    选择 ✗（实测这条 `task_stages` 在 16 次里挂过 8 次）。现在**直接注入**，
+#    路径必然被走到 ✓（判据见 `checks.py` 顶部）。
+initial_tasks:
+  - id: t-injected
+    skill: quiz
+    task: 出随堂小测（三年级数学《分数的初步认识》，第一课时）
+    stage: waiting_for_input
+    artifacts: []
+    refs: []
+    report: 难度要哪一档？（基础 / 提升 / 挑战）
+    asked: 难度要哪一档？（基础 / 提升 / 挑战）
+    qa: []
+    agent_tried: false
+    user_turns:
+      - n: 1
+        text: 帮我出个随堂小测，人教版三年级数学《分数的初步认识》第一课时
 turns:
   - "帮我出个随堂小测，人教版三年级数学《分数的初步认识》第一课时"
-  # 标了它是在回答第一个待答（§0.65 Y1：标识由通道填）
-  - {text: "难度要基础的", answer_to: "@waiting"}
+  # 标了它是在回答谁（§0.65 Y1：标识由通道填）—— 注入的 ID 写死，直接点名
+  - {text: "难度要基础的", answer_to: "t-injected"}
 checks:
   - check: task_stages
     at: 1
@@ -19,8 +36,10 @@ checks:
   # 答复由平台投递，主 agent 不重派
   - check: platform_fed_answer
     at: 2
+  # 🔴 **一次都不该重派**（台账写着"你不用重新委派它们"）—— 原来是 `n: 1`，
+  #    那是"靠执行器提问造待答"时代的写法 ✗
   - check: delegate_calls_max
-    n: 1
+    n: 0
   # 同一个 Task 直接完成 —— 台账里既没有待答，也没有被取代的残骸
   - check: task_count_at_least
     n: 1
