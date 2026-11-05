@@ -17,9 +17,45 @@ from __future__ import annotations
 
 from typing import Any
 
+from proto.handoff import INJECTED, render_hop
+
+#: 消息类型 → **人话**（读的人是主 agent，所以 `AIMessage` 是"你"）。
+#:
+#: 🔴 **原来是 `f"{type(m).__name__}: …"`** —— `HumanMessage:` / `AIMessage:` 这种
+#: **框架的 Python 类名直接漏给模型**（2026-11-05 审核）。别处都小心地渲染成人话
+#: （交接书里是"**用户说的**" / "**它说的**"），只有这一处漏了。
+_WHO: dict[str, str] = {
+    "HumanMessage": "用户",
+    "AIMessage": "你",
+    "ToolMessage": "工具返回",
+    "SystemMessage": "平台",
+}
+
+
+def _who(m: Any) -> str:  # noqa: ANN401
+    """这条消息**是谁说的** —— 打过注入标记的（平台透传）不叫"你说的"。
+
+    ⚠️ `injected_by` 是**结构**（挂在 `additional_kwargs` 上，不漏给模型）——
+    这里读它，**不是**"看内容像不像平台的话"（那是反结构化，判据一）。
+    """
+    if (getattr(m, "additional_kwargs", None) or {}).get("injected_by") in INJECTED:
+        return "**平台转达**"
+    return f"**{_WHO.get(type(m).__name__, type(m).__name__)}**"
+
 
 def build_prompt(skill_name: str, task: str, outcome: Any, messages: list) -> str:
     """试答那一步喂给主 agent 的**全部输入** —— 抽成纯函数是为了**可单测**。
+
+    ⚠️ **2026-11-05：走唯一那条渲染路**（`render_hop`）。在这之前它是**平铺的
+    `字段：值`**：没有段名、没有缩进、`请判断` 夹在最后和上面那堆事实没有分隔 ——
+    用户原话：*"做决策的交接单就不好"*。现在它和委托书/回执是同一套体例：
+    段名 0 列 · 来源 2 列 · 段体 2 列。
+    ⚠️ `asked` / `task` / `report` **三段和回执/委托书共用**（同一个语义一处定义）。
+
+    ⚠️ `skill_name` **跟着【任务】走**（"派给「lesson-prep」"那一行）——
+    它属于"这次要什么"，不单起一段；但**不能丢**（交接三问①：交接了什么）。
+    这一步是**独立调用**，模型手里没有 `delegate` 的工具上下文 ——
+    不写它，模型就不知道派给了谁。
 
     ⚠️ `messages` 渲染的是 `str(m.content)` —— **工具调用的参数不在里面**
     （`AIMessage.tool_calls` 的 `args`）。主 agent 自己写的 `delegate(task=…)` 全文、
@@ -27,16 +63,18 @@ def build_prompt(skill_name: str, task: str, outcome: Any, messages: list) -> st
     `docs/handoff-audit.md` §五 隐患 3）。**没有实测压到过，先不修。**
     """
     msgs = list(messages)
-    history = "\n".join(f"{type(m).__name__}: {str(m.content)}" for m in msgs)
-    return (
-        f"你委派出去的工作卡住了，它在要信息。\n\n"
-        f"技能：{skill_name}\n"
-        f"你交给它的任务（**你写的** —— 可能补了用户没说的东西）：{task}\n"
+    history = "\n".join(f"- {_who(m)}：{str(m.content)}" for m in msgs)
+    return render_hop("ask", {
         # 🔴 **要什么 = 工具参数里的原话**（结构 ✓）—— 不是从它的话里挑出来的
-        f"**它要的信息**：{outcome.asked}\n"
-        f"它最后说的那段（可能有上下文，也可能只是过场）：{outcome.report}\n\n"
-        f"你的上下文（**全部 {len(msgs)} 条，全文**）：\n{history}\n\n"
-        "请判断：**你的上下文里有没有它需要的信息？**\n"
-        "- 有（用户之前说过）→ can_answer=true，answer 里给出补充内容，原话照搬\n"
-        "- 没有 → can_answer=false，**不要编造**"
-    )
+        "asked": str(getattr(outcome, "asked", "") or "").strip(),
+        "task": f"（派给「{skill_name}」）\n{str(task or '').strip()}",
+        "report": str(getattr(outcome, "report", "") or "").strip(),
+        # ⚠️ "全部 N 条、全文、不截断" 写在**段体**里 —— 它是内容的一部分，
+        #    不是"来源"（来源那一行回答的是"这句是谁说的"，见 `SOURCE_NOTE`）。
+        "ask_context": f"（全部 {len(msgs)} 条，全文，不截断）\n{history}",
+        "ask_decide": (
+            "你的上下文里**有没有它需要的信息**？\n"
+            "- 有（用户之前说过）→ `can_answer=true`，`answer` 里给出补充内容，**原话照搬**\n"
+            "- 没有 → `can_answer=false`，**不要编造**"
+        ),
+    })

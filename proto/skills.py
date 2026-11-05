@@ -116,7 +116,8 @@ def read_skill(skill_name: str) -> str:
     skill = registry.get(skill_name)
     if skill is None:
         return f"没有技能「{skill_name}」。可用：{'、'.join(registry.names())}"
-    out = f"【技能 {skill.name}】{skill.description}\n\n{skill.instructions}"
+    # ⚠️ **不用 `【…】`**（那是段名的专用符号）—— 它是**工具返回的头**，不是段名。
+    out = f"**技能「{skill.name}」** —— {skill.description}\n\n{skill.instructions}"
     # 参考文件清单**现场扫盘**（不缓存在 Skill 上，见 `skill_pack` 的模块 docstring）。
     # 有才带这一段 —— 没有就一个字不加（**没有就是没有**，不写"（无参考文件）"这种废话）。
     from proto.skill_pack import skill_file_index_lines
@@ -125,7 +126,7 @@ def read_skill(skill_name: str) -> str:
     if files:
         # ⚠️ 同 `executor.run_task`：**`skill_name` 要写进清单**（调用方的第一个参数就是它）
         out += (
-            f"\n\n【技能自带文件】要用哪一份就用 `read_skill_file` 读全文 ——"
+            f"\n\n**技能自带文件** —— 要用哪一份就用 `read_skill_file` 读全文："
             f"**`skill_name` 传「{skill.name}」**，`path` 照抄下面的清单"
             "（**不要凭文件名猜内容**）：\n" + "\n".join(files)
         )

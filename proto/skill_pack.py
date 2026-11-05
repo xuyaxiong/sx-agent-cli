@@ -163,7 +163,8 @@ def read_skill_file(skill_name: str, path: str) -> str:
     got = load_skill_file(skill_name, path)
     if got is None:
         return f"「{skill_name}」里没有文件「{path}」。现有：\n" + "\n".join(have)
-    return f"【{skill_name} / {path}】\n{got}"
+    # ⚠️ **不用 `【…】`**（那是段名的专用符号）—— 它是**工具返回的头**，不是段名。
+    return f"**{skill_name} / {path}**\n\n{got}"
 
 
 # ──────────────────────────── 加载 ────────────────────────────

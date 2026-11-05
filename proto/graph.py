@@ -34,6 +34,7 @@ from proto import trace
 from proto.agent import build_agent
 from proto.agent import try_answer_then_rerun  # 试答→重跑（两条路共用，E1）
 from proto.handoff.briefing import render_briefing, settle
+from proto.handoff import render_hop  # noqa: E402 —— 唯一那条渲染路（见 handoff/__init__）
 from proto.handoff.ledger import render_ledger
 # 🔴 **顶层 import，但用"模块 + 属性"形式**（2026-11-04 复审 N3 修）：
 #    `_feed_waiting` 里原来是**函数内** `from proto.executor import run_task` ——
@@ -341,18 +342,27 @@ def render_relay(waiting: list[dict]) -> str:
     显式说清"这条没留下问题原话"，再把那段话附上 —— 有就说有，没有就说没有。
 
     ⚠️ **抽成模块级纯函数是为了可单测**（同 `ask.build_prompt` / `nudge.nudge_text`）：
-    它原来嵌在 `node_finalize` 里，而 `finalize` 从 2026-11-04 起**不再注入 `AIMessage`**
-    （见那里的注释）—— 渲染结果就只剩 `trace.handoff` 那条记录，断言够不着了。
+    它原来嵌在 `node_finalize` 里，渲染结果就只剩 `trace.handoff` 那条记录，
+    断言够不着了。
+
+    ⚠️ **2026-11-05：走唯一那条渲染路**（`render_hop`），段名是【待答】。
+    在这之前每条写成 `【{skill}】问：…` —— **拿段名的括号包技能名** ✗
+    （`【…】` 在这套系统里是**段名的专用符号**，读的人会以为那是段名；
+    记录层切段也靠它）。现在技能名用 `「」`（和台账一致）。
     """
     def _one(t: dict) -> str:
         q = str(t.get("asked") or "").strip()
         who = t.get("skill") or "?"
         if q:
-            return f"【{who}】问：{q}"
-        return (f"【{who}】（**这一条没留下问题原话** —— 下面是它最后说的那段，"
-                f"可能混着过场）：\n{t.get('report') or '（它一个字都没说）'}")
+            return f"- 「{who}」问：{q}"
+        # ⚠️ **续行自己在里面缩 2 格**（`render_hop` 会把整段再缩 2 格 → 共 4 格）——
+        #    不然多行的那段话会顶到和 `- ` 同一列，看起来像另一个列表项。
+        tail = "\n".join(f"  {ln}" for ln in
+                         str(t.get("report") or "（它一个字都没说）").splitlines())
+        return (f"- 「{who}」（**这一条没留下问题原话** —— 下面是它最后说的那段，"
+                f"可能混着过场）：\n{tail}")
 
-    return "\n\n".join(_one(t) for t in waiting)
+    return render_hop("relay", {"relay": "\n".join(_one(t) for t in waiting)})
 
 
 def node_finalize(state: State) -> dict:

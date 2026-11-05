@@ -269,7 +269,7 @@ def main() -> None:
                     "## 第一个问题\n这节课希望侧重哪种上法？"}
     _relayed = render_relay([_w])
     check("⑪ 透传 · 贴的是**申报的原话**（`Task.asked`）",
-          "【lesson-prep】问：这节课希望侧重哪种上法？" in _relayed, _relayed)
+          "「lesson-prep」问：这节课希望侧重哪种上法？" in _relayed, _relayed)
     check("⑪ 透传 · 执行器那段独白**不进**透传",
           "我先来进行第一步的分析" not in _relayed, _relayed)
     _relayed2 = render_relay([{**_w, "asked": ""}])

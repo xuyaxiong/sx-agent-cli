@@ -221,7 +221,9 @@ def read_artifact(artifact_id: str) -> str:
     只是把它交给下一个任务，用 `delegate(..., artifacts=[...])` 传 ID 就够了。
     """
     a = get(artifact_id)
-    return f"【{a['title']}】\n{a['content']}" if a else f"产物 {artifact_id} 不存在"
+    # ⚠️ **不用 `【…】`**（那是**段名的专用符号**，独占行首就等于声明"这是个段名"，
+    #    而记录层靠这两条做确定性切分）—— 它是**工具返回的头**，不是段名。标题用粗体。
+    return f"**{a['title']}**\n\n{a['content']}" if a else f"产物 {artifact_id} 不存在"
 
 
 def artifact_index_lines() -> list[str]:

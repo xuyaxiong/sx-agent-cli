@@ -29,7 +29,8 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from proto import trace
 from proto.config import get_model
-from proto.handoff import OutcomeStatus as _OutcomeStatus  # 状态词汇（唯一一份）
+from proto.handoff import SECTION, OutcomeStatus as _OutcomeStatus, render_hop
+#                ↑ 状态词汇（唯一一份）· 段名/渲染（唯一一份）
 # ⚠️ 判定那套（`_Judgement` / 规则 / 材料 / 截断 / `build_prompt`）**整块退休**（2026-11-05）：
 #    "任务结没结束"不再由一次 LLM 调用判 —— 现在是三件**平台看得见的**结构事实
 #    （申报要信息 / 交了产物 / 都没有，见 `run_task` 末尾）；"够不够"由主 agent 判。
@@ -165,7 +166,9 @@ def _user_turn_reader(user_turns: list[dict]):
         if turn not in by_n:
             return f"没有第 {turn} 轮。现有：{'、'.join(str(n) for n in sorted(by_n))}"
         t = by_n[turn]
-        out = [f"【用户原话 · 第 {turn} 轮】", str(t.get("text") or "")]
+        # ⚠️ **不用 `【…】`**：它是**工具返回的头**，不是交接单的段名 ——
+        #    `【…】` 独占行首在这套系统里等于"这是个段名"（记录层靠它切段）。
+        out = [f"**用户原话 · 第 {turn} 轮**", str(t.get("text") or "")]
         after = str(t.get("after") or "").strip()
         if after:
             out += [
@@ -238,12 +241,21 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
         # ⚠️ 这个坑只在"**技能包有 references 且活是委派出去的**"时才出现 ——
         # 走委派的现有技能都没有 references，有 references 的真技能又被主 agent 自己干了，
         # 所以一直没暴露；`EXEC_PATH=delegate` 一开，第一次跑就撞上。
+        # ⚠️ **不用 `【…】`**（那是**段名的专用符号**，独占行首就等于声明"这是个段名"，
+        #    而记录层靠这两条做确定性切分）—— 它是【技能指令】**里面**的一段，
+        #    不是和它平级的段。
         refs = (
-            f"\n\n【技能自带文件】要用哪一份就用 `read_skill_file` 读全文 ——"
+            f"\n\n**技能自带文件** —— 要用哪一份就用 `read_skill_file` 读全文："
             f"**`skill_name` 传「{skill.name}」**，`path` 照抄下面的清单"
             "（**不要凭文件名猜内容**）：\n" + "\n".join(have)
         )
-    task_text = f"【技能指令】\n{skill.instructions}{refs}\n\n【已知信息】\n{briefing_text}"
+    # 🔴 **走唯一那条渲染路**（2026-11-05）：原来两个头都是就地写的字面量，
+    #    而且**嵌套是平的**（【已知信息】和它里面的【任务】【用户原话】同在 0 列）。
+    #    现在交接书整块缩在【已知信息】下面 —— 哪几段属于它，一眼看得出。
+    task_text = render_hop("task_text", {
+        "skill_instructions": f"{skill.instructions}{refs}",
+        "known": briefing_text,
+    })
 
     run_id = f"R{next(_RUN_SEQ):02d}"
     trace.section(f"run_task · {run_id} · skill={skill.name}（通用执行器，隔离上下文）",
@@ -254,9 +266,9 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
     trace.handoff("交接书", "平台", "执行器", briefing_text, structured="Task → render_briefing")
     trace.block(
         "发给执行器的内容（技能指令按名引用）",
-        f"【技能指令】{skill.name}"
+        f"{SECTION['skill_instructions']}{skill.name}"
         f"（instructions {len(skill.instructions)} 字，原文见该技能包的 SKILL.md）\n\n"
-        f"【已知信息】\n{briefing_text}",
+        f"{SECTION['known']}\n{briefing_text}",
         kind="executor_briefing",
     )
     t0 = time.time()

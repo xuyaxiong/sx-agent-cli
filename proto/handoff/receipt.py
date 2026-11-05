@@ -36,13 +36,10 @@ from typing import Any, TypedDict
 # ⚠️ 顶层 import（2026-11-04 复审 N3 的**漏网之鱼**：它的名单里没有 receipt.py）——
 # 无环，纯习惯。走**模块 + 属性**（`artifacts_mod.get(...)`）而不是 `from … import get`。
 from proto import artifacts as artifacts_mod
-from proto.handoff import (
-    BODY,
-    DELIVERY,
-    HOPS,
-    body_lines,
-    section_head,
-)
+# ⚠️ **只 import 它真正用的**（2026-11-05 收敛渲染时清掉 `BODY` / `HOPS` /
+#    `body_lines` / `section_head`）—— 渲染那四样现在归 `render_hop` 管，
+#    这里再 import 一份就是"两处定义"的种子。
+from proto.handoff import DELIVERY, render_hop
 
 # ──────────────────────────── schema：回执上有什么 ────────────────────────────
 
@@ -217,17 +214,12 @@ def render_receipt(receipt: Receipt) -> str:
 
     ⚠️ **一个字面量都不写** —— 记录层用的是同一张表，所以两边不可能失配。
     """
-    keys = HOPS["receipt"] if receipt.get("kind") not in _REJECTED_AVAILABLE else HOPS["receipt_rejected"]
-    lines: list[str] = []
-    sections = receipt.get("sections") or {}
-    for key in keys:
-        text = sections.get(key)
-        if not text:
-            continue
-        # 🔴 **段名独占一行 → 来源另起一行 → 段体缩进 2 列**（`section_head` ＋ `body_lines`），
-        # 和委托单**同一条规矩**。原来段体顶在 0 列：执行器那段长原话和【已做到】【还缺】
-        # 这些平台框架话**左边界一模一样**，读的人分不清哪几行是执行器说的、哪几行是平台说的
-        # —— 而"哪句是谁说的"正是这段存在的全部意义（用户 2026-11-02）。
-        # 用户 2026-11-03 实测原话：*"return 那块日志还是很乱"*。
-        lines += section_head(key) + body_lines(text, BODY)
-    return "\n".join(lines)
+    # 🔴 **2026-11-05：渲染收敛到 `handoff.render_hop`**（所有交接单共用一条路）——
+    #    这里只负责挑"这一跳是哪一组段"（派发被拒那条走 `receipt_rejected`）。
+    #    ⚠️ 收敛之前这里是**唯一一处"声明驱动"**的渲染（自己写了个循环遍历 `HOPS`）；
+    #    现在那条路被抽成通用的，台账/试答/推回去/透传也走它。
+    #    （原来那段注释留着它的来历：段体顶在 0 列时，执行器的原话和平台框架话
+    #    **左边界一模一样**，读的人分不清哪句是谁说的 —— 用户 2026-11-03：
+    #    *"return 那块日志还是很乱"*。）
+    hop = "receipt_rejected" if receipt.get("kind") in _REJECTED_AVAILABLE else "receipt"
+    return render_hop(hop, receipt.get("sections") or {})

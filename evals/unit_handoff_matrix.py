@@ -133,7 +133,7 @@ def main() -> None:  # noqa: C901
                     [HumanMessage("x")])
     row("⑥ 试答（平台→主 agent）",
         # 任务＝主 agent 自己写的；**它要什么＝`ask_user` 参数里的原话**（结构 ✓ 不是从话里挑的）
-        BAD if "你写的" not in ap or "用几课时？" not in ap else OK,
+        BAD if "**它申报的**" not in ap or "用几课时？" not in ap else OK,
         OK, NA, OK, OK)
 
     # ── ⑦ 透传 ──
@@ -149,7 +149,7 @@ def main() -> None:  # noqa: C901
     row("⑦ 待答透传（平台→用户）",
         # ①来源：贴的是**它申报的原话**（不是那段过场），而且**打了 `injected_by` 标记**
         #      （记录层据此不把它算成主 agent 说的话）
-        OK if ("【quiz】问：用几课时？" in _r
+        OK if ("「quiz」问：用几课时？" in _r
                and (_fin["messages"][0].additional_kwargs or {}).get("injected_by")
                == "platform.finalize") else BAD,
         OK,

@@ -18,7 +18,7 @@ from __future__ import annotations
 # ⚠️ 顶层 import（2026-11-04 复审 N3）：这里原来是**函数内** import —— 无环，纯习惯。
 # `trace` 只依赖 `config`，谁 import 它都不会成环。
 from proto import trace
-from proto.handoff import TaskStage
+from proto.handoff import TaskStage, render_hop
 
 #: `Task.stage` 的全部取值 —— **与 `handoff.OutcomeStatus` 前三个同名**。
 #: 唯一的映射是 `incomplete → failed`（判定说"还没做完"，推满轮次后任务记"失败"）。
@@ -113,8 +113,16 @@ def render_ledger(tasks: list[dict]) -> str:
     """把 Task 列表渲染成**给主 agent 的台账**（`node_prepare` 注入的那条 SystemMessage）。
 
     ⚠️ 调用方保证 `tasks` 非空（空的时候 `node_prepare` 直接不注入 —— 闲聊轮次里没有这段）。
+
+    ⚠️ **2026-11-05：走唯一那条渲染路**（`render_hop`）—— 段名【平台提示】收进
+    `SECTION` 了。在这之前它是就地写的字面量：段名后面**直接跟内容**、续行缩进
+    **6 格**、结尾那句提示掉在 0 列 —— 和交接书/回执那套"段名 0 列 · 段体 2 列 ·
+    每层 +2"**不是一条规矩**（用户 2026-11-05 定为违反）。
     """
-    lines: list[str] = []
+    # ⚠️ **缩进一律相对写**（下面这些行会被 `render_hop` 整块缩 2 格）——
+    #    原来这里是**绝对**的：续行手写 6 格、结尾那句提示掉在 0 列，和交接书/回执
+    #    那套"段体 2 列、每层 +2"**不是一条规矩**（用户 2026-11-05 定为违反）。
+    body: list[str] = [f"你已委派出去的工作（共 {len(tasks)} 项）："]
     for t in tasks:
         # 🔴 **平台故障压过 stage 标记**（见 `FAULT_MARK`）：故障的 stage 也是 `failed`，
         #    照 stage 说话就是假话。
@@ -122,7 +130,7 @@ def render_ledger(tasks: list[dict]) -> str:
         mark = (FAULT_MARK if faulted
                 else STAGE_MARK.get(t.get("stage", ""), t.get("stage", "?")))
         arts = f" → {', '.join(t['artifacts'])}" if t.get("artifacts") else ""
-        lines.append(f"- {t['id']}  「{t['skill']}」  {mark}{arts}")
+        body.append(f"- {t['id']}  「{t['skill']}」  {mark}{arts}")
         # ⚠️ 没完成的任务，把**进度 / 缺失项**也带上（信息交接原则）——
         #    只说"没完成"，主 agent 没法决定是换个说法重派、还是向用户说明。
         # ⚠️ `run_by` 一路传下去：这两段**都来自同一轮**，全文在不在主 agent 上下文里
@@ -132,33 +140,34 @@ def render_ledger(tasks: list[dict]) -> str:
             # 🔴 **故障时打故障原因，不打「执行器说」**：它一个字都没说 ——
             #    照打就是一行"执行器说："后面**空白**（冒号后面什么都没有），
             #    读的人还以为它说了句空话。同一条 `brief` 规矩（长了显式截断＋指向出处）。
-            lines.append(f"      平台故障：{brief(t['fault'], 150, '平台故障', run_by=by)}")
+            body.append(f"  - 平台故障：{brief(t['fault'], 150, '平台故障', run_by=by)}")
         elif t.get("stage") == "waiting_for_input":
             # 🔴 **待答那档打 `asked`，不打 `report`**（2026-11-04，和 F18 一起改）：
             #    `report` 是执行器**最后说的那段话**（"好的，第一个问题已发出…"那类过场），
             #    而主 agent 需要知道的是"**它在等什么**"。
-            #    ⚠️ 这行还有个结构作用：`finalize` 不再注入那条 `AIMessage` 之后，
-            #    **这里是主 agent 唯一能看到问题内容的地方** —— 而它是**平台的话**
-            #    （`SystemMessage`），所以主 agent 不会以为那是自己说过的
-            #    （那正是 F18 的机制成因）。台账每轮都在最前面 → **答不脱离问** ✓
+            #    ⚠️ 这行还有个结构作用：它是**平台的话**（`SystemMessage`），
+            #    所以主 agent 不会以为那是自己说过的（那正是 F18 的机制成因）。
+            #    台账每轮都在最前面 → **答不脱离问** ✓
             q = str(t.get("asked") or "").strip()
             if q:
-                lines.append(f"      它要的信息：{brief(q, 150, '它要的信息', run_by=by)}")
+                body.append(f"  - 它要的信息：{brief(q, 150, '它要的信息', run_by=by)}")
             else:
                 # ⚠️ **不许留一个冒号后面空白**（同上面故障那档的理由）—— 说清是"没有"。
-                lines.append("      它要的信息：（**这一条没留下问题原话**）")
+                body.append("  - 它要的信息：（**这一条没留下问题原话**）")
         elif t.get("stage") in NEEDS_DETAIL:
             # ⚠️ 原来这里还有"已做到（判定说）/ 还缺（判定说）"两行 —— 判定退休后
             #    `Task.progress` / `Task.missing` 没有来源了，两行一起删（2026-11-05）。
-            lines.append(f"      执行器说：{brief(t['report'], 150, '执行器说', run_by=by)}")
+            body.append(f"  - 执行器说：{brief(t['report'], 150, '执行器说', run_by=by)}")
 
     waiting = [t for t in tasks if t.get("stage") == "waiting_for_input"]
     # ⚠️ 这里**不再**叫主 agent 去重新委派 —— 待答的投递和转达都由平台做（见 `_feed_waiting`
     #    和 `node_finalize`）。主 agent 只需要别自己替用户编一个答案。
-    hint = (
-        "\n\n**「在要信息」的那些，平台已经负责把问题转达给用户、也会把用户的答复投回去** ——"
+    body.append(
+        "**「在要信息」的那些，平台已经负责把问题转达给用户、也会把用户的答复投回去** ——"
         "你**不用**重新委派它们，更不要自己替用户编一个答案。"
         if waiting
-        else "\n\n（用户补充信息时，**只重跑受影响的任务**，已完成且不受影响的不动。）"
+        else "（用户补充信息时，**只重跑受影响的任务**，已完成且不受影响的不动。）"
     )
-    return f"【平台提示】你已委派出去的工作（共 {len(tasks)} 项）：\n" + "\n".join(lines) + hint
+    # 🔴 **走唯一那条渲染路**（2026-11-05）：段名【平台提示】现在登记在 `SECTION` 里了
+    #    —— 原来它是就地写的字面量，于是"段名后面直接跟内容"（段名没有独占一行）。
+    return render_hop("ledger", {"ledger": "\n".join(body)})
