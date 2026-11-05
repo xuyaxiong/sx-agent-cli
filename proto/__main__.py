@@ -20,6 +20,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 from proto import trace
 from proto.config import describe
 from proto.graph import build, next_pending
+from proto.handoff.briefing import asked_text
 from proto import artifacts as artifacts_mod
 
 BAR = "─" * 74
@@ -112,7 +113,7 @@ def main() -> None:
                 p = next_pending(result)
                 if p is None:
                     break
-                print(f"\n❓【{p.get('skill')}】问：{p.get('asked') or p.get('report')}")
+                print(f"\n❓【{p.get('skill')}】问：{asked_text(p)}")
                 print(f"   自动答复：{args.answer}")
                 result = turn(args.answer, answer_to=p["id"])
                 if result is None:
@@ -156,7 +157,7 @@ def main() -> None:
         #    这个提示符**就是"通道"**：在它下面打的字**属于那一条请求**（带 `answer_to` 投回去）。
         #    **直接回车 = 跳过** → 回到 `👤 `，在那里打的字只给主 agent（这条待答继续挂着）。
         while (p := next_pending(result)) is not None:
-            q = p.get("asked") or p.get("report") or "（它没说清要什么）"
+            q = asked_text(p)
             print(f"\n❓【{p.get('skill')}】问：{q}")
             try:
                 ans = input("↩ 答它（回车跳过，回 👤 说别的）> ").strip()

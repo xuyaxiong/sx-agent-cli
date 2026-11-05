@@ -33,7 +33,7 @@ from langgraph.graph.message import add_messages
 from proto import trace
 from proto.agent import build_agent
 from proto.agent import try_answer_then_rerun  # 试答→重跑（两条路共用，E1）
-from proto.handoff.briefing import render_briefing, settle
+from proto.handoff.briefing import asked_text, render_briefing, settle
 from proto.handoff import render_hop  # noqa: E402 —— 唯一那条渲染路（见 handoff/__init__）
 from proto.handoff.ledger import render_ledger
 # 🔴 **顶层 import，但用"模块 + 属性"形式**（2026-11-04 复审 N3 修）：
@@ -351,16 +351,15 @@ def render_relay(waiting: list[dict]) -> str:
     记录层切段也靠它）。现在技能名用 `「」`（和台账一致）。
     """
     def _one(t: dict) -> str:
-        q = str(t.get("asked") or "").strip()
         who = t.get("skill") or "?"
-        if q:
-            return f"- 「{who}」问：{q}"
+        # ⚠️ **"取哪句、取不到怎么办"只有一处定义**（`asked_text`）——
+        #    CLI 的提示符（另一个**视图**）也用它。见那个函数的 docstring。
+        text = asked_text(t)
+        if "\n" not in text:
+            return f"- 「{who}」问：{text}"
         # ⚠️ **续行自己在里面缩 2 格**（`render_hop` 会把整段再缩 2 格 → 共 4 格）——
         #    不然多行的那段话会顶到和 `- ` 同一列，看起来像另一个列表项。
-        tail = "\n".join(f"  {ln}" for ln in
-                         str(t.get("report") or "（它一个字都没说）").splitlines())
-        return (f"- 「{who}」（**这一条没留下问题原话** —— 下面是它最后说的那段，"
-                f"可能混着过场）：\n{tail}")
+        return f"- 「{who}」问：\n" + "\n".join(f"  {ln}" for ln in text.splitlines())
 
     return render_hop("relay", {"relay": "\n".join(_one(t) for t in waiting)})
 

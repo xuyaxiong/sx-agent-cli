@@ -782,7 +782,9 @@ def main() -> None:
             #    ⚠️ 摆哪一条由 `graph.next_pending` 定（**和投递认的是同一条规则**，一处定义）。
             while (p := next_pending(state)) is not None:
                 icon, color = _STYLE["ask"]
-                q = p.get("asked") or p.get("report") or "（它没说清要什么）"
+                # ⚠️ **"取哪句、取不到怎么办"只有一处定义**（`asked_text`）——
+                #    这里是**输入通道**那个视图，排版归自己，取法归它。
+                q = asked_text(p)
                 print(paint(f"{icon}【{p.get('skill')}】问：{q}", color))
                 try:
                     ans = input(paint("↩ 答它（回车跳过，回 👤 说别的）┃ ", color)).strip()

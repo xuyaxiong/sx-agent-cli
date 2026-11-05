@@ -197,6 +197,22 @@ def main() -> None:  # noqa: C901
                         bad.append(f"{py.relative_to(root.parent)}:{n.lineno} 「{why}」→ 该用「{good}」")
     check("运行期字符串里没有「不许再用」的词", not bad, "\n      ".join(bad[:6]))
 
+    print("\n⑦ 🔴 **取哪句只有一处定义**（`asked_text`）—— 不许再写 `asked or report`")
+    # ⚠️ 用户 2026-11-05 定：**两个视图**（对话消息 / 输入通道）**排版各自来，
+    #    取法归一处**。在这之前"取不到 `asked` 怎么办"实现了**三遍**，
+    #    而且**只有一遍是对的**（另两处静默退回 `report` —— 把数据缺失伪装成正常，
+    #    正是 `CLAUDE.md` 禁的"兼容兜底"）。
+    # ⚠️ 扫的是**源码文本**不是字符串常量：这条规矩管的是**写法**。
+    _BAD_PAT = _re.compile(r'or\s+\w+\.get\(\s*["\']report["\']')
+    leak: list[str] = []
+    for py in list(root.rglob("*.py")) + list(
+            (pathlib.Path(__file__).resolve().parent).glob("*.py")):
+        for i, ln in enumerate(py.read_text(encoding="utf-8").splitlines(), 1):
+            if _BAD_PAT.search(ln):
+                leak.append(f"{py.name}:{i} {ln.strip()[:60]}")
+    check("没有「`asked` 取不到就退回 `report`」的写法（该用 `asked_text`）", not leak,
+          "\n      ".join(leak[:4]))
+
     print("\n" + "═" * 78)
     print(f"{'全部通过' if not FAIL else '有失败'}：{len(PASS)}/{len(PASS) + len(FAIL)}")
     if FAIL:
