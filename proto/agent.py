@@ -31,7 +31,12 @@ from proto.config import get_model
 from proto import executor  # ⚠️ 走模块属性，见 delegate 的注释
 from proto.handoff.ask import build_prompt as ask_prompt  # 试答
 from proto.handoff.briefing import absorb_outcome, render_briefing, settle  # 委托单
-from proto.handoff.receipt import build_receipt, build_rejection, render_receipt  # 回执
+from proto.handoff.receipt import (  # 回执
+    build_receipt,
+    build_rejection,
+    next_note,
+    render_receipt,
+)
 from proto.llm import safe_structured
 from proto import artifacts as artifacts_mod  # 产物领域（唯一入口是它的读 API）
 from proto.artifacts import (
@@ -498,13 +503,8 @@ def delegate(
         #    （交没交产物 / 报没报要信息）—— "**够不够**"由主 agent 判：
         #    回执把交付账（产物 ID + 梗概 + 正文入口）摆给它，它自己看 ✓。
         settle(rec, outcome)
-        return _out(
-            rec, outcome,
-            note="**你判**：这次交付够不够？（不够就换个说法重新委派，或向用户说明）\n"
-                 "要核对内容就用 `read_artifact('<产物 ID>')` 读全文 —— 正文不在你的上下文里。\n"
-                 "⚠️ 它说的话在上面【执行器说】里，**过一眼** —— 它可能在话里说了什么"
-                 "（这次它没调 `ask_user`，平台不替它转达）。",
-        )
+        # ⚠️ **文案从 `receipt.next_note` 取**（不就地写）：样例文档要渲染同一份 —— 见它的 docstring。
+        return _out(rec, outcome, note=next_note("completed", skill=skill.name))
 
     if outcome.status == "waiting_for_input":
         # ③ 在要信息 → 平台强制先让主 agent 试答（**两条路共用这一步**，
@@ -532,12 +532,7 @@ def delegate(
                 f"由平台原样转给用户（不由主 agent 代问）",
                 kind="waiting",
             )
-            return _out(
-                rec, outcome,
-                note="平台已登记为待答，**并会负责把这个问题转达给用户**，"
-                     "用户的答复也会由平台投回给它 —— 你**不用**重复问，"
-                     "更不要自己替用户定一个答案。",
-            )
+            return _out(rec, outcome, note=next_note("waiting"))
         # 补了信息之后反而变成 incomplete → 落到下面的 failed 分支
 
     # ④ 只剩 `incomplete` —— 推了 N 轮，**既没交产物、也没申报要信息**。
@@ -550,20 +545,10 @@ def delegate(
     if outcome.fault:
         trace.note(f"delegate · {tid} **平台故障**（重试过仍失败）→ 没跑成",
                    kind="delegate_failed")
-        return _out(
-            rec, outcome,
-            note="这次是**平台故障**，**不是任务本身的问题** —— 原样再 `delegate` 一次即可"
-                 "（不用改措辞、不用改参数、不用问用户）。",
-        )
+        return _out(rec, outcome, note=next_note("fault"))
     trace.note(f"delegate · {tid} status=incomplete（推了 {outcome.rounds} 轮）→ failed",
                kind="delegate_failed")
-    return _out(
-        rec, outcome,
-        note="它推满了轮次**既没交产物、也没说要什么信息**。两种可能，你看回执定：\n"
-             "- 它**真的干不了** → 换个说法再 `delegate` 一次，或向用户说明这次没做成；\n"
-             "- 它其实**把答案写在了回复里**（上面【执行器说】）→ 平台不认正文交付，"
-             "但你可以**原样转达**给用户，或者让它**交付成产物**再来一次。",
-    )
+    return _out(rec, outcome, note=next_note("failed"))
 
 
 # ──────────────────────────── 装配 ────────────────────────────

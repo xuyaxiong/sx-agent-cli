@@ -342,6 +342,97 @@ def main() -> None:
     check("**只说了话不算交付**（正文交付是反模式）—— 仍是 `incomplete`",
           _st(_EO(report="成果都在我这段话里了" * 20)) == "incomplete")
 
+    # ── ⑮b **判定记录**：给它的上下文 / 结果 / 依据 —— 三样都在**一条**记录里 ──
+    # 🔴 用户 2026-11-05：*"对于完成没，**给它的上下文是啥、结果又是啥、产生结果依据又是啥**
+    #    —— 这些都要能看到才能审计，不然我咋知道怎么调优。"*
+    #    判定那次 **LLM 调用**退休了，但**这个判断还在** —— 记录不能跟着退休
+    #    （原来只剩"交付 N 个产物 → 收工"＋"status=…"两行 note：**"没申报"是隐式的**，
+    #      "依据"要读的人自己从箭头里猜）。
+    print("\n⑮b 「任务完成没」的判定记录：上下文 / 结果 / 依据，三样齐全")
+    from proto.executor import _verdict as _vd
+    from proto.handoff.decision import render_decision as _rd
+
+    _verdict_evs: list[dict] = []
+    trace.subscribe(_verdict_evs.append)
+
+    def _rec(o: object) -> str:  # noqa: ANN202
+        """走**真路**：`_verdict` → `trace.decision` → 事件 → `render_decision`（两层共用那一处）。"""
+        trace.decision(**_vd(o, "R01"))  # type: ignore[arg-type]
+        return _rd(_verdict_evs[-1])
+
+    _done = _rec(_EO(status="completed", artifacts=["art_001"]))
+    check("**上下文** = 三件结构事实，逐条在（申报 / 产物账 / 轮次）",
+          "申报要信息" in _done and "交付产物" in _done and "art_001" in _done
+          and "轮次" in _done, _done)
+    check("**没申报**这件事也看得见（隐式的事实审计不了）",
+          "**没有**（本轮没调它）" in _done, _done)
+    check("**结果** = 三态 ＋ **依据**（命中的是哪一条）",
+          "completed" in _done and "依据：它**交了产物**" in _done, _done)
+    check("**下一步**说清谁来接（回执给主 agent；平台不判质量）",
+          "回执给主 agent" in _done and "平台不判质量" in _done, _done)
+    # 🔴 **来源标注不许串**（这一格是**平台自己的结论**，不是 LLM 的话）——
+    #    借【结果】那个段名就会标成"**它说的** —— LLM 的输出"，那是**假话**。
+    check("第三个格子是【平台判定】（平台的话**不标**来源）",
+          "【平台判定】" in _done and "【结果】" not in _done, _done)
+    check("**没有**「它说的 / LLM 的输出」这种标注（平台的话自证没意义）",
+          "它说的" not in _done and "LLM 的输出" not in _done, _done)
+    _ask = _rec(_EO(status="waiting_for_input", asked="用几课时？", artifacts=["art_001"]))
+    check("**申报优先**：交了产物也报 `waiting_for_input`，依据说的是**申报**",
+          "waiting_for_input" in _ask and "依据：它**申报了要信息**" in _ask, _ask)
+    _none = _rec(_EO(status="incomplete", report="成果都在我这段话里了"))
+    check("都没有 → `incomplete`，依据说的是**没命中任何一条**",
+          "incomplete" in _none and "既没申报、也没交产物" in _none, _none)
+    _fault = _rec(_EO(status="incomplete", fault="TimeoutError: （模拟）"))
+    check("平台故障：依据和下一步都换成故障那条（不说「执行器干不了」）",
+          "平台故障" in _fault and "原样再 `delegate`" in _fault, _fault)
+    # ⚠️ **跑一遍真 `run_task`**（假模型 ＋ 假 agent，**不调 LLM、秒级**）：源码级断言只能证明
+    #    "那一行写着"，证明不了"**跑得到**"（名字拼错 / 顺序不对 —— 真跑才炸）。
+    #    假 agent **只做一件事**：调真的 `write_artifact` —— `created` 是 `run_task` 的闭包，
+    #    只有真工具能记账（假的 state 里塞不出产物来）。
+    from langchain_core.messages import AIMessage as _AIM
+
+    class _FakeAgent:
+        def __init__(self, tools: list) -> None:
+            self._tools = {t.name: t for t in tools}
+
+        def stream(self, state, config, stream_mode):  # noqa: ANN001, ANN201
+            self._tools["write_artifact"].invoke({
+                "title": "《荷花》教案", "summary": "三年级下册完整教案",
+                "file_type": "md", "content": "正文" * 40})
+            yield ("values", {"messages": [*state["messages"], _AIM("教案已交付")]})
+
+    _create, _model = _ex.create_agent, _ex.get_model
+    _ex.get_model = lambda *a, **k: object()  # type: ignore[assignment]
+    _ex.create_agent = lambda model, tools=None, **k: _FakeAgent(tools or [])  # type: ignore[assignment]
+    _n_before = len(_verdict_evs)
+    try:
+        _out2 = _ex.run_task(_Skill(name="lesson-prep", description="备课", instructions="写教案"),
+                             "生成《荷花》教案")
+    finally:
+        _ex.create_agent, _ex.get_model = _create, _model  # type: ignore[assignment]
+    _run_rec = [e for e in _verdict_evs[_n_before:] if e["type"] == "decision"]
+    check("`run_task` **真跑一遍**（completed 那一档）→ 判定记录真的发出来了",
+          len(_run_rec) == 1 and _run_rec[0].get("result_by") == "platform",
+          f"发了 {len(_run_rec)} 条")
+    # ⚠️ **不许写死 `art_001`**：同一个进程里前面已经写过产物，这一趟的号是递增的
+    #    （实测踩到：断 `art_001` 当场红 —— 那正是回执那边"提示写死 art_001"的同族毛病）。
+    check("走完这一趟，记录里是**这一趟真写进去的那个产物 ID**",
+          _out2.status == "completed" and bool(_out2.artifacts)
+          and _out2.artifacts[0] in _rd(_run_rec[0]),
+          f"产物={_out2.artifacts}；记录={_rd(_run_rec[0]) if _run_rec else '（没发）'}")
+    # ⚠️ **试答那条（LLM 的）照旧**：同一套记录形状，只有第三个格子换了段名和来源标注。
+    _llm = _rd({"who": "试答（LLM）· 平台强制的一步", "given": "g", "q": "q",
+                "result": "can_answer = **False**", "next": "n"})
+    check("**试答**那条不受影响：第三个格子仍是【结果】＋「**它说的**」",
+          "【结果】" in _llm and "**它说的**" in _llm, _llm)
+    try:
+        trace.decision("x", q="q", result_by="platfrom")   # 故意的错拼
+        _blew = False
+    except ValueError:
+        _blew = True
+    check("`result_by` 打错就**当场炸**（不静默退回 `llm` —— 那会把平台的结论标成它说的）",
+          _blew)
+
     # ── ⑬ 状态词汇**只有一份**（N4：三态 ↔ 映射键、五态 ↔ STAGE_MARK 键，必须刚好对上）──
     # 🔴 2026-11-04 复审 N4：同一套状态原来在四处各写一遍字符串 —— `settle()` 收敛了**写法**，
     # **词汇**还靠人守同名：改一处状态名，其余三处**静默分叉**。
@@ -350,7 +441,7 @@ def main() -> None:
     from typing import get_args
 
     from proto.handoff import OutcomeStatus, TaskStage
-    from proto.handoff.briefing import Task, _STATUS_TO_STAGE
+    from proto.handoff.briefing import Task, _STATUS_TO_STAGE, settle
     from proto.handoff.ledger import STAGE_MARK
 
     statuses, stages = set(get_args(OutcomeStatus)), set(get_args(TaskStage))
@@ -368,6 +459,24 @@ def main() -> None:
 
     check("`Task.stage` 的标注就是 `TaskStage`（不是又一个 str）",
           get_type_hints(Task)["stage"] == TaskStage, repr(get_type_hints(Task)["stage"]))
+
+    # ── ⑬b **落账记一行**：`Task.stage` 在 trace 里看得见 ──
+    # 🔴 2026-11-05：三态是"**这一趟**跑成什么样"，`Task.stage` 才是"**这个任务**现在算什么" ——
+    #    后者原来只活在 state 里（终端那行 `📋 TASKS` 是拿快照现渲染的），
+    #    trace 里**没有**"tac2700f3 → completed"这一行，复盘时接不上
+    #    （用户要审计的"完成没"里，这就是**任务那一侧的结果**）。
+    print("\n⑬b 落账记一行：`Task.stage` 在 trace 里看得见（原来只活在 state 里）")
+    _evs: list[dict] = []
+    trace.subscribe(_evs.append)
+    _task_rec: dict = {"id": "tac2700f3", "skill": "quiz"}
+    _stage = settle(_task_rec, _EO(status="completed", artifacts=["art_001"]))
+    _line = next((str(e.get("text")) for e in _evs if "Task 落账" in str(e.get("text"))), "")
+    check("落账行里有 **Task id**（trace 里能把任务接上）", "tac2700f3" in _line, _line)
+    check("**三态 → stage** 的映射结果写出来了（唯一映射的落点）",
+          _stage == "completed" and "stage=completed" in _line, _line)
+    check("**无 kind** = 纯记录、不上屏（终端那行快照已经在说同一件事）",
+          next((e.get("kind") for e in _evs if "Task 落账" in str(e.get("text"))), "?") == "",
+          repr(next((e for e in _evs if "Task 落账" in str(e.get("text"))), None)))
 
     # ── ⑬+ 替身只许用**真类型里有的字段** ──
     # 🔴 2026-11-05：判定退休把 `progress` / `missing` 从 `Task` / `ExecOutcome` 上摘了，

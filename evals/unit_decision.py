@@ -1,4 +1,7 @@
-"""单元级：**决策记录**（不调 LLM）—— 一次 LLM 决策 = 一条记录，四段齐全。
+"""单元级：**决策记录**（不调 LLM）—— 一次**判断** = 一条记录，四段齐全。
+
+⚠️ 2026-11-05 起"判断"有两种（**同一套记录形状**，见 `handoff.decision` 的模块 docstring）：
+**LLM 决策**（试答，是交接）／**平台的结构判定**（「任务完成没」，不是交接）。
 
     uv run python -m evals.unit_decision
 
@@ -118,13 +121,21 @@ def main() -> None:
     check("`trace.decision` 发的是结构化决策事件（字段原样在 ev 里）",
           '"type": "decision"' in io.open("proto/trace.py", encoding="utf-8").read())
 
-    print("\n④ 决策点都走 `trace.decision`（不再是散装 note）")
-    # ⚠️ 2026-11-05 判定退休：**判定那次 LLM 调用整个没了**（三态改由平台按结构定），
-    #    全系统只剩**试答**一个 LLM 决策点 —— 在 `agent.py`。
+    print("\n④ 判断都走 `trace.decision`（不再是散装 note）")
+    # ⚠️ 2026-11-05 判定退休：**判定那次 LLM 调用整个没了**（三态改由平台按结构定）。
+    #    现在系统里有两处判断，**都走这一条记录形状**：
+    #      ① **试答**（LLM，`agent.py`）—— 它是交接；
+    #      ② **「任务完成没」**（平台按结构定，`executor.py`）—— **不是交接**（没有 LLM 参与），
+    #         但用户点名要审计它（*"给它的上下文是啥、结果又是啥、产生结果依据又是啥"*）——
+    #         记录形状照旧，另起一套 = 同一个问题两副面孔。
     s = io.open("proto/agent.py", encoding="utf-8").read()
-    check("`agent.py` 调了 `trace.decision(`", "trace.decision(" in s)
-    check("`executor.py` 不再有 LLM 决策（判定退休）",
-          "trace.decision(" not in io.open("proto/executor.py", encoding="utf-8").read())
+    check("`agent.py` 调了 `trace.decision(`（试答）", "trace.decision(" in s)
+    ex = io.open("proto/executor.py", encoding="utf-8").read()
+    check("`executor.py` 里**没有 LLM 判定**（判定退休）—— 没有 `safe_structured(`",
+          "safe_structured(" not in ex)
+    check("`executor.py` 的「任务完成没」**有记录**（走同一条路，不是散装 note）",
+          "trace.decision(**_verdict(" in ex,
+          "少了它 → 「完成没」这个判断在日志里又没有上下文/依据了")
 
     print("\n⑤ 段名**只有一份**：给 `_DECISION_KEYS` 加一段，两层都得跟着走")
     # 🔴 原来两边**各抄一份四段表**（记录器的 `vals` 一份、展示层的 `(标签, 键)` 一份）。

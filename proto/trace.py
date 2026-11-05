@@ -41,7 +41,7 @@ from datetime import datetime
 from typing import Any, Callable
 
 from proto.config import app_root
-from proto.handoff.decision import render_decision
+from proto.handoff.decision import RESULT_BY, render_decision
 
 #: 日志落**应用根**下的 `logs/`（见 `proto.config.app_root`）——
 #: 开发时是 `langgraph-lab/logs/`，打包后是 **exe 旁边的 `logs/`**。
@@ -270,8 +270,17 @@ def decision(
     given: Any = (),
     result: Any = (),
     nxt: str = "",
+    result_by: str = "llm",
 ) -> None:
-    """记一次 **LLM 决策**：前提 → 问题 → 结果 → 下一步（段名见 `DECISION`）。
+    """记一次**判断**：前提 → 问题 → 结果 → 下一步（段名与顺序见 `handoff.decision`）。
+
+    🔴 **两种判断共用这一条记录形状**（一套，别分叉）—— 它们问的是同一件事
+    （**谁基于什么、得出了什么、接下来干什么**），只是"填它的人"不同：
+
+      - **LLM 决策**（`agent._ask_main` 的试答）—— 它是**交接**（两端都是）；
+      - **平台的结构判定**（`executor._verdict` 的「任务完成没」）—— **不是交接**
+        （没有 LLM 参与 —— 用户 2026-11-05 的判据："关键在于 LLM 参与了"），
+        但四格一样成立：前提 = 平台看得见的结构事实、结果 = 三态 ＋ **依据**。
 
     🔴 发的是**结构化事件**（字段原样在 `ev` 里），渲染成什么样是**记录器与展示层各自的事**
     —— 展示层不再从渲染文本里反解析（2026-11-03 定）。
@@ -279,9 +288,19 @@ def decision(
     `given` / `result` 传**列表**（逐项一行）→ 渲染成 `- ` 列表；传字符串 → 一行。
     ⚠️ 列表化不是装饰：判定那段原来直接把 `j.missing` 打出来，人看到的是
     **Python repr** `['尚未收到…', '教案文本文件产物为空…']` —— 括号引号全是噪音。
+
+    `result_by`：**【结果】那一格是谁写的** —— `"llm"`（试答，要标来源）／
+    `"platform"`（「任务完成没」按结构定，平台自己的结论，不标）。它决定那格用哪个段名，
+    见 `handoff.decision.RESULT_BY`（段名要回答"这是谁的话"，借错了就是假话）。
     """
+    if result_by not in RESULT_BY:
+        # 打错一个字母就**静默**把平台的结论标成"它说的" —— 宁可当场炸（同 role / kind 那两条）。
+        raise ValueError(
+            f"decision 的 result_by={result_by!r} 不在 {sorted(RESULT_BY)} 里（见 handoff.decision.RESULT_BY）"
+        )
     _publish({"type": "decision", "kind": "", "who": who, "q": q,
-              "given": given, "result": result, "next": nxt, "ts": stamp()})
+              "given": given, "result": result, "next": nxt,
+              "result_by": result_by, "ts": stamp()})
 
 
 def cut(where: str, kept: int, total: int, *, see: str = "") -> None:

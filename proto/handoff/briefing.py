@@ -436,4 +436,16 @@ def settle(rec: dict, outcome: Any) -> str:
     """
     absorb_outcome(rec, outcome)
     rec["stage"] = _STATUS_TO_STAGE[outcome.status]
+    # 🔴 **落账也记一行**（2026-11-05）：三态是"**这一趟**跑成什么样"，`Task.stage` 才是
+    #    "**这个任务**现在算什么" —— 后者原来只活在 state 里（终端那行 `📋 TASKS` 是拿
+    #    快照现渲染的），trace 里没有"tac2700f3 → completed"这一行，复盘时接不上
+    #    （用户要审计的"完成没"里，这就是**任务那一侧的结果**）。
+    #    ⚠️ **不改取值**（`_STATUS_TO_STAGE` 仍是唯一映射）—— 这里只是把它**记出来**。
+    #    ⚠️ **无 kind = 纯记录、不上屏**：终端那行快照已经在说同一件事（`chat._turn_summary`），
+    #       再上屏就是同一个事实两副面孔。
+    trace.note(
+        f"Task 落账 · {rec.get('id')}「{rec.get('skill')}」："
+        f"status={outcome.status} → stage={rec['stage']}"
+        + ("｜**平台故障**：这一轮没跑成" if outcome.fault else "")
+    )
     return rec["stage"]

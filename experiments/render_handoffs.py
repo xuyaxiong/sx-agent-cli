@@ -81,7 +81,12 @@ def _samples(f: dict) -> list[tuple[str, str, str, str]]:
     from proto.handoff.briefing import render_briefing
     from proto.handoff.ledger import render_ledger
     from proto.handoff.nudge import nudge_text
-    from proto.handoff.receipt import build_receipt, build_rejection, render_receipt
+    from proto.handoff.receipt import (
+        build_receipt,
+        build_rejection,
+        next_note,
+        render_receipt,
+    )
 
     task, done, failed = f["task"], f["done"], f["failed"]
     return [
@@ -107,21 +112,17 @@ def _samples(f: dict) -> list[tuple[str, str, str, str]]:
         ("H10", "回执 · waiting（**决策单**：结果回给执行器，还是问用户）",
          "`finalize` 会把【它要的信息】原样贴给用户；主 agent **这一轮不发言**"
          "（`agent._StopWhenPending`）—— 所以它不会复述。",
-         render_receipt(build_receipt(f["wait"], note=(
-             "平台已登记为待答，**并会负责把这个问题原样转达给用户**，"
-             "用户的答复也会由平台投回给它 —— 你**不用**重复问，更不要自己替用户定一个答案。")))),
+         render_receipt(build_receipt(f["wait"], note=next_note("waiting")))),
 
         ("H10", "回执 · failed",
          "推满轮次、既没交产物也没申报。两种可能（真干不了 / 把答案写在回复里了），"
          "**由主 agent 看回执定**。",
-         render_receipt(build_receipt(f["incomplete"], note=(
-             "它推满了轮次**既没交产物、也没说要什么信息**。两种可能，你看回执定。")))),
+         render_receipt(build_receipt(f["incomplete"], note=next_note("failed")))),
 
         ("H10", "回执 · fault（**平台故障**）",
          "⚠️ **独立出口**：这一轮**根本没跑成**，与「执行器干不了」是两回事 —— "
          "所以不借 failed 的文案（「推了 N 轮」对故障是假话），也不塞进【执行器说】。",
-         render_receipt(build_receipt(f["faulted"], note=(
-             "这次是**平台故障**，**不是任务本身的问题** —— 原样再 `delegate` 一次即可。")))),
+         render_receipt(build_receipt(f["faulted"], note=next_note("fault")))),
 
         ("H10", "回执 · rejected_skill（**派发被拒**）",
          "⚠️ 它**不建 Task** —— 主 agent 编了一个不存在的技能名，当场拒绝并列出真实清单。"
@@ -162,6 +163,27 @@ def _samples(f: dict) -> list[tuple[str, str, str, str]]:
              "q": "**主 agent 的上下文里**，有没有执行器要的那个信息？",
              "result": ["can_answer = **False**", "补充：（无）"],
              "next": "答不上 → 登记待答，由**平台**把执行器原话**透传**给用户",
+         })),
+
+        ("—", "判定（平台按结构定 → 记录）★ **同一个判断，作者换成平台**",
+         "「任务完成没」原来由**一次 LLM 调用**（判定）判，那次调用 2026-11-05 退休、"
+         "改由平台按结构定 —— **但判断还在，记录也在**（用户：*「给它的上下文是啥、结果又是啥、"
+         "产生结果依据又是啥 —— 这些都要能看到才能审计」*）。\n"
+         "⚠️ 四格里有三格和上面那张**共用段名**，**只有第三个格子换名**："
+         "【结果】标着「**它说的** —— LLM 的输出」，而这一格是**平台自己的结论** —— "
+         "借过来就是**假话**，所以它叫【平台判定】，**不标来源**（同【平台故障】）。",
+         render_decision({
+             "who": "任务完成没（平台按结构定）· R01 · 内部第 1 轮",
+             "result_by": "platform",
+             "given": ["**申报要信息**（`ask_user`）：**没有**（本轮没调它）",
+                       "**交付产物**（`write_artifact` 记的账）：**1 个** —— art_001",
+                       "**轮次**：内部第 1 轮（上限 3）"],
+             "q": "这个任务完成没？（三态**由结构定** —— 平台只看上面那三件事实，"
+                  "**不读正文、不判质量**）",
+             "result": ["status = **completed**",
+                        "依据：它**交了产物**（同一顺序；本轮**没申报**）"],
+             "next": "**回执给主 agent** —— 由它判「够不够」（平台不判质量；"
+                     "判据以**技能声明的交付标准**为准）",
          })),
 
         ("H13", "待答透传（平台 → 用户）",
@@ -245,7 +267,8 @@ def main() -> None:
         "> —— 它们要么是**原始文本**、要么是**结构字段**，**没有「单子」可看**。\n",
         "\n## 二、每一张单子的样例\n",
         "> 全部用**同一个场景**（荷花那节课）渲染，方便横向比。\n",
-        "> ⚠️ **下面 12 张是走 `render_hop` 的「单子」**。表里还有几处**没采样** ——\n"
+        # ⚠️ **张数由 `_samples` 报**（不写死）—— 写死的数字必然陈旧（"嘴上说 3、实际铺 5" 那个坑）。
+        f"> ⚠️ **下面 {len(_samples(f))} 张是走 `render_hop` 的「单子」**。表里还有几处**没采样** ——\n"
         "> H2（技能清单：系统提示里的一段列表）、H6 / H15 / H16（**工具返回**：\n"
         "> `write_artifact` / `read_artifact` / `read_skill`）、H21（评分材料，评测层）。\n"
         "> **它们不走 `render_hop`，也不该走** —— 段名/来源/缩进那套规矩是给**交接单**定的，\n"
