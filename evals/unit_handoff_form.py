@@ -47,7 +47,7 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 
 def _fixtures() -> dict[str, str]:
     """**每一跳渲染一遍** —— 键 = `HOPS` 里的跳名。"""
-    from langchain_core.messages import AIMessage, HumanMessage
+    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
     from proto import artifacts
     from proto.artifacts import store_artifact
@@ -55,6 +55,7 @@ def _fixtures() -> dict[str, str]:
     from proto.graph import render_relay
     from proto.handoff.ask import build_prompt
     from proto.handoff import render_hop
+    from proto.handoff.decision import render_decision
     from proto.handoff.briefing import render_briefing
     from proto.handoff.ledger import render_ledger
     from proto.handoff.nudge import nudge_text
@@ -79,14 +80,35 @@ def _fixtures() -> dict[str, str]:
             __import__("proto.handoff.receipt", fromlist=["build_rejection"])
             .build_rejection("rejected_skill", "❌ 没有技能「x」", "a、b")),
         "ledger": render_ledger([task, done]),
-        "ask": build_prompt("lesson-prep", "生成《荷花》教案", wait,
-                            [HumanMessage("帮我备《荷花》这一课"), AIMessage("好的，先派教案。")]),
+        # 🔴 **上下文照真会话那个形状造**（2026-11-05）：上一轮的回执（一张单子）
+        #    和平台注入的台账（另一张单子）都在里面 —— **多行消息的嵌套**就靠它们才跑得到。
+        #    ⚠️ 原来这里只有两条**单行**消息 —— 于是"一张单子塞进列表项"那个形状
+        #    **根本没出现过**，⑧ 会绿着放它过去（这正是它漏掉那个 bug 的原因）。
+        "ask": build_prompt("lesson-prep", "生成《荷花》教案", wait, [
+            HumanMessage("帮我备《荷花》这一课"),
+            AIMessage("好的，先派教案。"),
+            ToolMessage(render_receipt(build_receipt(wait, note="平台已登记为待答")),
+                        tool_call_id="call_prev"),
+            SystemMessage(render_ledger([done])),
+            HumanMessage("探究发现型"),
+        ]),
         "nudge": nudge_text(),
         "relay": render_relay([task]),
         # ★ **第 7 跳**：任务文本（执行器打开就看的那一页）
         "task_text": render_hop("task_text", {
             "skill_instructions": "（技能指令全文……）",
             "known": render_briefing(task),
+        }),
+        # ★ **第 8 跳**：决策（一次 LLM 调用的两端 ＋ 平台的两句描述）
+        # ⚠️ **2026-11-05 收进来的** —— 它原来有**自己的一套段名**（不带 `【】`）
+        #    和**自己的一套缩进**（4 格），把"段名一律 `【…】`"那条硬规矩开了口子。
+        "decision": render_decision({
+            "who": "试答（LLM）· 平台强制的一步",
+            "given": ["执行器申报要的信息（`ask_user` 参数原话，132 字）：这节课希望侧重哪种上法？",
+                      "它最后说的那段（78 字，可能有上下文、也可能只是过场）"],
+            "q": "**主 agent 的上下文里**，有没有执行器要的那个信息？",
+            "result": ["can_answer = **False**", "补充：（无）"],
+            "next": "答不上 → 登记待答，由**平台**把执行器原话**透传**给用户",
         }),
     }
 
@@ -159,6 +181,35 @@ def main() -> None:  # noqa: C901
     check("渲染器里没有手拼的段名行（`SECTION` 是唯一来源）", not hits,
           f"手拼的：{hits[:6]}")
 
+    print("\n⑤' 🔴 **段名只许喂给 `render_hop`** —— 不许自己拼一遍")
+    # ⚠️ **这条是 2026-11-05 用户指着日志翻出来的**：`executor.run_task` 里那条
+    #    trace block **重拼了一遍** task_text（`f"{SECTION['known']}\n{briefing_text}"`）——
+    #    于是 `task_text` 改了缩进、**日志里还是平的**（"这里为啥不缩进"）。
+    #    **同一份内容两处拼，形状必然漂** —— 而日志是给人复盘看的，漂了会误导人。
+    #    ⇒ 判据：`SECTION[...]` 只许出现在 `render_hop(...)` 的调用里。
+    orphan: list[str] = []
+    for py in root.rglob("*.py"):
+        if py.name == "__init__.py" and py.parent.name == "handoff":
+            continue
+        try:
+            tree = ast.parse(py.read_text(encoding="utf-8"))
+        except SyntaxError:
+            continue
+        # 先收集"在 render_hop(...) 调用里"的那些节点的 id
+        inside: set[int] = set()
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Call) and (
+                    (isinstance(n.func, ast.Name) and n.func.id == "render_hop")
+                    or (isinstance(n.func, ast.Attribute) and n.func.attr == "render_hop")):
+                for sub in ast.walk(n):
+                    inside.add(id(sub))
+        for n in ast.walk(tree):
+            if (isinstance(n, ast.Subscript) and isinstance(n.value, ast.Name)
+                    and n.value.id == "SECTION" and id(n) not in inside):
+                orphan.append(f"{py.relative_to(root.parent)}:{n.lineno}")
+    check("`SECTION[...]` 只出现在 `render_hop` 的调用里（没有自己拼的）", not orphan,
+          f"自己拼的：{orphan[:4]}")
+
     print("\n⑥ 🔴 **用词体系**（用户 2026-11-05）：同一个语义只许一个词")
     # ⚠️ **这条守的是"内容"那一半** —— ⑤ 守形式（段名不许手拼），这条守**用词**。
     #    用户原话：*"原则上交接单用词都应该是一个体系，这些词也是比较考究的，现在有些随意。"*
@@ -212,6 +263,29 @@ def main() -> None:  # noqa: C901
                 leak.append(f"{py.name}:{i} {ln.strip()[:60]}")
     check("没有「`asked` 取不到就退回 `report`」的写法（该用 `asked_text`）", not leak,
           "\n      ".join(leak[:4]))
+
+    print("\n⑧ 🔴 **段名要么独占一行，要么是句子里的引用** —— 不许粘在行尾")
+    # 🔴 **2026-11-05 用户指着日志翻出来的**：试答提示词的【你的上下文】里，工具返回
+    #    （**本身就是一张单子**）被 `f"- {who}：{content}"` **把第一行粘在列表项后面** ——
+    #    于是段名 `【交付】` 落在**行尾**、`【它要的信息】` 落回**和 `- ` 同一列**，
+    #    读的人分不清哪几行属于哪一项（同一个提示词里 `【它要的信息】` 出现两次、
+    #    层级还分不出来）。
+    #    ⇒ 判据：**行尾不许出现 `【…】`** —— 独占一行 ✓ / 句中引用 ✓ / 粘在行尾 ✗。
+    #    ⚠️ **误报面**：引用恰好收在行尾（`…见上面那条【执行器说】`）——
+    #       改写成 `…见上面【执行器说】那一节` 即可（那是**指路**，不是渲染）。
+    glued: list[str] = []
+    for hop, text in rendered.items():
+        for ln in text.splitlines():
+            s = ln.rstrip()
+            if s.endswith("】") and not s.lstrip().startswith("【"):
+                glued.append(f"{hop}: {s.strip()[:60]}")
+    check("每一跳的渲染里都没有「段名粘在行尾」", not glued, "\n      ".join(glued[:4]))
+    # ⚠️ **空守卫自检**：`ask` 那一跳里得**真的有嵌套段名**（喂了多行消息）——
+    #    不然上面那条永远绿着，什么也没守（这个 bug 当初就是这么漏过去的）。
+    nested = [ln.strip() for ln in rendered["ask"].splitlines()
+              if ln.strip().startswith("【") and ln.startswith(" ")]
+    check("（前提）`ask` 那一跳里**确实有嵌套段名** —— 否则 ⑧ 是空守卫",
+          bool(nested), f"嵌套段名：{nested[:3] or '（一个都没有）'}")
 
     print("\n" + "═" * 78)
     print(f"{'全部通过' if not FAIL else '有失败'}：{len(PASS)}/{len(PASS) + len(FAIL)}")

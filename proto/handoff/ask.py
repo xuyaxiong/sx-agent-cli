@@ -17,7 +17,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from proto.handoff import INJECTED, render_hop
+from proto.handoff import BODY, INJECTED, body_lines, render_hop
 
 #: 消息类型 → **人话**（读的人是主 agent，所以 `AIMessage` 是"你"）。
 #:
@@ -43,6 +43,33 @@ def _who(m: Any) -> str:  # noqa: ANN401
     return f"**{_WHO.get(type(m).__name__, type(m).__name__)}**"
 
 
+def _item(m: Any) -> str:  # noqa: ANN401
+    """一条消息 → **一个列表项**（多行的整块缩在下一层）。
+
+    🔴 **2026-11-05 修**：原来是 `f"- {_who(m)}：{str(m.content)}"` —— 单行的没问题，
+    但**工具返回 / 平台注入本身就是一张单子**（回执有【交付】【它要的信息】【执行器说】
+    【下一步】，台账有【平台提示】）。那一行会把这张单子的**第一行粘在列表项后面**，
+    其余行按**原文的缩进**跟着走 —— 于是单子的段名（原文 0 列）落回**和 `- ` 同一列**：
+
+        - **工具返回**：【交付】        ← 段名被粘住
+          它在**要信息**（调了 `ask_user`）
+        【它要的信息】                 ← 看着像【你的上下文】自己的一段 ✗
+          来源：…
+
+    实测后果：**同一个提示词里 `【它要的信息】` 出现两次**（顶层是这一问、回执里是上一问），
+    而层级看不出来，读的人分不清哪个是哪个。
+    这和 `executor.py` 的 `task_text` 修过的是**同一个形状**（当时那句：
+    *"【已知信息】和它里面的【任务】【用户原话】同在 0 列"*）——
+    **一张单子要么整块在下一层，要么别塞进来。**
+    """
+    body = str(m.content)
+    lines = body.splitlines() or [""]
+    if len(lines) == 1:
+        return f"- {_who(m)}：{lines[0]}"
+    # 段名那一行**不跟内容** —— 整张单子缩在下一层（`render_hop` 还会再 +2）
+    return "\n".join([f"- {_who(m)}：", *body_lines(body, BODY)])
+
+
 def build_prompt(skill_name: str, task: str, outcome: Any, messages: list) -> str:
     """试答那一步喂给主 agent 的**全部输入** —— 抽成纯函数是为了**可单测**。
 
@@ -63,7 +90,7 @@ def build_prompt(skill_name: str, task: str, outcome: Any, messages: list) -> st
     `docs/handoff-audit.md` §五 隐患 3）。**没有实测压到过，先不修。**
     """
     msgs = list(messages)
-    history = "\n".join(f"- {_who(m)}：{str(m.content)}" for m in msgs)
+    history = "\n".join(_item(m) for m in msgs)
     return render_hop("ask", {
         # 🔴 **要什么 = 工具参数里的原话**（结构 ✓）—— 不是从它的话里挑出来的
         "asked": str(getattr(outcome, "asked", "") or "").strip(),

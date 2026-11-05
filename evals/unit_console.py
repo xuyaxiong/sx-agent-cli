@@ -347,6 +347,38 @@ def main() -> None:
     check("记录层仍带 `finalize: ` 前缀（文件格式不变）",
           line.endswith("finalize: " + relay_text), repr(line[:80]))
 
+    print("\n⑬ 试答那一块：**一次决策 = 一个块**，标题**取自事件**（展示层不许自己编）")
+    # 🔴 **2026-11-05 用户指着日志翻出来的**：屏幕上印出**两个 `🧭 DECIDE` 块**，
+    #    标题还不一样 —— PROMPT 那块写的是展示层**自己编的**
+    #    「【试答 · LLM 决策】平台强制的一步」（还用了 `【】`，段名专用符号），
+    #    业务侧那份是 `agent._ASK_STEP`。**同一个"谁"两副面孔，而且已经漂了。**
+    #    而且这两半本来就是**一次 LLM 调用的两端**（用户 2026-11-05 的判据：
+    #    *"所谓交接，就是外部给 LLM 什么东西、LLM 吐出什么东西"*）—— 该合成一块。
+    _STEP = "试答（LLM）· 平台强制的一步"
+    seen13, restore13 = _reset_emit(chat)
+    try:
+        chat._on_event({"type": "section", "kind": "ask_main", "ts": "t", "title": _STEP})
+        chat._on_event({"type": "block", "kind": "llm_io", "ts": "t", "indent": "  ",
+                        "label": "PROMPT（发给 LLM 的全文）",
+                        "text": "【它要的信息】\n  …\n【请判断】\n  …"})
+        chat._on_event({"type": "decision", "kind": "", "ts": "t", "who": _STEP,
+                        "given": "g", "q": "q", "result": "r", "next": "n"})
+    finally:
+        restore13()
+    blocks = [r for r, _ in seen13 if r == "decide"]
+    body = "\n".join(t for _, t in seen13)
+    check("PROMPT 和四段在**同一个块**里（只吐一次 `decide`）",
+          blocks == ["decide"], f"吐了 {len(blocks)} 次：{blocks}")
+    check("块标题 == 事件里的 `title`（展示层没自己编一个名字）", _STEP in body)
+    check("`who` **没有**在块里再印一遍（同一句话印两回）",
+          body.count(_STEP) == 1, f"出现了 {body.count(_STEP)} 次")
+    # ⚠️ 用 `find` 不用 `index`：PROMPT 那块**没吐出来**时（回退成两块那种改法），
+    #    `index` 会抛 ValueError —— 那就成了"脚本炸了"而不是"这条红了"，
+    #    输出里**没有 ❌ 行**，看不出红的是哪一条。
+    _i_p, _i_q = body.find("PROMPT（发给 LLM 的全文）"), body.find("【前提】")
+    check("PROMPT（输入）在四段（结果）**之前** —— 【前提】里写的就是「见上面那条 PROMPT」",
+          -1 < _i_p < _i_q, f"PROMPT@{_i_p}，【前提】@{_i_q}")
+
     print("\n" + "═" * 78)
     print(f"{'全部通过' if not FAIL else '有失败'}：{len(PASS)}/{len(PASS) + len(FAIL)}")
     for name in FAIL:

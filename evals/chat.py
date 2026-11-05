@@ -47,6 +47,7 @@ from evals.harness import (  # noqa: E402
 from proto import artifacts as proto_artifacts  # noqa: E402
 from proto import trace  # noqa: E402
 from proto.graph import build, next_pending  # noqa: E402
+from proto.handoff.briefing import asked_text  # noqa: E402
 from proto import artifacts as artifacts_mod  # noqa: E402
 from proto.registry import registry  # noqa: E402
 
@@ -414,31 +415,27 @@ def _close_pending() -> None:
         _PENDING = None
 
 
-def _render_decision(ev: dict) -> str:
-    """决策**事件** → 显示文本。排版是本层的（记录层文件里那份缩进与本层无关）。
+def _render_decision(ev: dict, *, with_who: bool = True) -> str:
+    """决策**事件** → 显示文本。
 
-    🔴 **段名与顺序从 `trace.DECISION` 取**，不在这里再抄一份：抄一份的后果是
-    记录层加了一段、终端**静默少一段**（2026-11-03 审核 F2 实测）。
-    缩进仍归本层 —— 记录层用 4 格，这里 0/2 格。
+    🔴 **2026-11-05：渲染收敛到 `handoff.decision.render_decision`** ——
+    在这之前**这一层和记录层各排一遍**，而且**排版还不一样**（记录层 4 格、这里 0/2 格）✗。
+    同一件事两处定义，形状必然漂（"改一句文案、下游静默失效"那一族）。
+
+    现在：**排版归一处**，本层只加**自己的载体**（段头一行 ＋ 整体缩 2 格，
+    让它挂在段头下面）。
+
+    `with_who=False`：**接在挂着的块尾巴上**时用（那个块的标题已经是同一句话了，
+    见 `k == "ask_main"` 那段）—— 再印一遍就是同一个"谁"两副面孔的翻版。
+    ⚠️ 那种情况下**也不再多缩 2 格**：缩进是为了"挂在段头那行下面"，
+    而块里已经没有那一行了 —— 同块里 PROMPT（0 列）和四段（2 列）会看着像两层。
     """
-    lines = [str(ev["who"])]
-    for key, label in trace.DECISION.items():
-        val = ev.get(key)
-        items = [str(x) for x in val] if isinstance(val, (list, tuple)) else [str(val or "")]
-        items = [x for x in items if x.strip()]
-        if not items:
-            continue
-        if len(items) == 1 and not isinstance(val, (list, tuple)):
-            sub = items[0].splitlines()
-            lines.append(f"{label}：{sub[0]}")
-            lines += [f"  {ln}" for ln in sub[1:]]
-        else:
-            lines.append(f"{label}：")
-            for it in items:
-                ls = it.splitlines() or [""]
-                lines.append(f"  - {ls[0]}")
-                lines += [f"    {ln}" for ln in ls[1:]]
-    return "\n".join(lines)
+    from proto.handoff.decision import render_decision
+
+    body = render_decision(ev)
+    if not with_who:
+        return body
+    return f"{ev['who']}\n" + "\n".join(f"  {ln}" for ln in body.splitlines())
 
 
 #: 已经吼过的未知角色的值 —— 同一个错误只吼一次，别把屏幕刷了
@@ -530,7 +527,9 @@ def _on_event(ev: dict) -> None:
     t, k = ev.get("type"), ev.get("kind") or ""
     # llm_io 的 PROMPT/RESPONSE 归并进挂着的试答块（同一次 LLM 调用 = 同一块）；
     # 其余任何事件到来都先关块 —— 时序不许倒。
-    if not (t == "block" and k == "llm_io" and _PENDING is not None):
+    # ⚠️ `decision` 也**不关块**（2026-11-05）：它是这个块的**另一半**（结果），
+    #    由下面那个分支接上去一起吐 —— 见 `k == "ask_main"` 那段的注释。
+    if not (t == "block" and k == "llm_io" and _PENDING is not None) and t != "decision":
         _close_pending()
 
     if t == "stream":
@@ -541,10 +540,20 @@ def _on_event(ev: dict) -> None:
         _on_dump(ev)
     elif t == "section":
         if k == "ask_main":
-            # ⚠️ 不写"在 `delegate` 内部"（2026-11-04 E1）：这一步**两条路都会走**
-            #    （首次派发 / 投递重跑），写死位置就是假话。
-            _PENDING = ["decide", ["【试答 · LLM 决策】平台强制的一步",
-                                   "参与决策的全部信息（发给 LLM 的全文）↓"], ev["ts"]]
+            # 🔴 **标题取事件里的 `title`，不许自己编**（2026-11-05 修）。
+            #    原来这里写死了「【试答 · LLM 决策】平台强制的一步」—— 和业务侧那份
+            #    （`agent._ASK_STEP`）**已经漂了**，而且用了 `【】`（段名专用符号）。
+            #    后果：屏幕上**两个 `🧭 DECIDE` 块、两个标题**（PROMPT 一块、记录一块），
+            #    读的人以为是**两次决策**。
+            #    ⇒ 这一步的名字只有 `agent._ASK_STEP` 一份，业务侧把它放进
+            #      `trace.section` 的标题（`safe_structured(tag=…)`）里带过来。
+            #
+            # 🔴 **而且这两半要合成一块**（用户 2026-11-05 的判据：*"所谓交接，就是
+            #    外部给 LLM 什么东西、LLM 吐出什么东西"*）：**PROMPT 是这次决策的前提**
+            #    （【前提】里就写着"逐字见上面那条 PROMPT"），**四段是它的结果**。
+            #    块在这儿开、PROMPT 由 `llm_io` 归并进来（**实时上屏，不黑屏**），
+            #    四段在 `decision` 事件到达时**接到同一个块尾部**。
+            _PENDING = ["decide", [str(ev["title"])], ev["ts"]]
         elif k in _ROLE_BY_KIND:
             _emit(_ROLE_BY_KIND[k], str(ev["title"]), stamp=ev["ts"], cap=True)
     elif t == "block":
@@ -556,7 +565,15 @@ def _on_event(ev: dict) -> None:
             _emit("inject", "平台 → 执行器：本次交接的全部已知\n" + str(ev["text"]),
                   stamp=ev["ts"])
     elif t == "decision":
-        _emit("decide", _render_decision(ev), stamp=ev["ts"])
+        # 🔴 **接在挂着的块尾巴上**（2026-11-05）：那个块是**这次 LLM 调用的一端**
+        #    （PROMPT，由 `ask_main` 开、`llm_io` 归并），四段是**另一端** ——
+        #    分开吐的话，同一件事在屏幕上就是两个 `🧭 DECIDE`。
+        #    ⚠️ 没有挂着的块（`log_prompt=False` 那类）就自己吐一块。
+        if _PENDING is not None:
+            _PENDING[1] += _render_decision(ev, with_who=False).splitlines()
+            _close_pending()
+        else:
+            _emit("decide", _render_decision(ev), stamp=ev["ts"])
     elif t == "note":
         if k == "waiting":
             _emit("decide", "分支：主 agent 答不上 → " + str(ev["text"]), stamp=ev["ts"])

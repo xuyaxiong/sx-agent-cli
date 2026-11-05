@@ -80,13 +80,15 @@ def _sample() -> None:
 def main() -> None:
     got = _capture(_sample)
     print("① 四段齐全、顺序 = 用户定的那个顺序（前提 → 问题 → 结果 → 下一步）")
-    heads = [f"{trace._DECISION_HEAD} · ", *[f"    {v}：" for v in trace.DECISION.values()]]
+    from proto.handoff import HOPS, SECTION
+    _secs = [SECTION[k] for k in HOPS["decision"]]
+    heads = [f"{trace._DECISION_HEAD} · ", *[f"    {v}" for v in _secs]]
     for h in heads:
         check(f"`{h.strip()}` 在", h in got, repr(got[:120]))
-    pos = [got.find(f"    {v}：") for v in trace.DECISION.values()]
+    pos = [got.find(f"    {v}") for v in _secs]
     check("四段的**先后顺序**对", pos == sorted(pos) and all(p >= 0 for p in pos), f"位置={pos}")
     check("表里的段名**都用到了**（没有死段）",
-          all(f"{v}：" in got for v in trace.DECISION.values()))
+          all(f"{v}" in got for v in _secs))
 
     print("\n② 值**一个字都不丢**，且列表**不是 Python repr**")
     for frag in ("技能 lesson-prep（instructions 2532 字，按名引用）",
@@ -124,17 +126,31 @@ def main() -> None:
     check("`executor.py` 不再有 LLM 决策（判定退休）",
           "trace.decision(" not in io.open("proto/executor.py", encoding="utf-8").read())
 
-    print("\n⑤ 段名**只有一份**：给 `DECISION` 加一段，两层都得跟着走")
+    print("\n⑤ 段名**只有一份**：给 `_DECISION_KEYS` 加一段，两层都得跟着走")
     # 🔴 原来两边**各抄一份四段表**（记录器的 `vals` 一份、展示层的 `(标签, 键)` 一份）。
-    # 给 `DECISION` 加一段的后果（2026-11-03 审核实测）：记录层**整块决策从日志里消失**
+    # 加一段的后果（2026-11-03 审核实测）：记录层**整块决策从日志里消失**
     # （KeyError 被总线的兜底吃掉，只剩一行 ⚠️）、展示层**静默少一段**。
-    trace.DECISION["cost"] = "成本"
+    #
+    # ⚠️ **2026-11-05**：段名表从 `trace.DECISION` 搬到了 `SECTION` ＋
+    # `HOPS["decision"]` —— 那份是**第二份段名表**（不带 `【】`、缩进另算），
+    # 把"段名一律 `【…】` 独占行首"那条硬规矩**开了第二个口子** ✗。
+    from proto.handoff import SECTION
+    from proto.handoff.decision import _DECISION_KEYS
+
+    # ⚠️ **加一段要动三处** —— 它们是**三件不同的事**，不是"同一份抄三遍"：
+    #    ① `SECTION`：段名本身（**所有段名的家**）
+    #    ② `HOPS["decision"]`：**这一跳**用哪几段、什么顺序（`render_hop` 照着走）
+    #    ③ `_DECISION_KEYS`：**事件字段 → 段名 key** 的映射（事件里叫 `cost`）
+    from proto.handoff import HOPS
+    _DECISION_KEYS["cost"] = "dec_cost"
+    SECTION["dec_cost"] = "【成本】"
+    HOPS["decision"] = (*HOPS["decision"], "dec_cost")
     try:
         ev5 = {"type": "decision", "kind": "", "who": "R02 第 1 轮判定", "q": "做完了吗",
                "given": "材料 5136 字", "result": "incomplete", "next": "推它继续",
                "cost": "6.2s", "ts": "2026-11-03 12:00:00.000"}
         got5 = _capture(lambda: trace._publish(ev5))
-        check("记录层渲染出了新段（不是 KeyError 丢整块）", "成本" in got5, repr(got5[:200]))
+        check("记录层渲染出了新段（不是 KeyError 丢整块）", "【成本】" in got5, repr(got5[:200]))
         seen5: list[str] = []
         real_emit = chat._emit
         chat._emit = lambda role, text, stamp=None, *, cap=False: seen5.append(text)  # type: ignore[assignment]
@@ -143,16 +159,19 @@ def main() -> None:
         finally:
             chat._emit = real_emit  # type: ignore[assignment]
         check("展示层也渲染出了新段（不静默少一段）",
-              bool(seen5) and "成本" in seen5[-1], repr(seen5[-1][:200]) if seen5 else "（没播）")
+              bool(seen5) and "【成本】" in seen5[-1], repr(seen5[-1][:200]) if seen5 else "（没播）")
     finally:
-        del trace.DECISION["cost"]
+        del _DECISION_KEYS["cost"]
+        del SECTION["dec_cost"]
+        HOPS["decision"] = tuple(k for k in HOPS["decision"] if k != "dec_cost")
 
     print("\n⑥ 发射器把 `DECISION` 的**每一个键**都放进事件（漏一个 = 静默丢一段）")
     evs: list[dict] = []
     trace.subscribe(evs.append)
     trace.decision("发射器检查", q="q", given="g", result="r", nxt="n")
-    check("事件里的键**覆盖** `DECISION`", bool(evs) and set(trace.DECISION) <= set(evs[-1]),
-          f"事件键={sorted(evs[-1]) if evs else '（没发）'}，DECISION={list(trace.DECISION)}")
+    _fields = set(_DECISION_KEYS)
+    check("事件里的键**覆盖** `_DECISION_KEYS`", bool(evs) and _fields <= set(evs[-1]),
+          f"事件键={sorted(evs[-1]) if evs else '（没发）'}，需要={sorted(_fields)}")
 
 
     print("\n⑨ `safe_structured`：抖动 → 重试一次 → **保守默认**（不炸整轮）")

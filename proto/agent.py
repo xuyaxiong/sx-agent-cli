@@ -130,6 +130,21 @@ _MAIN_PROMPT = (
 
 # ──────────────────────────── 主 agent 试答 ────────────────────────────
 
+#: 这一步**叫什么** —— 业务侧的**唯一一份**（`section` 的标题和决策记录的 `who` 都用它）。
+#:
+#: 🔴 **原来有三份，而且三份都不一样**（2026-11-05 修）：
+#:
+#: | 在哪 | 写的是 | 毛病 |
+#: |---|---|---|
+#: | `safe_structured(tag=…)` → `section` 标题 | `delegate → 平台强制让主 agent 试答` | **假话** —— 投递重跑那条路也走这一步（见 `try_answer_then_rerun`） |
+#: | `trace.decision(who=…)` | `试答（LLM）· 平台强制的一步` | —— |
+#: | `evals/chat.py` 上屏的块标题 | `【试答 · LLM 决策】平台强制的一步` | 展示层**自己编的**，还用了 `【】`（段名专用符号） |
+#:
+#: ⇒ 屏幕上于是出现**两个 `🧭 DECIDE` 块、两个标题**（PROMPT 块 ＋ 记录块），
+#: 读的人以为是**两次决策**。现在展示层直接用 `ev["title"]`（`chat._on_event`），
+#: 三份收敛成这一份。
+_ASK_STEP = "试答（LLM）· 平台强制的一步"
+
 
 class _AgentAnswer(BaseModel):
     can_answer: bool = Field(description="你的上下文里有没有它缺的信息")
@@ -162,7 +177,7 @@ def _ask_main(messages: list, skill_name: str, task: str, outcome: Any) -> str:
     # 调用失败时保守当作「答不上」—— 交给用户，而不是编一个答案
     r = safe_structured(
         _AgentAnswer, prompt, _AgentAnswer(can_answer=False),
-        tag="delegate → 平台强制让主 agent 试答",
+        tag=_ASK_STEP,
         kind="ask_main",
         # ⚠️ 返回**不原样再记一遍**：下面那条决策记录里已经有排好版的「结果」——
         # 再来一条 `can_answer=True answer='课型：…\n学生基础：…'`（转义 repr）
@@ -174,14 +189,16 @@ def _ask_main(messages: list, skill_name: str, task: str, outcome: Any) -> str:
     # 这里只说清"它看的是什么"，不重复贴一遍。
     ans = r.answer.strip()
     trace.decision(
-        # ⚠️ 不再写"在 delegate 内部"（2026-11-04 E1）：这一步**两条路都会走**
-        # （首次派发 / 投递重跑），写死位置会变成假话。
-        "试答（LLM）· 平台强制的一步",
+        _ASK_STEP,
         q="**主 agent 的上下文里**，有没有执行器要的那个信息？（有就不打扰用户）",
         given=[
             # 🔴 **它要什么 = `ask_user` 参数里的原话**（结构 ✓）—— 判定退休后没有
             #    "判定说的已做到/还缺"那两样了（那本来是判定吐的）。
-            f"执行器申报要的信息（`ask_user` 参数原话，{len(outcome.asked)} 字）：{outcome.asked}",
+            # ⚠️ **这一跳问的就是它**（用户 2026-11-05：*"谁在向谁问一个什么问题"*）——
+            #    所以**原话在这儿给全** ✓（132 字，便宜）。不给全的话，"试答答不上"
+            #    这条结论就没有指涉对象了。**不重贴的只有结尾那行 run 账**（它是摘要）。
+            f"**它要的那句**（执行器 → 平台，`ask_user` 原话，{len(outcome.asked)} 字）："
+            f"{outcome.asked}",
             f"它最后说的那段（{len(outcome.report)} 字，可能有上下文、也可能只是过场）",
             f"主 agent 的全部 {len(msgs)} 条消息 —— **全文、不截**，逐字见上面那条 PROMPT",
         ],
@@ -189,10 +206,14 @@ def _ask_main(messages: list, skill_name: str, task: str, outcome: Any) -> str:
             f"can_answer = **{r.can_answer}**",
             f"补充：{ans or '（无）'}",
         ],
+        # 🔴 **两个出口都写清「谁 → 谁」**（用户 2026-11-05：*"谁答不上被转发给谁了"*）——
+        #    原来只写"答不上 → 登记待答"，**谁答不上、转给谁**都得靠读的人自己补。
         nxt=(
-            "成对记进 `Task.qa`（`by=主 agent`）→ 带回去重跑执行器，**不打扰用户**"
+            "**主 agent 答得上** → 成对记进 `Task.qa`（`by=主 agent`）→ 带回去重跑执行器，"
+            "**不打扰用户**"
             if r.can_answer
-            else "答不上 → 登记待答，由**平台**把执行器原话**透传**给用户"
+            else "**主 agent 答不上 → 转给用户**：登记待答，由**平台**把执行器原话"
+                 "**透传**给用户"
         ),
     )
     return ans if r.can_answer else ""
@@ -499,8 +520,18 @@ def delegate(
 
         if outcome.status == "waiting_for_input":
             settle(rec, outcome)
-            trace.note(f"delegate · {tid} 登记待答（平台负责转达，不由主 agent 代问）",
-                       kind="waiting")
+            # 🔴 **说清这一跳的「谁 → 谁」**（用户 2026-11-05：*"谁答不上被转发给谁了"*）：
+            #    执行器问的那句，**由平台原样转给用户**。
+            #    ⚠️ 「**主 agent 答不上**」这半句**不写在这儿** —— 两个原因：
+            #      ① 它就在上面那条 `🧭 DECIDE` 的【结果】里（`can_answer = False`），
+            #         同一个事实不写两遍；
+            #      ② 展示层上屏时**已经加了**「分支：主 agent 答不上 → 」这个前缀
+            #         （`chat._on_event`）—— 再写一遍终端上就是同一个意思印两回。
+            trace.note(
+                f"delegate · {tid}（{skill.name}）**登记待答** —— 执行器问的那句"
+                f"由平台原样转给用户（不由主 agent 代问）",
+                kind="waiting",
+            )
             return _out(
                 rec, outcome,
                 note="平台已登记为待答，**并会负责把这个问题转达给用户**，"

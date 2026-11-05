@@ -41,6 +41,7 @@ from datetime import datetime
 from typing import Any, Callable
 
 from proto.config import app_root
+from proto.handoff.decision import render_decision
 
 #: 日志落**应用根**下的 `logs/`（见 `proto.config.app_root`）——
 #: 开发时是 `langgraph-lab/logs/`，打包后是 **exe 旁边的 `logs/`**。
@@ -581,12 +582,12 @@ _NOTE_HEAD = {"relay": "finalize: "}
 #: ⚠️ **段名只有这一份**：记录器与展示层**都从这里取**（各自排版）。
 #: 两边各抄一份的后果实测过（2026-11-03 审核 F2）：给这张表加一段，
 #: 记录层整块决策从日志里**消失**、展示层**静默**少一段。
-DECISION: dict[str, str] = {
-    "given": "前提",
-    "q": "问题",
-    "result": "结果",
-    "next": "下一步",
-}
+#: ⚠️ ~~`DECISION`~~ **2026-11-05 删** —— 它是**第二份段名表** ✗：
+#: `前提` / `问题` / `结果` / `下一步`，**不带 `【】`**、缩进另算 4 格 ——
+#: 而 `SECTION` 的注释写着"段名一律是 `【…】` 形式、独占行首 ——
+#: **记录层靠这两条做确定性切分**"。它把那条硬规矩**开了第二个口子**。
+#: 现在段名在 `SECTION`（`dec_given` / `dec_q` / `dec_result` / 共用的 `next`），
+#: 顺序在 `HOPS["decision"]`，渲染在 `handoff.decision.render_decision`。
 
 #: 决策块的缩进 —— **记录层自己的排版**。（⚠️ 2026-11-03 前它是 4，理由是"展示层要剥
 #: 2 格"—— 展示层已改为订阅事件、自己排版，这条跨层耦合**作废**；文件里留 4 格
@@ -628,26 +629,12 @@ def _recorder(ev: dict) -> None:
         for i, m in enumerate(messages):
             _write(f"  [{i}] {render_message(m)}")
     elif t == "decision":
-        out = [f"{_DECISION_HEAD} · {ev['who']}"]
-        # 🔴 键表**从 `DECISION` 取**，不在这里再抄一份（抄一份的后果见 `DECISION` 的注释）。
-        vals = {k: ev.get(k) for k in DECISION}
-        for key in DECISION:
-            val = vals[key]
-            items = list(val) if isinstance(val, (list, tuple)) else [val]
-            items = [str(x) for x in items if str(x or "").strip()]
-            if not items:
-                continue
-            if len(items) == 1 and not isinstance(val, (list, tuple)):
-                ls = items[0].splitlines() or [""]
-                out.append(f"{_DEC}{DECISION[key]}：{ls[0]}")
-                out += [f"{_DEC}  {ln}" for ln in ls[1:]]
-            else:
-                out.append(f"{_DEC}{DECISION[key]}：")
-                for it in items:
-                    ls = it.splitlines() or [""]
-                    out.append(f"{_DEC}  - {ls[0]}")
-                    out += [f"{_DEC}    {ln}" for ln in ls[1:]]
-        _write(f"[{ts}] " + "\n".join(out))
+        # 🔴 **走唯一那条渲染路**（2026-11-05）：这里原来**自己排一遍**（缩进 4 格），
+        #    而终端那边（`chat._render_decision`）**又排一遍**（0/2 格）——
+        #    同一件事两处定义，形状必然漂。现在两边都调 `render_decision()`，
+        #    **这里只加"文件格式"的东西**（时间戳前缀 + 段头）。
+        body = "\n".join(f"{_DEC}{ln}" for ln in render_decision(ev).splitlines())
+        _write(f"[{ts}] {_DECISION_HEAD} · {ev['who']}\n{body}")
 
 
 # ⚠️ 记录器**不订阅**：`_publish` 直接先调它（顺序：记录器 → 订阅者）——

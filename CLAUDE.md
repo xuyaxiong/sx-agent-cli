@@ -62,7 +62,7 @@
 ## 干活前
 
 - 单元测试（不调 LLM，改完必跑）：`uv run python -m evals.unit_<名字>`
-  （13 个：`briefing` `receipt` `handoff` `handoff_matrix` `handoff_form`
+  （14 个：`briefing` `receipt` `handoff` `handoff_matrix` `handoff_form` `ask_flow`
   `console` `decision` `feed_waiting` `stream_join` `artifact_race`
   `frozen_paths` `registry` `stop_on_pending`）
 - 跑真会话：`uv run python -m evals.chat`；跑批：`uv run python -m evals.run`

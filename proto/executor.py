@@ -29,7 +29,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from proto import trace
 from proto.config import get_model
-from proto.handoff import SECTION, OutcomeStatus as _OutcomeStatus, render_hop
+from proto.handoff import OutcomeStatus as _OutcomeStatus, render_hop
 #                ↑ 状态词汇（唯一一份）· 段名/渲染（唯一一份）
 # ⚠️ 判定那套（`_Judgement` / 规则 / 材料 / 截断 / `build_prompt`）**整块退休**（2026-11-05）：
 #    "任务结没结束"不再由一次 LLM 调用判 —— 现在是三件**平台看得见的**结构事实
@@ -140,7 +140,18 @@ def make_ask_user(asked: dict):
         ⚠️ **要信息必须用它**：写在回复正文里**平台看不到**（平台不读正文）。
         """
         asked["question"] = str(question or "").strip()
-        return "（已登记：平台会先问主 agent，它答不上再转用户）"
+        # 🔴 **说的是「这一次登记了什么」，不是一句流程说明**（2026-11-05 用户指着日志改的）：
+        #
+        #    原文是「（已登记：平台会先问主 agent，它答不上再转用户）」—— 它读起来像
+        #    *"平台**现在**要去问主 agent 了"*，而**试答那一刻还没发生**（工具返回在前，
+        #    试答在后）—— 于是复盘的人在这行上把"接下来"当成了"已经"。
+        #    而且它是**规则**（对每一次都成立），不是**这一次的事实**。
+        #
+        #    现在：先说**刚刚发生的那件事**（登记为待答 ✓ 这一次的），再用「接下来」交代后手。
+        #    ⚠️ 这行**只是记录** —— `run_task` 看到 `asked` 就 `break`，它不会回到执行器眼里。
+        return ("**已登记为待答** —— 这一轮到此结束。"
+                "接下来：平台先让主 agent 试答（它上下文里可能就有），"
+                "答不上才把你这句**原话**转给用户。")
 
     return ask_user
 
@@ -180,6 +191,22 @@ def _user_turn_reader(user_turns: list[dict]):
         return "\n".join(out)
 
     return read_user_turn
+
+
+def _at(run_id: str, n: int) -> str:
+    """**这一轮在哪儿** —— `R01 · 内部第 2 轮`（两个编号**各自带着名字**）。
+
+    🔴 用户 2026-11-05 指着日志：*「`R01`」和「`轮次=2`」并列，读者分不清哪个是哪个*。
+
+    两个数**都有用**，但必须说清各是什么：
+
+      - `R01` = **第几次 `run_task`**（进程内递增 —— 投递重跑 / 试答重跑都会**新开一次**）
+      - `内部第 N 轮` = **这一次 run 里 react 循环第几圈**（没出口就推回去，+1）
+
+    原来两处都写「第 N 轮」（一个指 run 内、一个指 run 间），结尾那行又把 `R01` 和
+    `轮次=` 并排放 —— **同一个词指两件事**，于是那两行"没头没脑"。
+    """
+    return f"{run_id} · 内部第 {n} 轮"
 
 
 def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = None) -> ExecOutcome:
@@ -266,9 +293,23 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
     trace.handoff("交接书", "平台", "执行器", briefing_text, structured="Task → render_briefing")
     trace.block(
         "发给执行器的内容（技能指令按名引用）",
-        f"{SECTION['skill_instructions']}{skill.name}"
-        f"（instructions {len(skill.instructions)} 字，原文见该技能包的 SKILL.md）\n\n"
-        f"{SECTION['known']}\n{briefing_text}",
+        # 🔴 **走同一个 `render_hop`**（2026-11-05 修）：原来这里是**重拼一遍**的 ——
+        #    `task_text` 改了缩进、这里没跟，于是**日志里还是平的**
+        #    （用户 2026-11-05 指着日志问："这里为啥不缩进"）。
+        #    同一份内容两处拼，形状必然漂 —— 而**日志是给人复盘看的**，
+        #    它漂了就会误导复盘的人。
+        # ⚠️ **只有 `skill_instructions` 是简写**（不重复贴 2532 字，原文在技能包里）；
+        #    `known` 是**原文**，和真发出去的那份逐字相同。
+        # ⚠️ **简写里不许再带一遍段名**（2026-11-05 修）：原来这里是
+        #    `f"{SECTION['skill_instructions']}{skill.name}…"` —— 段名是 `render_hop`
+        #    加的，于是日志里印成**两行**【技能指令】（"段名只有一处加"被开了个口子）。
+        #    真发给执行器的那份（上面 `task_text`）本来就是干净的 —— 只有日志重了一遍。
+        render_hop("task_text", {
+            "skill_instructions": f"{skill.name}"
+                                  f"（instructions {len(skill.instructions)} 字，"
+                                  f"原文见该技能包的 SKILL.md）",
+            "known": briefing_text,
+        }),
         kind="executor_briefing",
     )
     t0 = time.time()
@@ -293,12 +334,12 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
             outcome.fault = f"{type(e).__name__}: {e}"
             outcome.rounds = round_i + 1
             trace.note(
-                f"⚠️ run_task 第 {round_i + 1} 轮**平台故障**（已重试过一次仍失败）："
+                f"⚠️ {_at(run_id, round_i + 1)}**平台故障**（已重试过一次仍失败）："
                 f"{type(e).__name__}: {e} —— 这一轮没跑成，交回主 agent",
                 kind="run_fault",
             )
             break
-        trace.dump_trace(f"run_task 第 {round_i + 1} 轮", resp["messages"],
+        trace.dump_trace(_at(run_id, round_i + 1), resp["messages"],
                          role=trace.EXECUTOR)
 
         outcome.artifacts = list(created)  # 记账，不扫文本
@@ -312,10 +353,15 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
         #    它调完工具还会接着往下说，那半截话不进这一轮的结论。
         if asked.get("question"):
             outcome.asked = asked["question"]
-            trace.note(
-                f"run_task 第 {round_i + 1} 轮：**申报要信息**（`ask_user`）→ 这一轮结束",
-                kind="ask",
-            )
+            # 🔴 **「问」是一条链，每一跳都写清「谁 → 谁：什么」**（用户 2026-11-05）：
+            #    *"关注 谁在向谁问一个什么问题 —— 你记录必须把这个搞清楚；
+            #      谁答不上被转发给谁了；谁又答复了谁的什么问题。"*
+            #    这一跳是**链头**：执行器 → 平台。摘要行走 `trace.handoff`
+            #    （和别的交接**同一套形状** ✓），问题原话由上面那条 `🔧 TOOL` 给全。
+            trace.handoff("要信息", "执行器", "平台", outcome.asked,
+                          structured="`ask_user(question=…)` 的参数原话"
+                                     "（**全文见上面那条 `🔧 TOOL`**，这里不重贴）")
+            trace.note(f"{_at(run_id, round_i + 1)}：**申报要信息** → 这一轮结束", kind="ask")
             break
 
         # ② **它交了产物** → 收工。
@@ -323,7 +369,7 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
         #    （回执把交付账摆给它 ✓）。平台**不判质量**（那是判定的活，判定的毛病就在这）。
         if outcome.artifacts:
             trace.note(
-                f"run_task 第 {round_i + 1} 轮：交付 {len(outcome.artifacts)} 个产物 → 收工",
+                f"{_at(run_id, round_i + 1)}：交付 {len(outcome.artifacts)} 个产物 → 收工",
                 kind="delivered",
             )
             break
@@ -333,7 +379,8 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
         if round_i + 1 < MAX_REACT_ROUNDS:
             nudge = nudge_text()
             trace.note(
-                f"⚠️ 第 {round_i + 1} 轮**既没交付、也没申报要信息** → 推它继续（提示词见下）",
+                f"⚠️ {_at(run_id, round_i + 1)}**既没交付、也没申报要信息**"
+                f" → 推它继续（提示词见下）",
                 kind="nudge",
             )
             trace.handoff("推回去", "平台", "执行器", nudge,
@@ -342,17 +389,26 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
         else:
             # **显式写出这个分支**：推满了，不再推 → 下面按结构定成 incomplete
             trace.note(
-                f"⚠️ 第 {round_i + 1} 轮既没交付、也没申报，且已到轮次上限 → 不再推，交给主 agent"
+                f"⚠️ {_at(run_id, round_i + 1)}既没交付、也没申报，且已到轮次上限"
+                f" → 不再推，交给主 agent"
             )
 
     outcome.status = _structural_status(outcome)
 
+    # 🔴 **这行是「这次 run 的账」，不是复述**（用户 2026-11-05）—— 两处改：
+    #
+    #    ① **两个编号各自带名字**：`R01`（第几次 run）＋ `内部 N 轮`（这一趟循环了几圈）。
+    #       原来写 `R01 · … 轮次=2` —— 两个"轮"并排、都不说是什么的轮 ✗。
+    #    ② **不再重贴那句问题**。它上面已经有**三处**该有的地方（`🔧 TOOL` 的申报原话 /
+    #       `📤 交接 · 要信息` 的摘要 / 试答的【前提】），而**这一行是摘要** ——
+    #       摘要里突然塞一句 132 字的原话，正是用户说的"没头没脑"。
+    #       ⇒ 留一个**指路**（"它要的那句见上面 `ask_user`"），不复述。
     trace.note(
-        f"run_task 结束 · {run_id} · skill={skill.name}：status={outcome.status} "
-        f"轮次={outcome.rounds} 产物={outcome.artifacts or '（无）'}"
-        + (f"｜**申报要信息**：{outcome.asked}" if outcome.asked else "")
-        + (f"｜**平台故障**：{outcome.fault}" if outcome.fault else "")
-        + f"（{time.time() - t0:.1f}s）",
+        f"{run_id} · {skill.name} **结束**：status={outcome.status}"
+        f"（内部 {outcome.rounds} 轮，产物 {len(outcome.artifacts)} 个，"
+        f"{time.time() - t0:.1f}s）"
+        + ("｜它要的那句见上面 `ask_user`" if outcome.asked else "")
+        + (f"｜**平台故障**：{outcome.fault}" if outcome.fault else ""),
         kind="run_end",
     )
     return outcome

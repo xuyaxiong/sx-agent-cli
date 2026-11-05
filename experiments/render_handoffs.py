@@ -77,6 +77,7 @@ def _samples(f: dict) -> list[tuple[str, str, str, str]]:
     from proto.graph import render_relay
     from proto.handoff import render_hop
     from proto.handoff.ask import build_prompt
+    from proto.handoff.decision import render_decision
     from proto.handoff.briefing import render_briefing
     from proto.handoff.ledger import render_ledger
     from proto.handoff.nudge import nudge_text
@@ -148,6 +149,20 @@ def _samples(f: dict) -> list[tuple[str, str, str, str]]:
          "react 循环内：这一轮**既没交东西、也没申报**时喂回去。只说平台**自己看得见的两件事实**"
          "＋**两条出路**（判定退休后没有「已做到／还缺」了，不编）。",
          nudge_text()),
+
+        ("—", "决策（LLM 调用 → 记录）★ **一次 LLM 调用的两端**",
+         "⚠️ **它原来有自己的一套段名**（`前提`/`问题`/`结果`/`下一步`，**不带 `【】`**）"
+         "和**自己的一套缩进**（4 格）—— 把「段名一律 `【…】` 独占行首」那条硬规矩**开了口子** ✗。"
+         "按用户 2026-11-05 定的判据（*「所谓交接，就是外部给 LLM 什么东西、LLM 吐出什么东西」*）"
+         "它是**交接**：**结果那一格是 LLM 吐的**，所以**只有它标来源**，另三格是平台的话。",
+         render_decision({
+             "who": "试答（LLM）· 平台强制的一步",
+             "given": ["执行器申报要的信息（`ask_user` 参数原话，132 字）：这节课希望侧重哪种上法？",
+                       "它最后说的那段（78 字，可能有上下文、也可能只是过场）"],
+             "q": "**主 agent 的上下文里**，有没有执行器要的那个信息？",
+             "result": ["can_answer = **False**", "补充：（无）"],
+             "next": "答不上 → 登记待答，由**平台**把执行器原话**透传**给用户",
+         })),
 
         ("H13", "待答透传（平台 → 用户）",
          "⚠️ 它原来每条写成 `【{skill}】问：…` —— **拿段名的括号包技能名** ✗。"

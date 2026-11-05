@@ -227,8 +227,14 @@ def _feed_waiting(state: State) -> tuple[list[dict], list[str]]:
         trace.block("投过去的原话", user)
         trace.note(f"累计问答 {len(rec['qa'])} 对（历次一起带上，否则执行器会重问）")
         # 交接关键日志：投递这一跳（交接书正文由 `run_task` 那边记）
-        trace.handoff("答复投递", "平台", "执行器", user,
-                      structured=f"Task.qa 追加 1 对（累计 {len(rec['qa'])} 对）")
+        # 🔴 **谁答复了谁的什么问题**（用户 2026-11-05）：答复的是**用户**、回答的是
+        #    **执行器问的那句**（`Task.asked` —— 不是 `report` 那段独白，见上面那段注释）。
+        #    平台只是**转达**，所以在 `structured` 里点明它 —— 不能因为"经手的是平台"
+        #    就把"谁说的"吞掉（那正是这一行原来读不出来的东西）。
+        # ⚠️ 「问哪句」走 `asked_text`（**取哪句只有一处定义**，见它的 docstring）。
+        trace.handoff("答复投递", "用户", "执行器", user,
+                      structured=f"平台转达｜在回答它问的那句：{asked_text(t)}"
+                                 f"｜Task.qa 追加 1 对（累计 {len(rec['qa'])} 对）")
         # ⚠️ `refs` 要一起带上：不重建可读产物清单，执行器在续跑时就"看不见"前序产物了
         # 用户原话也一起带上（快照在 Task 上，所以这条重入路径**自动**有它）
         # ⚠️ **属性访问**（`executor.run_task`）而不是 `from … import run_task` ——
@@ -399,6 +405,11 @@ def node_finalize(state: State) -> dict:
     block = render_relay(waiting)
     # ⚠️ **只发内容**：`finalize: ` 那个前缀是**日志文件格式**的一部分，归记录器
     # （`trace._NOTE_HEAD`）—— 业务侧带上它，展示层就得按位置切回来（审核 F1）。
+    # ⚠️ **这行不写「谁 → 谁」** —— 展示层上屏时已经加了前缀（`chat._on_event`：
+    #    `"平台 → 用户：" + ev["text"]`），记录层文件里紧跟着的
+    #    `📤 交接 · 待答透传（平台 → 用户）` 也写着。**再说一遍就是第三处** ✗
+    #    （实测：终端上会印成 `平台 → 用户：**平台 → 用户**：透传…`）。
+    #    这条只留**这一跳的机制说明**（F7 的修法：平台直接贴、不判断主 agent 问没问）。
     trace.note(f"透传 {len(waiting)} 条待答（平台直接贴，不判断主 agent 问没问）",
                kind="relay")
     # 🔴 **（历史）已知膨胀点（判据③）**：透传这段原来和**回执的【执行器说】**是**同一段话**
