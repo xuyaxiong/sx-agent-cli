@@ -29,8 +29,8 @@ def build_prompt(skill_name: str, task: str, outcome: Any, messages: list) -> st
     msgs = list(messages)
     history = "\n".join(f"{type(m).__name__}: {str(m.content)}" for m in msgs)
     return (
-        f"你委派出去的工作卡住了，它在请求信息。\n\n"
-        f"能力：{skill_name}\n"
+        f"你委派出去的工作卡住了，它在要信息。\n\n"
+        f"技能：{skill_name}\n"
         f"你交给它的任务（**你写的** —— 可能补了用户没说的东西）：{task}\n"
         # 🔴 **要什么 = 工具参数里的原话**（结构 ✓）—— 不是从它的话里挑出来的
         f"**它要的信息**：{outcome.asked}\n"

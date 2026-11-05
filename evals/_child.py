@@ -82,7 +82,7 @@ def run_case(case: dict, rep: int, out_dir: Path | None = None) -> dict:
                 _skill = answer_to.split(":", 1)[1].strip() if ":" in answer_to else ""
                 # ⚠️ **技能名写错 → 当场炸**（那是 case 写错了，静默下去这条 case 就悄悄变了）；
                 #    **任务在、只是没在等 → 只记日志**（"执行器会不会提问"是模型的自由选择，
-                #    条件性的等答复不算写错 —— 真没投到，case 自己的断言会说话）。
+                #    条件性的待答不算写错 —— 真没投到，case 自己的断言会说话）。
                 if _skill and not any(
                     t.get("skill") == _skill for t in (prev_state.get("tasks") or [])
                 ):

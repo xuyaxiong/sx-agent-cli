@@ -1,7 +1,7 @@
-"""**Skill** = 专业能力包（静态）。
+"""**Skill** = 专业技能包（静态）。
 
-**只有两样东西**（对应「Skill 是专业能力」）：
-  - `description`：这个能力是干什么的（主 agent 靠它判断"什么时候该用"）
+**只有两样东西**（对应「Skill 是专业技能」）：
+  - `description`：这个技能是干什么的（主 agent 靠它判断"什么时候该用"）
   - `instructions`：完整工作流程（派发时交给执行器，**判定完成时也带进提示词**）
 
 🔴 **技能包里的参考文件不是这里的字段**：它本来就在磁盘上读得到，
@@ -17,7 +17,7 @@
   - ❌ 不要求声明**完成条件**（`completion_criteria`）—— 实测它反而更差（4/6 vs 6/6），
     因为要求本来就在 `instructions` 里，再抄一遍是重复。
 
-🔴 **和 `artifacts.py` 是两个领域**（2026-10-30 分开）：这里只管**静态能力包**；
+🔴 **和 `artifacts.py` 是两个领域**（2026-10-30 分开）：这里只管**静态技能包**；
 运行期的交付物在 `artifacts.py`。**技能包怎么从磁盘读**在 `skill_pack.py`（I/O + 格式）。
 """
 
@@ -35,9 +35,9 @@ from proto.registry import registry
 
 @dataclass(frozen=True)
 class Skill:
-    """专业能力包（静态、可版本化）。
+    """专业技能包（静态、可版本化）。
 
-    **三样东西**：这个能力是干什么的（description）、怎么干（instructions）、
+    **三样东西**：这个技能是干什么的（description）、怎么干（instructions）、
     以及**可选的**参考资料（references）。
 
     ⚠️ 两个被删掉的字段，记在这里免得再走回头路：
@@ -60,7 +60,7 @@ class Skill:
     """
 
     name: str
-    #: 主 agent 靠它判断"什么时候该用这个能力"
+    #: 主 agent 靠它判断"什么时候该用这个技能"
     description: str
     #: 完整工作流程 —— 派发时原样交给执行器，**判定完成时也带进提示词**
     instructions: str
@@ -99,15 +99,15 @@ registry.register_defaults({
 
 
 # ⚠️ 这里原来还有个 `catalog()` 转发壳（`return registry.catalog()`）——
-# 2026-11-03 审核删掉：零调用点，而且"能力清单只拼一次"的目标下，
+# 2026-11-03 审核删掉：零调用点，而且"技能清单只拼一次"的目标下，
 # 多一个同名出口就是多一个将来被抄错的地方。要清单请直接 `registry.catalog()`。
 
 
 @tool
 def read_skill(skill_name: str) -> str:
-    """按需读一个能力的**完整指令**（渐进式披露第二层），附带它自带哪些文件。
+    """按需读一个技能的**完整指令**（渐进式披露第二层），附带它自带哪些文件。
 
-    常驻在你眼前的只有能力名和一句话描述。写任务要求前若不确定这个能力
+    常驻在你眼前的只有技能名和一句话描述。写任务要求前若不确定这个技能
     **交付什么、按什么标准交付**，用它读原文核对 —— **不要凭描述猜**。
     """
     # 🔴 这里原来是 `from proto.agent import SKILLS`（领域层反向依赖编排层，
@@ -115,8 +115,8 @@ def read_skill(skill_name: str) -> str:
     #    lazy import 一起消失了 —— 见 `proto/registry.py` 的模块 docstring。
     skill = registry.get(skill_name)
     if skill is None:
-        return f"没有能力「{skill_name}」。可用：{'、'.join(registry.names())}"
-    out = f"【能力 {skill.name}】{skill.description}\n\n{skill.instructions}"
+        return f"没有技能「{skill_name}」。可用：{'、'.join(registry.names())}"
+    out = f"【技能 {skill.name}】{skill.description}\n\n{skill.instructions}"
     # 参考文件清单**现场扫盘**（不缓存在 Skill 上，见 `skill_pack` 的模块 docstring）。
     # 有才带这一段 —— 没有就一个字不加（**没有就是没有**，不写"（无参考文件）"这种废话）。
     from proto.skill_pack import skill_file_index_lines

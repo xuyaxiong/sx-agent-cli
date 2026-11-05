@@ -186,7 +186,7 @@ def build_rejection(kind: str, detail: str, available: str) -> Receipt:
     """**派发被拒**（不建 Task）→ 回执对象。
 
     `kind` ∈ `rejected_skill` / `rejected_artifact`；
-    `available` 是平台列出来的"现在有什么"（能力 / 产物）。
+    `available` 是平台列出来的"现在有什么"（技能 / 产物）。
     """
     return {
         "kind": kind,

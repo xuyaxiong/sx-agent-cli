@@ -74,7 +74,7 @@ def _dump(result: dict) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="主 agent（完整 agent）+ Skill / Task / Sub Agent")
+    ap = argparse.ArgumentParser(description="主 agent（完整 agent）＋ 技能 / Task / 执行器")
     ap.add_argument("--thread", default="proto-1")
     ap.add_argument("--say", help="非交互：只跑这一句")
     ap.add_argument("--answer", default="难度要基础的", help="--say 模式下自动应答")
@@ -134,7 +134,7 @@ def main() -> None:
 
     print("输入你的请求（空行退出）。试试这些：\n")
     print("  · 你好                              → 主 agent 应该**自己答**（不建 Task）")
-    print("  · 帮我备课，三年级数学               → 需要专业能力 → 委派给隔离执行器")
+    print("  · 帮我备课，三年级数学               → 需要专业技能 → 委派给隔离执行器")
     print("  · 帮我备课、导学单，再出个随堂小测，三年级数学\n")
     while True:
         try:

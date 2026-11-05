@@ -69,7 +69,7 @@ MAX_REF_BYTES = 256 * 1024
 #: 技能名 → 它的**包目录**。加载时记下，读参考文件时按它去找。
 #:
 #: ⚠️ 这里存的是**位置**，不是内容 —— 参考文件始终留在磁盘上，读的时候才取。
-#: 所以它不是 `Skill` 的字段（`Skill` 只管"这个能力是什么"，不管"它在哪个盘上"）。
+#: 所以它不是 `Skill` 的字段（`Skill` 只管"这个技能是什么"，不管"它在哪个盘上"）。
 PACK_DIRS: dict[str, Path] = {}
 
 
@@ -159,7 +159,7 @@ def read_skill_file(skill_name: str, path: str) -> str:
     """
     have = skill_file_index_lines(skill_name)
     if not have:
-        return f"能力「{skill_name}」没有自带文件。"
+        return f"技能「{skill_name}」没有自带文件。"
     got = load_skill_file(skill_name, path)
     if got is None:
         return f"「{skill_name}」里没有文件「{path}」。现有：\n" + "\n".join(have)

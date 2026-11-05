@@ -218,8 +218,8 @@ def main() -> None:
     seen8, restore8 = _reset_emit(chat)
     try:
         chat._on_event({"type": "block", "kind": "executor_briefing", "ts": "t",
-                        "label": "发给执行器的内容（能力指令按名引用）",
-                        "text": "【能力指令】lesson-prep\n\n【已知信息】\n  【任务】备课",
+                        "label": "发给执行器的内容（技能指令按名引用）",
+                        "text": "【技能指令】lesson-prep\n\n【已知信息】\n  【任务】备课",
                         "indent": "  "})
         chat._on_event({"type": "stream", "kind": "", "ts": "t", "role": trace.EXECUTOR,
                         "who": "执行器·lesson-prep", "text": "好的，信息齐全"})

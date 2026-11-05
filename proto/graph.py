@@ -9,7 +9,7 @@
 
 三个概念：
 
-    Skill（专业能力 · 静态）──┐
+    Skill（专业技能 · 静态）──┐
                               ├─► Task（一次具体业务工作）──► Sub Agent（可选执行者 · 用完即弃）
     用户原话 ─────────────────┘
 
@@ -196,7 +196,7 @@ def _feed_waiting(state: State) -> tuple[list[dict], list[str]]:
     for t in waiting:
         skill = registry.get(t["skill"])
         if skill is None:
-            logs.append(f"prepare: ⚠️ {t['id']} 的能力「{t['skill']}」不存在，跳过")
+            logs.append(f"prepare: ⚠️ {t['id']} 的技能「{t['skill']}」不存在，跳过")
             continue
 
         # 🔴 **历次答复必须累积**（2026-10-29 人在环实测暴露）：
@@ -271,7 +271,7 @@ def node_prepare(state: State) -> dict:
     """① 把用户原话投给待答任务（见 `_feed_waiting`）→ ② 注入任务台账。
 
     **顺序不能反**：先投递，注入的台账才反映投递后的新状态
-    （任务可能刚从"等答复"变成"已完成"）—— 主 agent 看到的是最新的，就不会重复派。
+    （任务可能刚从"待答"变成"已完成"）—— 主 agent 看到的是最新的，就不会重复派。
 
     **只提供事实，不替它做决定**（"要不要重跑"是理解问题，该柔性）。
 
@@ -310,7 +310,7 @@ def node_prepare(state: State) -> dict:
     trace.handoff("台账", "平台", "主 agent", text,
                   structured=f"Task × {len(tasks)} → render_ledger", full=True)
     # 🔴 投递那一跳的**结构化事实**（断言读它）：判据是 `run_by == "feed"` ——
-    # 那是 `_feed_waiting` 在**真投出去之前**打的标记；能力不存在被**跳过**的不会带上它，
+    # 那是 `_feed_waiting` 在**真投出去之前**打的标记；技能不存在被**跳过**的不会带上它，
     # 所以"投给了谁"是准的（不靠解析 `logs` 里那句话）。
     fed = [t["id"] for t in updated if t.get("run_by") == "feed"]
     user = _last_human(state)

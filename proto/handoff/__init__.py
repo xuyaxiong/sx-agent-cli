@@ -68,7 +68,7 @@ SECTION: dict[str, str] = {
     "fault": "【平台故障】",
     # ── 派发被拒（平台 → 主 agent，**不建 Task**）──
     "not_dispatched": "【这次没有派发】",
-    "available_skills": "【可用的能力】",
+    "available_skills": "【可用的技能】",
     "available_artifacts": "【本会话现有产物】",
 }
 

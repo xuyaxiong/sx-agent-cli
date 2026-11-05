@@ -36,10 +36,10 @@
 | # | 交接 | 方向 | 载体 | 历史消息给到哪 | 截断 | 落点（谁一直背着它） |
 |---|---|---|---|---|---|---|
 | H1 | 用户输入 | 用户 → 图 | `HumanMessage` | 就是原话 | ✅ 不截 | **主上下文常驻** |
-| H2 | 系统提示 + 能力清单 | 平台 → 主 agent | `create_agent(system_prompt=)` | — | ✅ 不截（只有名+描述） | 每次 LLM 调用重发，**不进 messages** |
+| H2 | 系统提示 + 技能清单 | 平台 → 主 agent | `create_agent(system_prompt=)` | — | ✅ 不截（只有名+描述） | 每次 LLM 调用重发，**不进 messages** |
 | H3 | 派发参数 | 主 agent → 平台 | `delegate` 工具参数 | LLM 自己写 | ✅ 不截 | **主上下文常驻**（在 `tool_calls` 里） |
 | H4 | **交接书** | 平台 → 执行器 | `HumanMessage` | 全部用户轮次（清单）+ 点名轮次全文 | ⚠️ 清单行切 40 字（带 `…` ＋ `read_user_turn` 逃生口） | 执行器上下文，**用完即弃** |
-| H5 | 能力指令 + 技能文件清单 | 平台 → 执行器 | 同上（拼在一条里） | — | 📋 文件正文不进来，只有路径+字数 | 执行器上下文 |
+| H5 | 技能指令 + 技能文件清单 | 平台 → 执行器 | 同上（拼在一条里） | — | 📋 文件正文不进来，只有路径+字数 | 执行器上下文 |
 | H6 | 产出落库 | 执行器 → 产物库 | 产物库（`proto.artifacts`）+ 磁盘 | — | ✅ 不截（正文全文落库） | 内存库 + 磁盘；**主上下文只拿到 ID** |
 | H7 | **推回去（react 循环）** | 平台 → 执行器 | `HumanMessage`（追加） | **累积**：上一轮的全部消息 | ✅ 不截 | 执行器上下文，最多 3 轮 |
 | H8 | **申报要信息** | 执行器 → 平台 | `ask_user` 工具参数 | `question` —— **它要什么**（原话） | ✅ 不截（LLM 自己写的） | `ExecOutcome.asked` → `Task.asked` / `Task.qa[].q`；四个下游：试答 prompt、答不上时透传给用户、**交接书【问答经过】的「问」**、**回执【它要的信息】** |
@@ -91,15 +91,15 @@
 | 落点 | `state["messages"]`，**永久常驻**；且被 `_user_turns` 快照进每一个 Task |
 | 隐患 | 用户**可能粘长文**（改教案那种）→ 主上下文一次涨几千字。这是**无法预防**的（原话是事实来源，不能切）—— 只能靠"别让它再被复制第三份"（见 §四） |
 
-### H2 · 系统提示 + 能力清单（平台 → 主 agent）
+### H2 · 系统提示 + 技能清单（平台 → 主 agent）
 
 | | |
 |---|---|
 | 代码 | `proto/agent.py:557` `build_agent()`；`_MAIN_PROMPT` 在 `proto/agent.py:47` |
-| 交接了什么 | 平台约定（两种做法 / 委派纪律 / 产出范围 / 前序产物怎么传 / 点名依据 / 回复硬要求）＋ **每个能力的 `name` + `description`** |
+| 交接了什么 | 平台约定（两种做法 / 委派纪律 / 产出范围 / 前序产物怎么传 / 点名依据 / 回复硬要求）＋ **每个技能的 `name` + `description`** |
 | 截断 | ✅ 不截 —— 但**内容本身只有"名 + 一句话"**（渐进式披露第一层），全文走 `read_skill`（H16） |
 | 落点 | **不在 `state["messages"]` 里**（`create_agent(system_prompt=...)` 不落 state），**每次 LLM 调用重发一遍** |
-| 实测开销 | `_MAIN_PROMPT` 2149 字 + 能力清单 174 字 = **2331 字固定开销**（4 个内置技能时） |
+| 实测开销 | `_MAIN_PROMPT` 2149 字 + 技能清单 174 字 = **2331 字固定开销**（4 个内置技能时） |
 | ⚠️ 计量缺口 | `harness._sys_prompt_chars()`（`evals/harness.py:342`）**没算 `_MODE_NOTE`** —— `exec_path=delegate/inline` 时低估 82 字（`proto/agent.py:518`） |
 
 ### H3 · 派发参数（主 agent → 平台）
@@ -137,11 +137,11 @@
 | **落点** | 执行器上下文（`HumanMessage(task_text)`），**用完即弃** —— 不常驻、不累积 |
 | 隐患 | ① 每轮 40 字是**位置信息**，执行器不主动读就只看到开头（设计如此，已带指路）；② `_index()`（`proto/handoff/briefing.py`）对**不在产物库里的 ID 静默跳过**（无标记）—— 跨 run 清库后旧 Task 的产物行会无声消失 |
 
-### H5 · 能力指令 + 技能文件清单（平台 → 执行器）
+### H5 · 技能指令 + 技能文件清单（平台 → 执行器）
 
 | | |
 |---|---|
-| 代码 | `proto/executor.py:274` `task_text = 【能力指令】{skill.instructions}{refs}\n\n【已知信息】{briefing}` |
+| 代码 | `proto/executor.py:274` `task_text = 【技能指令】{skill.instructions}{refs}\n\n【已知信息】{briefing}` |
 | 交接了什么 | ① `skill.instructions` **全文**；② 技能自带文件**清单**（相对路径 + 字数）；③ 整份交接书（H4） |
 | 截断 | ✅ instructions 不截；📋 文件正文不进来 |
 | 逃生口 | `read_skill_file(skill_name, path)` —— 清单里**必须写明 `skill_name`**，否则执行器只能猜技能名（实测试了 4 个变体、卡了 121 秒后放弃，`proto/executor.py:263`） |
@@ -225,7 +225,7 @@
 | | |
 |---|---|
 | 代码 | `proto/handoff/ask.py` `build_prompt()`（模板）＋ `proto/agent.py` `_ask_main()`（调用） |
-| 交接了什么 | 能力名、主 agent 交给它的任务、**它要的信息**（`ask_user` 参数里那句**原话**）、它最后说的那段、**主 agent 的全部上下文** |
+| 交接了什么 | 技能名、主 agent 交给它的任务、**它要的信息**（`ask_user` 参数里那句**原话**）、它最后说的那段、**主 agent 的全部上下文** |
 | **历史消息的范围** | 🔴 **全部 `state["messages"]`，全文，一条不落**（不是"最近 N 条"——`proto/handoff/ask.py` 明写"别退回'最近 N 条'，那是无声的范围限制"） |
 | 截断 | ✅ 不截（`unit_handoff.py` ⑨ 有断言：长消息全文在、且没有"最近"字样） |
 | 落点 | **一次性结构化调用**，结果只有 `_AgentAnswer{can_answer, answer}`；**prompt 本身不留存** |
@@ -496,7 +496,7 @@ report2（661 字）在主 agent 消息里出现 2 次：ToolMessage(890 字) + 
 
 ### 6. 🟡 `_sys_prompt_chars()` 少算 `_MODE_NOTE`
 
-- `evals/harness.py:342` 只算 `_MAIN_PROMPT` + 能力清单；`exec_path=delegate/inline` 时
+- `evals/harness.py:342` 只算 `_MAIN_PROMPT` + 技能清单；`exec_path=delegate/inline` 时
   系统提示还多 82 字（`proto/agent.py:518`）。**计量口径偏小**，不影响行为。
 
 ### 7. 🟡 `_render_messages` 对未知消息类型 `content[:800]` 无标记

@@ -96,7 +96,7 @@ config ──► trace ──► (所有模块都在写日志)
 
 | 对象 | 在哪 | 是什么 |
 |---|---|---|
-| **Skill** | `skills.py` | **静态能力包**：`name` + `description` + `instructions`（**只有这三个字段**） |
+| **Skill** | `skills.py` | **静态技能包**：`name` + `description` + `instructions`（**只有这三个字段**） |
 | **Task** | `graph.State["tasks"]` | **一次具体业务工作**：跨轮存活，11 个字段见 §5.1 |
 | **Artifact** | `artifacts.py` | **运行期交付物**：7 个字段见 §5.4 |
 
@@ -145,7 +145,7 @@ config ──► trace ──► (所有模块都在写日志)
 │      三条出路，**它自己选**：                                          │
 │        · 直接答            —— 闲聊/追问/澄清（**不建 Task**）          │
 │        · write_artifact    —— 自己产出短内容（**不建 Task**）          │
-│        · delegate(...)     —— 需要专业能力时（**建 Task**）            │
+│        · delegate(...)     —— 需要专业技能时（**建 Task**）            │
 └──────────────────────────┬──────────────────────────────────────────┘
                            │ delegate(skill_name, task, artifacts=[...])
                            ▼
@@ -183,7 +183,7 @@ config ──► trace ──► (所有模块都在写日志)
 
 ```
 run_task(skill, briefing)
-  │  task_text = 【能力指令】instructions + 【技能自带文件】清单 + 【已知信息】briefing
+  │  task_text = 【技能指令】instructions + 【技能自带文件】清单 + 【已知信息】briefing
   │  messages = [HumanMessage(task_text)]
   │  工具：write_artifact（**按 run 记账**）· read_artifact · read_skill_file · `ask_user`
   │        · `read_user_turn`（**按需**：有原话快照时才给）
@@ -279,7 +279,7 @@ ExecOutcome{status, artifacts, report, rounds, asked, fault}
 | 状态标记 `_STAGE_MARK` | `⏳ 进行中` / `✅ 它交付了产物` / `⚠️ 它在要信息` / `❌ 它没交付、也没说要什么` / `🔁 已被新的委派取代（不用管了）` |
 | 展开细节的 `_NEEDS_DETAIL` | `("waiting_for_input", "failed")` —— 其余只列一行；展开的只有**执行器说**一行 |
 | 截断时"全文在哪" | 由 `Task.run_by` 决定：`delegate` 那一趟 → **那次的回执**；`feed`（投递重跑）那一趟 → **不在你的上下文里** |
-| 提示句（**有待答时**） | 「**「等用户答复」的那些，平台已经负责把问题转达给用户、也会把用户的答复投回去** —— 你**不用**重新委派它们，更不要自己替用户编一个答案。」 |
+| 提示句（**有待答时**） | 「**「在要信息」的那些，平台已经负责把问题转达给用户、也会把用户的答复投回去** —— 你**不用**重新委派它们，更不要自己替用户编一个答案。」 |
 | 提示句（**无待答时**） | 「（用户补充信息时，**只重跑受影响的任务**，已完成且不受影响的不动。）」 |
 | 注入条件 | `tasks` 为空 → **不注入**（闲聊轮次里主 agent 上下文里没有这段） |
 
@@ -529,9 +529,9 @@ def ask_user(question: str) -> str:
 > ⚠️ 所以 `_ask_main` 的入参是**消息列表**（不是 `ToolRuntime`）—— 两条路一个给 runtime、一个只有 state。
 
 ```
-你委派出去的工作卡住了，它在请求信息。
+你委派出去的工作卡住了，它在要信息。
 
-能力：{skill_name}
+技能：{skill_name}
 你交给它的任务（**你写的** —— 可能补了用户没说的东西）：{task}
 **它要的信息**：{outcome.asked}
 它最后说的那段（可能有上下文，也可能只是过场）：{outcome.report}
@@ -669,7 +669,7 @@ def ask_user(question: str) -> str:
 
 | # | 触发 | 回执 |
 |---|---|---|
-| 1 | **技能名不存在** | `【这次没有派发】❌ 没有能力「X」` ＋ `【可用的能力】…`（**不建 Task**） |
+| 1 | **技能名不存在** | `【这次没有派发】❌ 没有技能「X」` ＋ `【可用的技能】…`（**不建 Task**） |
 | 2 | **产物 ID 不存在** | `【这次没有派发】❌ 产物 art_999 不存在` ＋ `【本会话现有产物】…`（**不建 Task**） |
 | 3 | `completed`（**交了产物**） | 全段 ＋ `【下一步】`＝「**你判**：这次交付够不够？（不够就换个说法重派，或向用户说明）」＋「它说的话**过一眼**」 |
 | 4 | 试答成功 → 重跑 `completed` | 全段 ＋ `【你补的信息】` |
@@ -758,7 +758,7 @@ settle(rec, outcome)          # 写字段 + 定 stage —— 状态迁移只有�
 | ④ | **`task` 怎么写** | ⚠️ 它是**转述**（会丢、会加料）→ 平台用【用户原话】**对冲**，见 §3.2.2 |
 | **~~⑤~~** | ~~**`based_on_turns` 点名哪几轮**~~ | **2026-11-03 删** —— 轮次不再由主 agent 点名：原话只有**索引**一种形状，全文由读的人按需取（§3.2.2） |
 | ⑥ | 回复怎么组织 | ❌ 不收紧 —— 按 `solution.md` **§0.7**，正文交付**不保证** |
-| **S4** | 执行器自己的决策 | 同上（执行器实例） | `_PLATFORM_RULE` + 能力指令 + 已知信息 | 工具调用（含 **`ask_user`**）/ 回复 | — |
+| **S4** | 执行器自己的决策 | 同上（执行器实例） | `_PLATFORM_RULE` + 技能指令 + 已知信息 | 工具调用（含 **`ask_user`**）/ 回复 | — |
 | **~~S5~~** | ~~判定规则里"什么算请求信息"~~ | ~~`_JUDGE_RULES` 规则 3~~ | — | — | **随判定退休**：这条语义判断的**根因被移除**了 —— "要信息"改成**执行器自己申报**（`ask_user`），不再由 LLM 从文本里认 |
 
 > 📌 **编号沿用原表**（S1 / S5 / ⑤ 划掉，不重排）—— 它们**曾**存在、**为什么被删**都记在上面那几行里。
@@ -902,7 +902,7 @@ flake 时还说不清是系统坏了、还是模型今天走了另一条路。�
 
 **脆断言不是不能写，是不能当回归哨兵**：它们红了先怀疑采样，别急着改代码。
 **真要压某条路径，让平台把路造出来** —— 先例是 `fault.structured` **故障注入**（不靠模型配合）；
-case 还可以用 **`initial_tasks`** 直接注入一个"等用户答复"的 Task，
+case 还可以用 **`initial_tasks`** 直接注入一个"待答"的 Task，
 于是"答复投递（重入）"那条路**从第 1 轮起就必然被走到**（见 `_child.py`）。
 
 > 📌 **2026-11-02 的实测**：`t3-split-answers` 原来靠 `run_task_count_over: 3` 压重入路径 ——
@@ -1015,7 +1015,7 @@ html_ids = [aid for aid, a in arts.items() if file_ext(a.get("type") or "") == "
 | 字段 | 谁写 | 含义 |
 |---|---|---|
 | `id` | `delegate` | `t{tool_call_id 尾部 8 位}` |
-| `skill` | `delegate` | 能力名 |
+| `skill` | `delegate` | 技能名 |
 | `task` | `delegate`（**主 agent 给的原话**） | 这件工作的具体要求 |
 | `stage` | **`settle()`**（`delegate` / `_feed_waiting` 都调它，唯一一处迁移） | 5 态（§6.2） |
 | `artifacts` | `absorb_outcome`（`settle()` 调；`delegate` 只建空表） | **产出**的产物 ID 列表（⚠️ **只在非空时覆盖** —— 这一轮没产出，不许抹掉上一轮交付的） |
@@ -1099,7 +1099,7 @@ class AgentState(TypedDict):     # 主 agent 子图 —— **故意不含 log**
 | `reply` | 最后一条有内容的 `AIMessage` |
 | `tasks` | `state["tasks"]`（**11 个字段全带上**） |
 | `main_ctx_chars` | 消息 content + tool_call args 长度（**不含 system prompt**） |
-| `sys_prompt_chars` | `_MAIN_PROMPT` + 能力清单的长度（**不在 state 里**，故单记） |
+| `sys_prompt_chars` | `_MAIN_PROMPT` + 技能清单的长度（**不在 state 里**，故单记） |
 | `artifacts_chars` / `artifacts` | 产物库正文总量 / `{aid: 字数}` |
 | `delegate_calls` / `tool_calls` | 本轮的工具调用（名字 / 名字+参数摘要） |
 | `messages` / `new_msg_kinds` | 本轮全部新消息（**原文不截断**） |
@@ -1183,7 +1183,7 @@ START → prepare → agent → finalize → END        （compile(checkpointer=
   │
   ├─ agent     🧠 调 delegate(lesson-prep) → 建 Task（stage=running）
   │             ↓ 交接书：【任务】分数的初步认识（无【问答经过】—— 首跑）
-  │           执行器读能力指令 → 发现缺「课时」→ 调 `ask_user` 申报
+  │           执行器读技能指令 → 发现缺「课时」→ 调 `ask_user` 申报
   │             ↓ 平台定 waiting_for_input → 强制试答 → 答不上
   │           stage = waiting_for_input，台账里展开"执行器说：…"
   ├─ finalize  透传执行器原话 → 用户看到问题

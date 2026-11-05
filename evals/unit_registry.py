@@ -35,7 +35,7 @@ R1 修掉的是"同一张表有三个绑定点"：
    - **未初始化直接抛错**，不静默返回空表
 
 **③ 单一排版来源**
-   - 能力清单 `- 名字：描述` 只在 `registry.catalog()` 里拼一次
+   - 技能清单 `- 名字：描述` 只在 `registry.catalog()` 里拼一次
      （判据同样是**形状**：同一行既插 `.name` 又插 `.description` 就是在拼它，
      换个变量名也认得出来）
 
@@ -56,10 +56,10 @@ from proto.registry import _Registry, registry
 
 ROOT = Path(__file__).resolve().parent.parent
 
-#: 能力清单的**形状**：同一行里插了 `.name`、**一个冒号**、又插了 `.description`
+#: 技能清单的**形状**：同一行里插了 `.name`、**一个冒号**、又插了 `.description`
 #: —— 那就是在拼清单那一行（`- 名字：描述`）。变量名叫什么不管。
 #:
-#: ⚠️ 分隔符收在**冒号**上，不再放宽：`【能力 {x.name}】{x.description}` 那种是
+#: ⚠️ 分隔符收在**冒号**上，不再放宽：`【技能 {x.name}】{x.description}` 那种是
 #: **另一种渲染**（`read_skill` 的抬头），不是清单 —— 放宽了就是假阳性（实测踩过）。
 #: ⚠️ 正则拆成 raw 串再拼 —— 否则本文件自己就被这条检查扫中（同下面 ③ 的注释）。
 _NAME_FIELD = r"\{[^}\n]*\.name[^}\n]*\}"
@@ -185,7 +185,7 @@ def main() -> None:
     out = skills.read_skill.invoke({"skill_name": "only-one"})
     miss = skills.read_skill.invoke({"skill_name": "lesson-prep"})
     check("replace 后 `read_skill` 看到新表（核心验收点）", "only-one" in out, repr(out[:60]))
-    check("replace 后旧技能不在表里（不是「两份表并存」）", "没有能力" in miss, repr(miss[:60]))
+    check("replace 后旧技能不在表里（不是「两份表并存」）", "没有技能" in miss, repr(miss[:60]))
 
     registry.reset()
     check("`replace` 不污染内置表，`reset()` 能回来", registry.names() == builtin,
@@ -200,7 +200,7 @@ def main() -> None:
     d["hack"] = 1
     check("`all()` 返回副本（改不到注册表）", "hack" not in registry.names(), repr(registry.names()))
 
-    check("`get()` 查不到返回 None（业务事实，不是异常）", registry.get("不存在的能力") is None)
+    check("`get()` 查不到返回 None（业务事实，不是异常）", registry.get("不存在的技能") is None)
 
     fresh = _Registry()
     try:
@@ -224,7 +224,7 @@ def main() -> None:
         for p in files
         if p.name != "registry.py" and _CATALOG_SHAPE.search(io.open(p, encoding="utf-8").read())
     ]
-    check("能力清单只在 `registry.catalog()` 里拼（不是三处手抄）", not dup, repr(dup))
+    check("技能清单只在 `registry.catalog()` 里拼（不是三处手抄）", not dup, repr(dup))
 
     # ─────────────────────────── ④ 装配路径 ───────────────────────────
 

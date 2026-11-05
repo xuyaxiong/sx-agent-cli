@@ -1,11 +1,11 @@
 """Sub Agent = 可选执行者（按需创建、通用、隔离上下文）。
 
 三条约束：
-1. **不绑 skill** —— 能力指令由主 agent 随任务传进来。加一个技能不需要动平台。
+1. **不绑 skill** —— 技能指令由主 agent 随任务传进来。加一个技能不需要动平台。
 2. **用完即弃** —— 不跨轮存活、不挂起、不与用户交互。
    （状态在 `Task` 上，不在执行器上——所以"重新起一个"是无害的。）
 3. **不许随便停** —— 它必须以三态之一结束：
-   `completed`（任务完成）/ `waiting_for_input`（在请求信息）/ `incomplete`（都没）。
+   `completed`（任务完成）/ `waiting_for_input`（在要信息）/ `incomplete`（都没）。
    **`incomplete` → 平台把它推回去继续 react**（最多 `MAX_REACT_ROUNDS` 轮），
    而不是让用户承担它没干完的后果。
 
@@ -43,7 +43,7 @@ from proto.skills import Skill  # 技能领域
 
 #: 平台约定 —— 尽量少。技能作者写什么都不会破坏它，因为它不要求作者做任何事。
 _PLATFORM_RULE = (
-    "你是任务执行者。按下面的能力指令完成任务。\n"
+    "你是任务执行者。按下面的技能指令完成任务。\n"
     "要交付成文件的内容，调用 write_artifact 写入产物库：**名称、一句话梗概、正文**三样都给，\n"
     "正文写全（梗概是对外露出的那一层，别人靠它决定要不要读全文）。\n"
     "任务里列出的【可读产物】只是一份**清单**（名称与梗概）——需要全文时用 read_artifact 读，\n"
@@ -183,7 +183,7 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
     """通用执行器：干活、**判定出口**、没出口就推它继续。
 
     Args:
-        skill: 专业能力包（指令从这里来）。
+        skill: 专业技能包（指令从这里来）。
         briefing: 这次交给它的全部已知 —— 由 `agent.render_briefing(task)` 渲染。
             平台**不解析、不抽取、不比对**，原样带给执行器。
             ⚠️ 名字是 briefing 不是 given：它是**整份交接**（任务 / 上次做到哪 / 历次答复 /
@@ -243,18 +243,18 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
             f"**`skill_name` 传「{skill.name}」**，`path` 照抄下面的清单"
             "（**不要凭文件名猜内容**）：\n" + "\n".join(have)
         )
-    task_text = f"【能力指令】\n{skill.instructions}{refs}\n\n【已知信息】\n{briefing_text}"
+    task_text = f"【技能指令】\n{skill.instructions}{refs}\n\n【已知信息】\n{briefing_text}"
 
     run_id = f"R{next(_RUN_SEQ):02d}"
     trace.section(f"run_task · {run_id} · skill={skill.name}（通用执行器，隔离上下文）",
                   kind="run_begin")
-    # 🔴 **能力指令按名引用，不逐字复述**（用户要求：读了 skill 只写"读了啥、谁读的"）——
+    # 🔴 **技能指令按名引用，不逐字复述**（用户要求：读了 skill 只写"读了啥、谁读的"）——
     # 技能原文是静态资产、另有落盘文件；日志里真正要留的是**这次的交接内容**。
     # 交接关键日志：这一跳交了多少、有没有结构化对象（正文在下面那个 block 里）
     trace.handoff("交接书", "平台", "执行器", briefing_text, structured="Task → render_briefing")
     trace.block(
-        "发给执行器的内容（能力指令按名引用）",
-        f"【能力指令】{skill.name}"
+        "发给执行器的内容（技能指令按名引用）",
+        f"【技能指令】{skill.name}"
         f"（instructions {len(skill.instructions)} 字，原文见该技能包的 SKILL.md）\n\n"
         f"【已知信息】\n{briefing_text}",
         kind="executor_briefing",

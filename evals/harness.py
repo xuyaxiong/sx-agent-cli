@@ -397,7 +397,7 @@ def _sys_prompt_chars() -> int:
 
     # 口径必须与 `agent.build_agent` 里拼的那份**完全一致** —— 所以两边都调
     # `registry.catalog()`，不各写一份格式化（原来是手抄的，改一处忘另一处就量错）。
-    return len(proto.agent._MAIN_PROMPT) + len("\n\n可用能力：\n" + registry.catalog())
+    return len(proto.agent._MAIN_PROMPT) + len("\n\n可用技能：\n" + registry.catalog())
 
 
 def snapshot(state: dict, user: str, prev_len: int, idx: int, wall_s: float) -> dict:
@@ -523,7 +523,7 @@ _RECEIPT_KINDS: dict[str, str] = {
     #    这是"一套，别分叉"在**审计层**的复现（第一次加新出口就漏了）——
     #    现在由 `unit_receipt` ⑤ 的覆盖性断言盯着（漏一个当场红）。
     "fault": "⚠️ **平台故障**（这一轮**没跑成** —— 不是执行器干不了）",
-    "rejected_skill": "⛔ **被平台拒绝**：没有这个能力",
+    "rejected_skill": "⛔ **被平台拒绝**：没有这个技能",
     "rejected_artifact": "⛔ **被平台拒绝**：产物 ID 不存在",
 }
 
@@ -549,7 +549,7 @@ _RECEIPT_LABEL: dict[str, str] = {
     # 措辞与 `handoff.SOURCE_NOTE["fault"]` **同一句**（一套，别分叉）
     "fault": "**平台说的** —— 不是执行器说的",
     "not_dispatched": "平台的框架话 · 这次**没有派发**",
-    "available_skills": "平台列出的可用能力",
+    "available_skills": "平台列出的可用技能",
     "available_artifacts": "平台列出的现有产物",
 }
 
@@ -607,11 +607,11 @@ def _turn_summary(turns: list[dict], i: int) -> list[str]:
         if waiting:
             who = "、".join(f"`{x['id']}`（{x['skill']}）" for x in waiting)
             out.append(
-                f"- 上一轮：系统**反问**了 —— {len(waiting)} 个 Task 在等答复：{who}"
+                f"- 上一轮：系统**反问**了 —— {len(waiting)} 个 Task 在要信息：{who}"
                 + ("；平台已**透传**给用户" if relayed else "；⚠️ 没看到透传")
             )
         else:
-            out.append("- 上一轮：系统没有反问（没有 Task 等答复）")
+            out.append("- 上一轮：系统没有反问（没有 Task 在要信息）")
     out.append(
         "- 本轮输入：**真人当场输入**（`evals.chat` 交互式跑，不是预置脚本）"
         if human
@@ -750,7 +750,7 @@ def _render_messages(turn: dict) -> list[str]:
             n += 1
             out += [
                 f"**{n}. 📌 平台注入**（每轮开头自动塞给主 agent 的**任务台账** —— "
-                "它靠这个知道已经派过什么、谁在等答复）",
+                "它靠这个知道已经派过什么、谁在要信息）",
                 "",
                 "```",
                 content,

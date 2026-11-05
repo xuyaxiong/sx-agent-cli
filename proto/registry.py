@@ -27,7 +27,7 @@
 
 🔴 **唯一变更入口是 `replace` / `extend` / `reset`。** 表本身不对外暴露可变引用。
 
-🔴 **未初始化时 `get()` 直接抛错，不静默返回 None。** 静默的后果是"没有这个能力"
+🔴 **未初始化时 `get()` 直接抛错，不静默返回 None。** 静默的后果是"没有这个技能"
    这种看着像业务事实的假话，比当场崩掉难查得多（同 handoff 那条"禁止静默失配"）。
 """
 
@@ -107,7 +107,7 @@ class _Registry:
         return list(self._current)
 
     def catalog(self) -> str:
-        """能力清单的**唯一排版来源**（渐进式披露第一层）。
+        """技能清单的**唯一排版来源**（渐进式披露第一层）。
 
         原来是三处各写一遍（`skills.catalog`（已删）、`agent._MAIN_PROMPT` 的拼接、
         harness 的 catalog），改一处忘另一处就两副面孔。

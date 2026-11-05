@@ -236,7 +236,7 @@ def main() -> None:
     # ⚠️ ~~`rejected_turns`~~ **2026-11-03 删**：轮次不再由主 agent 点名
     # （见 `briefing.turn_lines` 的分层说明），"点了不存在的轮次"结构上不可能了。
     rejected = {
-        "rejected_skill": build_rejection("rejected_skill", "❌ 没有能力「x」", "a、b"),
+        "rejected_skill": build_rejection("rejected_skill", "❌ 没有技能「x」", "a、b"),
         "rejected_artifact": build_rejection("rejected_artifact", "❌ 产物 art_9 不存在", "（无）"),
     }
     for kind, r in rejected.items():
