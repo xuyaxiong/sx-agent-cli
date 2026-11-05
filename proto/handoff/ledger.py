@@ -60,7 +60,7 @@ NEEDS_DETAIL = ("waiting_for_input", "failed")
 #: **事实来源是 `Task.fault`**（`absorb_outcome` 写的，一处定义）—— 与回执的
 #: 【平台故障】（`DELIVERY["fault"]`）是**同一个事实的两个视图**（视图可以不一样，
 #: 事实只能有一处）。
-FAULT_MARK = "⚠️ 平台故障（这一轮**没跑成** —— 原样再派一次即可）"
+FAULT_MARK = "⚠️ 平台故障（这一轮**没跑成** —— 原样再委派一次即可）"
 
 
 #: 台账截断时"全文在哪"的两种答案 —— **由这一轮是谁起的决定**（`Task.run_by`）：

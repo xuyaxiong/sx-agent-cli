@@ -159,6 +159,44 @@ def main() -> None:  # noqa: C901
     check("渲染器里没有手拼的段名行（`SECTION` 是唯一来源）", not hits,
           f"手拼的：{hits[:6]}")
 
+    print("\n⑥ 🔴 **用词体系**（用户 2026-11-05）：同一个语义只许一个词")
+    # ⚠️ **这条守的是"内容"那一半** —— ⑤ 守形式（段名不许手拼），这条守**用词**。
+    #    用户原话：*"原则上交接单用词都应该是一个体系，这些词也是比较考究的，现在有些随意。"*
+    #    ⚠️ 判据同 ⑤：**只看运行期可见的字符串**（排除 docstring）——
+    #    注释里怎么说是**解释**，不是交给模型/用户看的话。
+    #    ⚠️ **这些词"不许再用"是相对的**：`委派` 是定下来的那个，所以 `(?<!委)派` 才红。
+    _BANNED: list[tuple[str, str, str]] = [
+        (r"(?<!委)派(?!出|给)", "委派", "派发 / 派出去 / 派给 / 重派 / 派了"),
+        ("成品", "产物", "成品"),
+        ("请求信息", "要信息", "请求信息"),
+        ("等答复", "在要信息", "等答复"),
+        ("提问", "要信息 / 问", "提问"),
+        ("一句话摘要", "梗概", "一句话摘要"),
+    ]
+    import re as _re
+    bad: list[str] = []
+    for py in root.rglob("*.py"):
+        if py.name == "__init__.py" and py.parent.name == "handoff":
+            continue  # ← 词汇表本身（它要**写出**那些"不许再用"的词，见 docstring）
+        src = py.read_text(encoding="utf-8")
+        try:
+            tree = ast.parse(src)
+        except SyntaxError:
+            continue
+        skip = set()
+        for n in ast.walk(tree):
+            if isinstance(n, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                b = n.body
+                if b and isinstance(b[0], ast.Expr) and isinstance(b[0].value, ast.Constant) \
+                   and isinstance(b[0].value.value, str):
+                    skip.add(id(b[0].value))
+        for n in ast.walk(tree):
+            if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in skip:
+                for pat, good, why in _BANNED:
+                    if _re.search(pat, n.value):
+                        bad.append(f"{py.relative_to(root.parent)}:{n.lineno} 「{why}」→ 该用「{good}」")
+    check("运行期字符串里没有「不许再用」的词", not bad, "\n      ".join(bad[:6]))
+
     print("\n" + "═" * 78)
     print(f"{'全部通过' if not FAIL else '有失败'}：{len(PASS)}/{len(PASS) + len(FAIL)}")
     if FAIL:

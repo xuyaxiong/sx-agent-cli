@@ -67,7 +67,7 @@ def build_prompt(skill_name: str, task: str, outcome: Any, messages: list) -> st
     return render_hop("ask", {
         # 🔴 **要什么 = 工具参数里的原话**（结构 ✓）—— 不是从它的话里挑出来的
         "asked": str(getattr(outcome, "asked", "") or "").strip(),
-        "task": f"（派给「{skill_name}」）\n{str(task or '').strip()}",
+        "task": f"（委派给「{skill_name}」）\n{str(task or '').strip()}",
         "report": str(getattr(outcome, "report", "") or "").strip(),
         # ⚠️ "全部 N 条、全文、不截断" 写在**段体**里 —— 它是内容的一部分，
         #    不是"来源"（来源那一行回答的是"这句是谁说的"，见 `SOURCE_NOTE`）。
