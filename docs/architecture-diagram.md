@@ -128,8 +128,19 @@ config ──► trace ──► (所有模块都在写日志)
                            ▼
 ┌─────────────────────────────────────────────────────────────────────┐
 │ ② agent（主 agent 子图 · **完整的 agent**：自己的模型 + 工具 + 循环）   │
-│      create_agent(model, tools=[6 个], system_prompt=_MAIN_PROMPT)    │
+│      create_agent(model, tools=[6 个], system_prompt=_MAIN_PROMPT,    │
+│                  middleware=[_StopWhenPending()])                    │
 │      每走一步都 dump（trace.stream_agent：values + messages 两支）      │
+│                                                                     │
+│      🔴 **待答时不发言**（F18 的收口，见第三十四次）：**那一刻是个决策   │
+│         点，不是对话轮次** —— 要决定的是「结果回给执行器，还是问用户」。 │
+│         但 ReAct 的默认规则是「工具返回了 → 模型再生成一拍」，它**把决策  │
+│         点当成了普通轮次** → 主 agent 就复述了那个问题。               │
+│         `before_model` 中间件认两种形状（本批回执 `kind="waiting"` /    │
+│         `AgentState.fed_asking`）→ `jump_to="end"`，**那次模型调用根本  │
+│         不发生**（不是"生成了再压住"）。                              │
+│         `completed`/`failed`/`fault` 照常发言（要报交付、要处置失败）。 │
+│         守卫：`evals/unit_stop_on_pending.py`                          │
 │                                                                     │
 │      三条出路，**它自己选**：                                          │
 │        · 直接答            —— 闲聊/追问/澄清（**不建 Task**）          │
