@@ -88,6 +88,19 @@ class State(TypedDict):
     #: 它跟着 checkpointer 活到下一轮，不清的话**后面每一轮都会被当成"在回答那条"** ✗。
     #: ⚠️ 也**别加进 `AgentState`**：理由同 `actions`（子图会把声明过的字段原样回吐）。
     answer_to: NotRequired[str]
+    #: 🔴 **这一轮投递之后，执行器又问了一个**（`discussion-log` F18 的
+    #: **「投递后又问」那一形状** —— 见 `agent._StopWhenPending`）。
+    #:
+    #: ⚠️ **两个 schema 都要声明，少一个就静默失效**（2026-11-04 实测踩到）：
+    #:   · `State`（这里）—— `node_prepare` 要往**父图**写它；
+    #:     **没声明的话 LangGraph 会把那个键悄悄丢掉**（不报错、不警告）；
+    #:   · `AgentState` —— 子图里的 `agent._StopWhenPending` 要**读**它。
+    #: 只加了一边的那一跑：拦下的 2 次**全是「本批回执」那条**，这一条一次没生效
+    #: （`logs/proto-20261104-181250.log`）。守卫见 `unit_stop_on_pending` ⑦。
+    #:
+    #: ⚠️ 它是 **bool、没有 reducer**，所以子图回吐同一个值 —— 不会像 `log` 那样翻倍
+    #: （`AgentState` 那条"别加进来"的警告针对的是带 `operator.add` 的字段）。
+    fed_asking: NotRequired[bool]
 
 
 class AgentState(TypedDict):
@@ -109,6 +122,21 @@ class AgentState(TypedDict):
 
     messages: Annotated[list[AnyMessage], add_messages]
     tasks: NotRequired[Annotated[list[dict[str, Any]], _merge_tasks]]
+    #: 🔴 **这一轮投递之后，执行器又问了一个**（`discussion-log` F18 的
+    #: **「投递后又问」那一形状**）。
+    #:
+    #: **为什么子图需要它**：`agent._StopWhenPending`（主 agent 的 `before_model` 中间件）
+    #: 要判断"这一轮平台会不会贴一条新问题给用户"。待答只可能在两处产生：
+    #:   · **「本批回执」**（主 agent 自己调 `delegate` → 回执 waiting）—— 它扫**工具回执**就能认；
+    #:   · **「投递后又问」**（平台在 `prepare` 里把用户答复投给执行器 → 执行器又问了一个）——
+    #:     这一轮主 agent 手里**什么都没有**（消息末尾是 `HumanMessage`），
+    #:     所以只能由平台**把事实写在这儿**。
+    #:
+    #: ⚠️ **本轮有效**（`node_prepare` **每条返回路径**都写 True/False）——
+    #: 它不是"长期挂着的 pending"。漏写一条返回路径，它就会残留到下一轮，
+    #: 于是"上一轮执行器提问、下一轮用户问天气"时主 agent 被**无故收话**（同 `answer_to`）。
+    #: ⚠️ 它是 **bool、没有 reducer** —— 子图回吐同一个值，不会像 `log` 那样每轮翻倍。
+    fed_asking: NotRequired[bool]
 
 
 # ──────────────────────────── prepare：注入待答 ────────────────────────────
@@ -255,6 +283,13 @@ def node_prepare(state: State) -> dict:
     """
     updated, logs = _feed_waiting(state)
 
+    # 🔴 **这一轮投递之后，执行器又问了一个吗**（F18 的「投递后又问」那一形状）——
+    #    判据是**结构事实**：`_feed_waiting` 里 `settle()` 把投递过的那条落成了
+    #    `waiting_for_input`（投递后完成了就是 `completed`，不会误判）。
+    #    ⚠️ **两条返回路径都要写**（含下面那个早返回）—— 它是**本轮信号**，
+    #    不是长期挂着的 pending；漏写一条它就会残留到下一轮（同 `answer_to`）。
+    fed_asking = any(t.get("stage") == "waiting_for_input" for t in updated)
+
     # 投递后的最新台账（reducer 按 id 合并，这里先自己合一遍，好把最新状态渲染出来）
     merged = {t["id"]: t for t in (state.get("tasks") or [])}
     for t in updated:
@@ -263,7 +298,8 @@ def node_prepare(state: State) -> dict:
     if not tasks:
         # ⚠️ **`answer_to` 每条返回路径都要清**（它跟 checkpointer 活到下一轮，
         #    不清的话后面每一轮都会被当成"在回答那条"）—— 见 `State.answer_to`。
-        return {**({"log": logs} if logs else {}), "answer_to": ""}
+        #    `fed_asking` 同理：**本轮信号，本轮写**。
+        return {**({"log": logs} if logs else {}), "answer_to": "", "fed_asking": fed_asking}
 
     # 台账怎么渲染在 `proto/handoff/ledger.py`（schema 与模板放一起）
     waiting = [t for t in tasks if t.get("stage") == "waiting_for_input"]
@@ -287,10 +323,36 @@ def node_prepare(state: State) -> dict:
         "tasks": updated,  # reducer 按 id 合并
         "log": logs + [f"prepare: 注入台账（{len(tasks)} 项，其中待答 {len(waiting)} 条）"],
         "actions": actions,
+        "fed_asking": fed_asking,   # ← F18「投递后又问」的本轮信号，见 `AgentState.fed_asking`
     }
 
 
 # ──────────────────────────── finalize：兜底补问 ────────────────────────────
+
+
+def render_relay(waiting: list[dict]) -> str:
+    """待答 → **贴给用户的那段文本**（`solution.md` §0.65 Y1 的第一步）。
+
+    🔴 **从对象渲染**：每条待答贴的是它**申报的那句原话**（`Task.asked` —— `ask_user`
+    的参数，`absorb_outcome` 原样落下），**不是** `report`（执行器最后说的**那段话**，
+    混着"好的，我先来进行第一步的分析…"之类的过场）。**用户要答的是"问题"，不是那段独白。**
+
+    ⚠️ `asked` 缺失时（`case.initial_tasks` 注入的 fixture、手写的 state）**不许静默降级**：
+    显式说清"这条没留下问题原话"，再把那段话附上 —— 有就说有，没有就说没有。
+
+    ⚠️ **抽成模块级纯函数是为了可单测**（同 `ask.build_prompt` / `nudge.nudge_text`）：
+    它原来嵌在 `node_finalize` 里，而 `finalize` 从 2026-11-04 起**不再注入 `AIMessage`**
+    （见那里的注释）—— 渲染结果就只剩 `trace.handoff` 那条记录，断言够不着了。
+    """
+    def _one(t: dict) -> str:
+        q = str(t.get("asked") or "").strip()
+        who = t.get("skill") or "?"
+        if q:
+            return f"【{who}】问：{q}"
+        return (f"【{who}】（**这一条没留下问题原话** —— 下面是它最后说的那段，"
+                f"可能混着过场）：\n{t.get('report') or '（它一个字都没说）'}")
+
+    return "\n\n".join(_one(t) for t in waiting)
 
 
 def node_finalize(state: State) -> dict:
@@ -325,22 +387,7 @@ def node_finalize(state: State) -> dict:
     if not waiting:
         return {}
 
-    # 🔴 **从对象渲染**（2026-11-05，`solution.md` §0.65 Y1 的第一步）：每条待答贴的是它
-    #    **申报的那句原话**（`Task.asked` —— `ask_user` 的参数，`absorb_outcome` 原样落下），
-    #    **不是** `report`（执行器最后说的**那段话**，混着"好的，我先来进行第一步的分析…"
-    #    之类的过场）。**用户要答的是"问题"，不是那段独白。**
-    #
-    #    ⚠️ `asked` 缺失时（`case.initial_tasks` 注入的 fixture、手写的 state）**不许静默降级**：
-    #    显式说清"这条没留下问题原话"，再把那段话附上 —— 有就说有，没有就说没有。
-    def _one(t: dict) -> str:
-        q = str(t.get("asked") or "").strip()
-        who = t.get("skill") or "?"
-        if q:
-            return f"【{who}】问：{q}"
-        return (f"【{who}】（**这一条没留下问题原话** —— 下面是它最后说的那段，"
-                f"可能混着过场）：\n{t.get('report') or '（它一个字都没说）'}")
-
-    block = "\n\n".join(_one(t) for t in waiting)
+    block = render_relay(waiting)
     # ⚠️ **只发内容**：`finalize: ` 那个前缀是**日志文件格式**的一部分，归记录器
     # （`trace._NOTE_HEAD`）—— 业务侧带上它，展示层就得按位置切回来（审核 F1）。
     trace.note(f"透传 {len(waiting)} 条待答（平台直接贴，不判断主 agent 问没问）",
@@ -364,6 +411,21 @@ def node_finalize(state: State) -> dict:
         # **来源标注在这一跳就断了**（2026-11-03 实测）。
         # 标记挂在 `additional_kwargs` 上（实测不会漏给模型），记录层读它 ——
         # 而不是"看内容像不像执行器的话"（那是反结构化，见 `proto/handoff` 的 docstring）。
+        #
+        # 🔴 **2026-11-04（F18 收口）—— 注入留着，因为"那一拍"已经不存在了。**
+        #
+        #    曾经试过**撤掉这条注入**（理由：模型在它自己的上下文里看到
+        #    `AIMessage: 【lesson-prep】问：…`，**以为是自己说过的话**，于是在回复里又写一遍）。
+        #    ⚠️ **实测无效**：撤掉之后主 agent **照样复述**（4/4），因为问题内容还从
+        #    **台账**和**回执**进来 —— 只要它知道，它就会写。
+        #
+        #    **真正治它的是 `agent._StopWhenPending`**（主 agent 的 `before_model` 中间件）：
+        #    执行器一申报待答，主 agent **那一拍根本不生成** → 没有人复述 → 也就不需要
+        #    靠"不给它看"来防。**问题出在"它有机会说"，不在"它看得见"。**
+        #
+        #    ⇒ 于是这条注入**该留着**：它是**转写里唯一那条问题**（CLI 上由 `next_pending`
+        #    的提示符呈现，前端由卡片呈现），而且 `_user_turns` 的「它在回答的上一句」
+        #    正是靠它才有内容（撤掉注入时实测：那一行会退化成主 agent 的旧回复）。
         "messages": [AIMessage(content=block, additional_kwargs={"injected_by": "platform.finalize"})],
         "log": [f"finalize: 透传 {len(waiting)} 条待答（原样贴执行器的话，无条件）"],
         # 🔴 **同一刻记下结构化事实**（断言读它，不读上面那句人话）—— 见 `State.actions`

@@ -20,6 +20,7 @@ from __future__ import annotations
 from typing import Any
 
 from langchain.agents import create_agent
+from langchain.agents.middleware import AgentMiddleware, hook_config
 from langchain.tools import ToolRuntime, tool
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.types import Command
@@ -55,10 +56,12 @@ _MAIN_PROMPT = (
     "为什么必须委派：专业能力的产出可能很长，自己干会把你的上下文撑爆。\n"
     "**你在派发前无法判断产出有多长**，所以不要猜——需要专业能力就委派。\n"
     "\n"
-    "委派回来如果显示「没完成，它在请求信息」——**什么都别做，尤其不要自己补一个答案**：\n"
+    "委派回来如果显示「它在**要信息**」——**什么都别做，尤其不要自己补一个答案**：\n"
     "平台已经替你查过一次上下文了（`delegate` 内部做的）；确实没有，\n"
-    "平台会负责把问题**转达给用户**，用户答复后也会**投回给那个执行器**。\n"
-    "你这条回复只要说清楚「派了什么、还差什么」就行。\n"
+    "平台会把**它申报的那句原话**贴给用户，用户答复后也会**投回给那个执行器**。\n"
+    "🔴 **你这条回复只说「派了什么」就行 —— 问题原文由平台贴，你不要写。**\n"
+    "（问题内容在台账那行「**它要的信息**」里，你看得到；看得到是为了**别重复问**，\n"
+    "不是让你转述 —— 转述会和平台那条**重复**，用户会看到同一个问题两遍。）\n"
     "\n"
     "🔴 **绝不要替用户定一个答案再委派一次。** 用户没说过的，就是没有 ——\n"
     "你猜的那个值会变成一份基于错误前提的成品，而用户不知道。\n"
@@ -319,8 +322,15 @@ def _user_turns(messages: list) -> list[dict]:
     更糟的是这段还写着"冲突时以原话为准" —— 等于把一个**无法解读的片段**标成了最高权威。
 
     `after` 取**紧邻的前一条 AI 消息**（纯位置关系，平台搬，不判断语义）。
-    它可能是主 agent 说的，也可能是**平台把执行器自己的提问透传给用户的那条**
-    （`node_finalize` 注入的）—— 两种情况执行器都需要，所以不区分。
+
+    🔴 **2026-11-04（F18 修）之后这一行的取法变了**：`node_finalize` **不再注入**
+    那条 `AIMessage`（它让模型以为问题是自己说的）—— 所以这里取到的**不再是平台透传的
+    问题**，而是**主 agent 自己那条回复**（而它现在被要求**别写问题**，可能压根没提）。
+
+    ⇒ **"答不能脱离问"这件事现在靠【问答经过】兜**（`qa[].q` ＝ 收下答案那一刻的
+    `Task.asked`，结构 ✓）。这一行降级成**次级线索**。
+    ⚠️ **待实测确认够不够** —— 不够的话，正解是让 `_user_turns` 在"这一轮是答复"时
+    直接取 `Task.asked`（而不是从 `messages` 里找前一条 AI 消息）。
     """
     out: list[dict] = []
     last_ai = ""
@@ -566,6 +576,112 @@ _MODE_NOTE: dict[str, str] = {
 }
 
 
+class _StopWhenPending(AgentMiddleware):
+    """**执行器一申报待答，主 agent 这一拍就不生成**（`discussion-log` F18 的收口）。
+
+    ## 🔴 本质：**那一刻是个决策点，不是对话轮次**（用户 2026-11-05 澄清）
+
+    这一拍要决定的是「**结果回给执行器，还是问用户**」—— 那是个**决策**。
+    但 ReAct 循环有一条默认规则：
+
+        工具返回了 → 模型再生成一拍
+
+    它**假设"工具返回之后就是该说话了"** —— 于是把**决策点当成了普通轮次**，
+    主 agent 就"发言"了，而它唯一能说的就是复述那个问题。
+
+    ⇒ **正解不是"拦住它的输出"，是"让那一拍不发生"。**
+
+    ⚠️ **"拦截 / 禁言 / 收话"是错的框法**（我在这上面绕了很久）：那听起来像
+    **压住一个本该发生的回合**。真实情况是 —— 中间件在**模型调用之前**就跳走了，
+    **那次调用根本没发生**，不是"生成了再压住"。
+
+    ## 治的是什么
+
+    用户看到的那个重复：**同一个问题在终端上出现两遍** —— 主 agent 的回复里一遍、
+    平台透传一遍。实测（`logs/proto-20261104-152230.log`）**4/4 次全部复述**。
+
+    ## 试过、都不行的六条路（**按轴分两组，别重走**）
+
+    **轴一 —— "让它别写"**（三条全败）：
+
+    | 做法 | 结果 |
+    |---|---|
+    | 提示词明说"问题平台会贴，你不要写" | ❌ 无效 |
+    | 台账/回执**不给**它问题内容 | ❌ 堵不死 —— 回执的【执行器说】经常本身就含问题，而不截断是用户定的 |
+    | 台账**给**它问题内容（平台的话、来源正确） | ❌ 照样复述，而且写得更长（把选项排成 A/B/C/D） |
+
+    **轴二 —— "让工具自己结束循环"**（想从工具那一侧收口）：
+
+    | 做法 | 结果 |
+    |---|---|
+    | `Command(goto=END)` | ❌ `create_agent` 的 `tools→model` 是**条件边**，忽略 `goto` |
+    | redirect（`ToolMessage.name` 指向 `return_direct` 工具） | ❌ **ToolNode 会把 `name` 覆盖**成实际执行的工具名 |
+    | 动态改 `return_direct` | ⚠️ 有效，但是**共享可变状态** + 依赖框架内部实现 —— 不要 |
+
+    **⇒ 两条轴的共同错误**：都默认了"**那一拍一定会生成**"，于是解全变成"事后处理"。
+    只要主 agent 手里有问题内容、又有机会发言，它就会写 —— 三种形态全试过，**4/4 全复述**。
+
+    > 🔴 **出问题的是"它有机会说"，不是"它看得见"。**
+
+    ## 为什么是 `before_model` 中间件（2026-11-04 实测）
+
+    `before_model` 是**模型调用之前**的一个节点，`can_jump_to=["end"]` 让它能直接
+    跳到出口 —— 于是**那次模型调用根本不会发生**，主 agent 一个字都不生成。
+    ⚠️ 关键：**它是公开 API**（`langchain.agents.middleware`），框架自带的
+    `ModelCallLimitMiddleware` / `ToolCallLimitMiddleware` / `PIIMiddleware`
+    **用的就是这同一个模式**（`@hook_config(can_jump_to=["end"])`）。
+
+    ## 触发条件是**结构事实**，不是模型判断
+
+    读的是回执对象上的 `handoff.kind`（`Receipt.kind`）——
+    `"waiting"` 才停；`completed` / `failed` / `fault` **照常发言**（它要报交付、
+    要处置失败）。⚠️ **不读文本、不猜语义**（判据一）。
+
+    ## 谁把问题交到用户手上
+
+    平台。两条路，都不经过 LLM：CLI 的 `next_pending` 提示符、前端的交互卡片；
+    外加 `finalize` 注入的那条 `AIMessage`（转写里那条）。
+    """
+
+    @hook_config(can_jump_to=["end"])
+    def before_model(self, state: Any, runtime: Any) -> dict[str, Any] | None:
+        """这一轮平台要贴一条新问题出去 → 结束这一轮，模型不会被调用。
+
+        **两种形状都要认**（少认一种就是"拦一半"，2026-11-04 实测坐实）：
+
+        **形状一 —— 「本批回执」**（主 agent 自己调的 `delegate`）：
+        ⚠️ **要看整批，不能只看最后一条**：模型会**并行调工具** —— 实测它把 `delegate`
+        和 `read_skill` 放在**同一条消息**里，于是待答回执**不排在最后**，
+        `msgs[-1]` 是 `read_skill` 的返回 → 机制**静默失效**（那次 4 个问题只拦下 1 个）。
+        "这一批" = 末尾**连续的那串 `ToolMessage`**（同一条 `AIMessage` 的 `tool_calls`）。
+
+        **形状二 —— 「投递后又问」**（`state["fed_asking"]`，平台在 `prepare` 里投递，
+        执行器又问了一个）：这条路上**根本没有 `delegate` 调用** —— 主 agent 的消息末尾是
+        `HumanMessage`（用户刚答的那句），上面那轮扫描**扫不到任何工具返回**。
+        事实由 `node_prepare` 写在 `AgentState.fed_asking` 上（**本轮信号**，每轮重写）。
+        """
+        # ── 形状一：本批回执 ──
+        for m in reversed(state.get("messages") or []):
+            if not isinstance(m, ToolMessage):
+                break
+            handoff = (m.additional_kwargs or {}).get("handoff") or {}
+            if handoff.get("kind") == "waiting":
+                return self._stop("这批工具返回里有待答回执")
+        # ── 形状二：投递后又问 ──
+        if state.get("fed_asking"):
+            return self._stop("投递之后执行器又问了一个")
+        return None
+
+    @staticmethod
+    def _stop(why: str) -> dict[str, Any]:
+        """⚠️ **单独报一行**：读日志的人得看得出"主 agent 这一轮被平台收了话" ——
+        不然只会以为它没说话（那是另一回事）。`why` 写清是**哪条路**拦下的（复盘要看）。
+        """
+        trace.note(f"主 agent **这一轮不发言**（{why}，问题由平台原样贴给用户）"
+                   " → `before_model` 跳 end", kind="")
+        return {"jump_to": "end"}
+
+
 def build_agent(state_schema: type) -> Any:
     """主 agent：一个完整的 agent（工具 + 循环）。
 
@@ -579,5 +695,7 @@ def build_agent(state_schema: type) -> Any:
         + "\n\n可用能力：\n"
         + registry.catalog(),
         state_schema=state_schema,
+        # 🔴 **待答时不发言**（F18 的收口）—— 见 `_StopWhenPending` 的 docstring。
+        middleware=[_StopWhenPending()],
         name="main_agent",
     )

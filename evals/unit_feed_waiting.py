@@ -51,7 +51,7 @@ WAITING_REPORT = "（还需要信息）"
 WAITING_ASKED = "这份导学单用在哪？（课前预习 / 课中探究 / 课后巩固）"
 
 
-def _waiting(report: str = WAITING_REPORT) -> ExecOutcome:
+def _waiting(report: str = WAITING_REPORT, asked: str = WAITING_ASKED) -> ExecOutcome:
     """投递后仍待答（不关心内容，只看提示词）。
 
     🔴 **用真的 `ExecOutcome`，不自己捏一个假类**（2026-11-05）：假类是**同一语义的第二份定义**
@@ -59,7 +59,7 @@ def _waiting(report: str = WAITING_REPORT) -> ExecOutcome:
     又缺 `asked` / `fault`（真类新加的）。多一份定义 = 多一次静默分叉的机会。
     """
     return ExecOutcome(status="waiting_for_input", artifacts=[], report=report, rounds=1,
-                       asked=WAITING_ASKED)
+                       asked=asked)
 
 
 def _no_delivery() -> ExecOutcome:
@@ -257,7 +257,10 @@ def main() -> None:
     from proto.handoff.ledger import render_ledger
 
     # > 150 字，逼出台账的截断
-    proto.executor.run_task = lambda *a, **k: _waiting("问课时" * 60)  # type: ignore[assignment]
+    # ⚠️ **长的那一份要放在 `asked` 上**（2026-11-04）：台账 waiting 那档现在打的是
+    #    `asked`（"它要的信息"），不是 `report`（那段过场）—— 见 `ledger.render_ledger`。
+    proto.executor.run_task = lambda *a, **k: _waiting(  # type: ignore[assignment]
+        "问课时" * 60, asked="用几个课时？" * 30)
     state7 = {
         "messages": [HumanMessage("两课时")],
         # 🔴 **标识**（`solution.md` §0.65 Y1）：这句在回答哪个待答任务 ——

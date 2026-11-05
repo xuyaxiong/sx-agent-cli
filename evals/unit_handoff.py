@@ -206,6 +206,10 @@ def main() -> None:
         "messages": [AIMessage("（没有 HumanMessage，免得触发投递）")],
         "tasks": [{"id": "t1", "skill": "s", "stage": "waiting_for_input",
                    "artifacts": [], "refs": [], "report": LONG,
+                   # ⚠️ **长的那一份放在 `asked` 上**（2026-11-04）：台账 waiting 那档
+                   #    现在打的是 `asked`（"它要的信息"），不是 `report`（那段过场）——
+                   #    见 `ledger.render_ledger`。截断这一列要测的是**它实际打的那个字段**。
+                   "asked": LONG,
                    "qa": [], "user_turns": []}],
     }
     injected = node_prepare(st)["messages"][0].content
@@ -222,23 +226,33 @@ def main() -> None:
           node_prepare({**st, "tasks": [{**st["tasks"][0], "run_by": "delegate"}]})["messages"][0].content)
     check("② 台账 · `feed`／没记 run_by 时：**不许**指向回执，要说清「你手上没有」",
           "回执" not in injected and "不在你的上下文里" in injected)
-    short_task = {**st["tasks"][0], "report": "很短"}
+    # ⚠️ **两个字段都要缩短**：台账 waiting 那档打的是 `asked`（不是 `report`），
+    #    只缩 `report` 的话 `asked` 还是长的 → 照样被截 → 这条会假红（2026-11-04 踩过）。
+    short_task = {**st["tasks"][0], "report": "很短", "asked": "用几课时？"}
     check("② 台账 · 短内容**不该**被标截断",
           "【平台截断" not in node_prepare({**st, "tasks": [short_task]})["messages"][0].content)
 
-    # ── ⑪ 透传（平台 → 用户）：注入的 AIMessage 里装的是**执行器的原话**，
-    #      必须**打标记**，否则记录层会把它标成"主 agent 输出"（2026-11-03 实测踩到）
-    from proto.graph import node_finalize
+    # ── ⑪ 透传（平台 → 用户）：**不再注入消息** —— 问题只住在通道里 ──
+    # 🔴 **2026-11-04（F18）**：原来这里注入一条 `AIMessage`（内容＝执行器的原话），
+    #    靠 `additional_kwargs["injected_by"]` 让**记录层**知道"不是主 agent 说的"。
+    #    ⚠️ 那个标记**不漏给模型** —— 于是模型在自己的上下文里看到
+    #    `AIMessage: 【lesson-prep】问：…`，**以为是自己说过的话**。
+    #
+    #    🔴 **2026-11-04 收口**：试过撤掉这条注入 —— **实测无效**（撤了主 agent 照样
+    #    复述 4/4，因为问题还从台账和回执进来）。真正治它的是 `agent._StopWhenPending`
+    #    （执行器一申报待答，主 agent 那一拍**根本不生成**）。
+    #    ⇒ 注入**留着**：它是转写里唯一那条问题，也是 `_user_turns` 的
+    #    「它在回答的上一句」的来源。**问题出在"它有机会说"，不在"它看得见"。**
+    from proto.graph import node_finalize, render_relay
 
     fin = node_finalize({**st, "tasks": [short_task]})["messages"][0]
     tag = (fin.additional_kwargs or {}).get("injected_by")
-    check("⑪ 透传 · 注入了 AIMessage", type(fin).__name__ == "AIMessage")
+    check("⑪ 透传 · 注入了 AIMessage（转写里那条问题）", type(fin).__name__ == "AIMessage")
     check("⑪ 透传 · 打了 `injected_by` 标记", tag == "platform.finalize", f"tag={tag!r}")
     from proto.handoff import INJECTED
-
-    check("⑪ 透传 · 标记在词汇表里声明过", tag in INJECTED, f"未声明：{tag!r}")
     from evals.harness import _injected_label
 
+    check("⑪ 透传 · 标记在词汇表里声明过", tag in INJECTED, f"未声明：{tag!r}")
     check("⑪ 透传 · 记录层标的是**平台透传**（不是主 agent 输出）",
           "透传" in _injected_label(tag) and "不是主 agent" in _injected_label(tag),
           _injected_label(tag))
@@ -248,18 +262,22 @@ def main() -> None:
     #    Y1 第一步）：`ask_user` 的参数原来**只活在当轮**，一进"待答"就丢了 ✗ ——
     #    跨轮只剩 `report`（混着"好的，我先来进行第一步的分析…"之类过场）。
     #    用户要答的是**问题**，不是那段独白。
+    # ⚠️ 断言断的是**纯函数** `render_relay`（注入那条消息就是它的产物）——
+    #    抽出来是为了可单测，同 `ask.build_prompt` / `nudge.nudge_text` 的形状。
     _w = {**short_task, "skill": "lesson-prep", "asked": "这节课希望侧重哪种上法？",
           "report": "好的，我先来进行第一步的分析，然后进入第二步——生成前确认。\n\n"
                     "## 第一个问题\n这节课希望侧重哪种上法？"}
-    _relayed = node_finalize({**st, "tasks": [_w]})["messages"][0].content
+    _relayed = render_relay([_w])
     check("⑪ 透传 · 贴的是**申报的原话**（`Task.asked`）",
           "【lesson-prep】问：这节课希望侧重哪种上法？" in _relayed, _relayed)
     check("⑪ 透传 · 执行器那段独白**不进**透传",
           "我先来进行第一步的分析" not in _relayed, _relayed)
-    _noq = {**_w, "asked": ""}
-    _relayed2 = node_finalize({**st, "tasks": [_noq]})["messages"][0].content
+    _relayed2 = render_relay([{**_w, "asked": ""}])
     check("⑪ 透传 · `asked` 缺失时**显式说清**（不静默降级、也不假装有）",
           "没留下问题原话" in _relayed2 and "我先来进行第一步的分析" in _relayed2, _relayed2)
+    # 注入的那条 == 纯函数渲染出来的（**一处定义**，别让两条路漂开）
+    check("⑪ 透传 · 注入的消息内容 == `render_relay` 的输出",
+          fin.content == render_relay([short_task]), f"注入：{fin.content[:60]!r}")
 
     # 🔴 同一刻还要写**结构化动作**（2026-11-04）：断言读它，不读 `log` 那句人话 ——
     #    见 `State.actions` 的注释。拿掉这一条 → `unit_feed_waiting` ⑨ 的守卫会红。
@@ -268,7 +286,9 @@ def main() -> None:
     check("⑪ 透传 · 写了结构化动作（`did=relay` + 涉及哪些 Task + 多少字）",
           [a.get("did") for a in acts] == ["relay"]
           and acts[0].get("tasks") == [short_task["id"]]
-          and acts[0].get("chars") == len(fin_out["messages"][0].content),
+          # ⚠️ 比的是**渲染出来的那段文本**的长度 —— 它现在不进 messages，
+          #    所以拿 `render_relay` 现算（原来读 `fin_out["messages"][0].content`）。
+          and acts[0].get("chars") == len(render_relay([short_task])),
           repr(acts))
     check("⑪ 透传 · 同一刻那句**人话仍在** `log` 里（给人看的，没被删）",
           any("透传" in ln for ln in (fin_out.get("log") or [])), repr(fin_out.get("log")))
@@ -424,9 +444,14 @@ def main() -> None:
     _nud = _nudge()
     check("⑫ `nudge_text` 点明了**两条出路**（`write_artifact` / `ask_user`）",
           "write_artifact" in _nud and "ask_user" in _nud, _nud)
-    _led = _ledger([{**short_task, "stage": "waiting_for_input", "report": "它在问课时"}])
-    check("⑫ `render_ledger` 里**只有执行器的原话**（判定的两行随判定退休删了）",
-          "执行器说" in _led and "判定说" not in _led, _led)
+    # ⚠️ 待答那档的标签是「它要的信息」（打 `asked`），**不是**「执行器说」（打 `report`）——
+    #    2026-11-04 改的（F18 同批）：主 agent 需要知道的是"**它在等什么**"，
+    #    而这段文本还是 `finalize` 不再注入之后**它唯一能看到问题内容的地方**。
+    #    这一列断的是"台账里**只有它自己的话**，没有第三方（判定）的话"—— 换标签不影响这条。
+    _led = _ledger([{**short_task, "stage": "waiting_for_input",
+                     "asked": "它在问课时", "report": "好的，第一个问题已发出"}])
+    check("⑫ `render_ledger` 里**只有它自己的话**（判定的两行随判定退休删了）",
+          "它要的信息" in _led and "判定说" not in _led, _led)
 
     # 🔴 **平台故障要压过 `stage` 标记**（2026-11-05 修 A3）：故障的 Task `stage` 也是
     #    `failed`，照 stage 说话就是假话（"❌ 它没交付、也没说要什么" ＝ 执行器没干成），

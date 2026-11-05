@@ -133,6 +133,20 @@ def render_ledger(tasks: list[dict]) -> str:
             #    照打就是一行"执行器说："后面**空白**（冒号后面什么都没有），
             #    读的人还以为它说了句空话。同一条 `brief` 规矩（长了显式截断＋指向出处）。
             lines.append(f"      平台故障：{brief(t['fault'], 150, '平台故障', run_by=by)}")
+        elif t.get("stage") == "waiting_for_input":
+            # 🔴 **待答那档打 `asked`，不打 `report`**（2026-11-04，和 F18 一起改）：
+            #    `report` 是执行器**最后说的那段话**（"好的，第一个问题已发出…"那类过场），
+            #    而主 agent 需要知道的是"**它在等什么**"。
+            #    ⚠️ 这行还有个结构作用：`finalize` 不再注入那条 `AIMessage` 之后，
+            #    **这里是主 agent 唯一能看到问题内容的地方** —— 而它是**平台的话**
+            #    （`SystemMessage`），所以主 agent 不会以为那是自己说过的
+            #    （那正是 F18 的机制成因）。台账每轮都在最前面 → **答不脱离问** ✓
+            q = str(t.get("asked") or "").strip()
+            if q:
+                lines.append(f"      它要的信息：{brief(q, 150, '它要的信息', run_by=by)}")
+            else:
+                # ⚠️ **不许留一个冒号后面空白**（同上面故障那档的理由）—— 说清是"没有"。
+                lines.append("      它要的信息：（**这一条没留下问题原话**）")
         elif t.get("stage") in NEEDS_DETAIL:
             # ⚠️ 原来这里还有"已做到（判定说）/ 还缺（判定说）"两行 —— 判定退休后
             #    `Task.progress` / `Task.missing` 没有来源了，两行一起删（2026-11-05）。

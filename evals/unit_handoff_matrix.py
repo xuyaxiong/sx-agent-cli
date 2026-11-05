@@ -91,12 +91,19 @@ def main() -> None:  # noqa: C901
     # ── ③ 台账 ──
     from proto.handoff.ledger import render_ledger
 
-    led = render_ledger([{"id": "t1", "skill": "quiz", "stage": "waiting_for_input",
-                          "artifacts": [], "report": "问课时" * 60}])   # >150 字才触发台账截断
+    # ⚠️ **两条明细行都要覆盖**（2026-11-04）：待答那档打 `asked`（"它要的信息"），
+    #    失败那档打 `report`（"执行器说"）—— 两行都要能截、都要说清全文在哪。
+    led = render_ledger([
+        {"id": "t1", "skill": "quiz", "stage": "waiting_for_input", "artifacts": [],
+         "asked": "用几个课时？" * 30, "report": "问课时" * 60},      # >150 字才触发台账截断
+        {"id": "t2", "skill": "quiz", "stage": "failed", "artifacts": [],
+         "report": "干不下去" * 60},
+    ])
     row("③ 台账（平台→主 agent）",
         # ⚠️ 2026-11-05 判定退休：台账里「已做到 / 还缺（判定说）」两行删了（没有来源了），
-        #    只剩执行器自己的原话 —— 这一列断的是"它说的话**标了来源**"。
-        BAD if "执行器说" not in led else OK,
+        #    只剩执行器自己的话 —— 这一列断的是"它说的话**标了来源**"。
+        #    两档的标签不同（待答=「它要的信息」/ 失败=「执行器说」），但都点明了是谁的。
+        BAD if not ("执行器说" in led and "它要的信息" in led) else OK,
         # ②截断/出处：切了要标 + **说清全文在哪**。⚠️ 答案**由 `run_by` 决定**（E2）：
         # 这个 Task 没记 `run_by` → 走 fail-safe「不在你的上下文里」；
         # 两条路各自的断言在 `unit_handoff` ②（delegate→回执 / feed→没有回执）。
@@ -130,11 +137,21 @@ def main() -> None:  # noqa: C901
         OK, NA, OK, OK)
 
     # ── ⑦ 透传 ──
-    from proto.graph import node_finalize
+    # 🔴 **2026-11-04（F18 收口）**：防重复靠的是 `agent._StopWhenPending`（主 agent 那一拍
+    #    不生成），**不是**"不给它看"—— 实测撤掉注入照样复述。所以这条注入留着
+    #    （它是转写里唯一那条问题 ＋ `_user_turns` 的「它在回答的上一句」的来源）。
+    from proto.graph import node_finalize, render_relay
 
-    fin = node_finalize({"tasks": [{"id": "t1", "stage": "waiting_for_input", "report": "执行器问的"}]})
+    _w1 = {"id": "t1", "skill": "quiz", "stage": "waiting_for_input",
+           "asked": "用几课时？", "report": "执行器问的"}
+    _r = render_relay([_w1])
+    _fin = node_finalize({"tasks": [_w1]})
     row("⑦ 待答透传（平台→用户）",
-        NA,  # 它就是执行器的原话本身，不混别人的话
+        # ①来源：贴的是**它申报的原话**（不是那段过场），而且**打了 `injected_by` 标记**
+        #      （记录层据此不把它算成主 agent 说的话）
+        OK if ("【quiz】问：用几课时？" in _r
+               and (_fin["messages"][0].additional_kwargs or {}).get("injected_by")
+               == "platform.finalize") else BAD,
         OK,
         OK if '已知膨胀点' in _src('proto/graph.py') else BAD,  # 判据③：注释里标了
         NA, OK)
