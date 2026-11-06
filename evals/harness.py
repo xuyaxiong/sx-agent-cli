@@ -486,14 +486,15 @@ def dump_artifacts(out_dir: Path, case_id: str, rep: int, result: dict) -> Path:
         (d / "_index.md").write_text("# （本次没有产物）\n", encoding="utf-8")
         return d
 
-    from proto.artifacts import artifact_body
-
     rows = ["| 产物 | 标题 | 字数 | 类型 | 文件 |", "|---|---|---|---|---|"]
     for aid, a in artifacts.items():
         # 类型和文件名都取**记录里那份**（`store_artifact` 按声明的类型定好的）——
         # 这里另算一遍的话，会和它当场落盘时写的那份对不上。
         fn = a.get("file") or f"{aid}_{_slug(a['title'])}{a.get('ext', '.md')}"
-        (d / fn).write_text(artifact_body(aid, a), encoding="utf-8")
+        # 🔴 **落盘 = 库里那份，一字不加**（用户 2026-11-06："正文就是正文 平台不必加料"）
+        #    —— 与 `store_artifact` 当场落盘**同一条规矩**（SX-13：来源头的 H1 曾冒充
+        #    文档标题、与技能模板的 H2 撞名）。守卫：`unit_artifact_race` ③。
+        (d / fn).write_text(a["content"], encoding="utf-8")
         rows.append(
             f"| `{aid}` | {a['title']} | {len(a['content'])} "
             f"| {a.get('ext', '.md').lstrip('.')} | [{fn}]({fn}) |"

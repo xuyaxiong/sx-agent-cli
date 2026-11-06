@@ -134,14 +134,6 @@ def use_dir(path: Path) -> None:
     ARTIFACT_DIR = path
 
 
-def artifact_body(aid: str, a: dict) -> str:
-    """落盘时写什么 —— HTML **原样**（前面加 markdown 头的话，浏览器会把标题当正文渲染），
-    其余加一个来源头（人工翻文件时知道这是哪一份）。"""
-    if a["ext"] == ".html":
-        return a["content"]
-    return f"# {a['title']}\n\n> `{aid}`｜{len(a['content'])} 字\n\n---\n\n{a['content']}\n"
-
-
 def store_artifact(title: str, summary: str, file_type: str, content: str) -> str:
     """把产物落进产物库，返回产物 ID。**顺手落盘**（设了 `ARTIFACT_DIR` 的话）。
 
@@ -165,7 +157,14 @@ def store_artifact(title: str, summary: str, file_type: str, content: str) -> st
     if ARTIFACT_DIR is not None:
         ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
         p = ARTIFACT_DIR / rec["file"]
-        p.write_text(artifact_body(aid, rec), encoding="utf-8")
+        # 🔴 **落盘 = 库里那份，一字不加**（用户 2026-11-06：*"正文就是正文 平台不必加料"*）。
+        #    原来非 HTML 会加一个"来源头"（`# {title}` ＋ id/字数 ＋ `---`）——
+        #    而那个 `#`（H1）**冒充了文档标题**：技能模板的正文首行是 `## 《课题》导学单`
+        #    （H2），于是产物首部出现**两个同名标题**（外测 SX-13 实测：第 1 行 H1、
+        #    第 7 行 H2，转 PDF / 导入教学系统时重复）。HTML 早就是"原样"的
+        #    （加头会被当正文渲染）—— **md 同理**，当时只对 HTML 想通了。
+        #    "这是哪一份"由**文件名**（`art_001_<标题>.md`）承载，正文里不需要再来一遍。
+        p.write_text(rec["content"], encoding="utf-8")
         rec["path"] = str(p)
     _ARTIFACTS[aid] = rec
     return aid

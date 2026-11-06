@@ -45,6 +45,7 @@ from __future__ import annotations
 import ast
 import io
 import sys
+import tempfile
 import threading
 import time
 from collections import Counter
@@ -146,6 +147,30 @@ def main() -> None:
                 ]
     print(f"  {'✅' if not bad else '❌'} 除 `proto/artifacts.py` 外没人引用那张表" + (f"\n      {bad}" if bad else ""))
     if bad:
+        raise SystemExit(1)
+
+    # ── ③ 落盘 = 库里那份，**一字不加**（2026-11-06，外测 SX-13）──
+    #
+    # 平台原来给非 HTML 产物加"来源头"（`# {title}` ＋ id/字数 ＋ `---`）—— 那个 H1
+    # **冒充了文档标题**：技能模板的正文首行是 `## 《课题》导学单`（H2），于是产物首部
+    # 出现**两个同名标题**（实测：第 1 行 `# 《三角形的内角和》导学单`、第 7 行 `## 同`）。
+    # 用户定：**正文就是正文，平台不必加料** —— 落盘字节 == 库里 content。
+    # ⚠️ 有效性自检：给落盘加回任何前缀（哪怕一个换行），这里必须红。
+    print("\n③ 落盘 = 库里那份，一字不加（'来源头'曾冒充文档标题）")
+    artifacts.clear()
+    with tempfile.TemporaryDirectory() as td:
+        artifacts.use_dir(Path(td))
+        bad_files: list[str] = []
+        for ft, content in (("md", "## 《三角形的内角和》导学单\n\n正文"),
+                            ("html", "<!DOCTYPE html><html>…</html>")):
+            aid = store_artifact("《三角形的内角和》导学单", "导学单", ft, content)
+            got = (Path(td) / artifacts.get(aid)["file"]).read_text(encoding="utf-8")
+            if got != content:
+                bad_files.append(f"{ft}：落盘 {got[:40]!r} != content {content[:40]!r}")
+        artifacts.use_dir(None)   # 还原：不设 = 只进内存
+    print(f"  {'✅' if not bad_files else '❌'} 落盘逐字等于库里的 content（不加头、不加尾）"
+          + (f"\n      {bad_files}" if bad_files else ""))
+    if bad_files:
         raise SystemExit(1)
 
     print(f"✅ 对照组炸了（{lost2} 次），说明测试**能**探到碰撞。")
