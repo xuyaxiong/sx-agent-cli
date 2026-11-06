@@ -41,9 +41,14 @@
 
 **⑫ 一条语义、两层各自渲染** —— 谁都不许按**位置**切文本（`finalize: ` 前缀归记录层）。
 
+**⑬ 卡片输入：空行不作数、跳过要打出来** —— `↩ 答它` 与 `👤 说别的` 共享同一条
+   stdin，归属由"哪个提示符先读到"决定；**杂换行不许执行"跳过"这个动作**
+   （2026-11-06 实测：答复曾被一个缓冲里的杂换行挤到 `👤`，变成了新消息）。
+
 > 有效性自检：把 `_wrap` 里那句 `out.append(lead + cur)` 改回 `out.append(cur)`，① 必须红。
 > ⑤ 把 `_on_dump` 里的 `by_id` 配对改回"按出现顺序弹队列"，乱序用例必须红。
 > ⑫ 把 `chat._on_event` 的 relay 分支改回 `[len("finalize: "):]`，⑫ 必须红。
+> ⑬ 把 `_read_card_answer` 的空行分支改回 `return None`（旧行为），⑬ 必须红。
 """
 
 # ruff: noqa: T201  # 诊断输出即本脚本的产出物
@@ -378,6 +383,50 @@ def main() -> None:
     _i_p, _i_q = body.find("PROMPT（发给 LLM 的全文）"), body.find("【前提】")
     check("PROMPT（输入）在四段（结果）**之前** —— 【前提】里写的就是「见上面那条 PROMPT」",
           -1 < _i_p < _i_q, f"PROMPT@{_i_p}，【前提】@{_i_q}")
+
+    print("\n⑬ 卡片输入：**空行不作数**；跳过要打出来（skip / 跳过）")
+    # 🔴 2026-11-06（实测踩到，`logs/proto-20261105-174508.log`）：`↩ 答它` 和 `👤 说别的`
+    #    共享同一条 stdin，归属由"哪个提示符先读到"决定 —— 轮中缓冲里的一个杂换行
+    #    曾被 `↩` 当"跳过"吃掉，用户随后打的**答复**落到 `👤` 成了新消息，旧任务永远挂着。
+    #    ⇒ 空行不许执行动作；跳过是一个**决定**，得打出来。
+    #    有效性自检：把 `_read_card_answer` 的空行分支改回 `return None`（旧行为），
+    #    下面「空行**不跳过**」那条必须红。
+    import builtins
+
+    def _feed(script: list[str]):
+        it = iter(script)
+
+        def fake_input(prompt: str = "") -> str:
+            print(prompt, end="")
+            try:
+                return next(it)
+            except StopIteration:
+                raise EOFError from None
+
+        return fake_input
+
+    real_input = builtins.input
+    try:
+        builtins.input = _feed(["", "  我的答复  "])
+        check("空行**不跳过** —— 继续等，下一条才是答复",
+              chat._read_card_answer("") == "我的答复")
+        builtins.input = _feed(["skip"])
+        check("`skip` → 跳过（None）", chat._read_card_answer("") is None)
+        builtins.input = _feed(["跳过"])
+        check("`跳过` → 跳过（None）", chat._read_card_answer("") is None)
+        builtins.input = _feed(["", "", "答复"])
+        check("连着几个空行也照等（跳过不会被杂换行误触）",
+              chat._read_card_answer("") == "答复")
+        builtins.input = _feed([])
+        check("EOF → 跳过（None），不炸", chat._read_card_answer("") is None)
+
+        def _ki(prompt: str = "") -> str:
+            raise KeyboardInterrupt
+
+        builtins.input = _ki
+        check("Ctrl-C → 跳过（None）", chat._read_card_answer("") is None)
+    finally:
+        builtins.input = real_input
 
     print("\n" + "═" * 78)
     print(f"{'全部通过' if not FAIL else '有失败'}：{len(PASS)}/{len(PASS) + len(FAIL)}")

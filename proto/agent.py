@@ -30,7 +30,12 @@ from proto import trace
 from proto.config import get_model
 from proto import executor  # ⚠️ 走模块属性，见 delegate 的注释
 from proto.handoff.ask import build_prompt as ask_prompt  # 试答
-from proto.handoff.briefing import absorb_outcome, render_briefing, settle  # 委托单
+from proto.handoff.briefing import (  # 委托单
+    absorb_outcome,
+    moot_older_waiting,
+    render_briefing,
+    settle,
+)
 from proto.handoff.receipt import (  # 回执
     build_receipt,
     build_rejection,
@@ -306,6 +311,10 @@ def _supersede_old(runtime: ToolRuntime, skill_name: str) -> list[dict]:
     现在待答由平台负责投递和透传（`graph._feed_waiting` / `node_finalize`），
     **重派不再是解除待答的路径** —— 所以这里碰它没有意义，只会把问题弄丢。
 
+    ⚠️ **2026-11-06 补**：解除待答的**另一条**路是 `moot_older_waiting` —— 它只在
+    **新任务完成**且**用户已另起话题**（`user_turns` 快照延长）时才动手，且**显式留痕**。
+    **建的时候**（这里）`waiting` 仍然一个字不碰 —— F7 的边界不变。
+
     - `completed` 的是**历史记录**，不能被抹掉（用户可能还要看产物）
     - `running` 的不会出现在旧 state 里（并行调用各读各的旧快照）
 
@@ -486,7 +495,13 @@ def delegate(
         # 正文**不在这里 dump**：主 agent 的逐步骤 dump 里已经有它（`graph.node_agent`）。
         trace.handoff("回执", "执行器", "主 agent", text,
                       structured=f"Receipt(kind={r['kind']}，{len(r['sections'])} 段)")
-        return _cmd(runtime, [rec, *superseded], text, handoff=r)
+        # 🔴 **它完成了 → 同技能更早的待答成了哑问题**（2026-11-06）：用户没走 `↩` 答复
+        #    通道、而是又发了新消息，新任务（这条）已经交付 —— 旧问题再摆出来只会误导
+        #    （答它=重跑旧任务）。判据与边界见 `moot_older_waiting` 的 docstring
+        #    （**同一轮里重派的 F7 场景不动**：快照没延长就一个字都不碰）。
+        mooted = (moot_older_waiting(rec, runtime.state.get("tasks") or [])
+                  if outcome.status == "completed" else [])
+        return _cmd(runtime, [rec, *superseded, *mooted], text, handoff=r)
 
     # ① 派发 —— run_task 内部已含「出口限制」：既没完成也没提问会被推回去继续
     # 第三个参数是用户原话（给执行器的 `read_user_turn` 用）—— 交接书里只有清单，全文按需取

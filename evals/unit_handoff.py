@@ -75,6 +75,9 @@ ALLOWED: dict[str, list[tuple[str, str]]] = {
         (r'flat\[:limit\]',
          '`_one_line` 的**索引行**：它是「清单 + 按需」那一层（不是"悄悄切一刀"）—— '
          '切了带 `…`，块尾写明用 `read_user_turn(轮次)` 取全文'),
+        (r'done_turns\[:\s*len\(t_turns\)\]',
+         '`moot_older_waiting` 的**前缀比较**（"用户又说过话"的判据）—— 不产生任何新文本，'
+         '比的是两份原话快照的前几轮是否逐字相同'),
     ],
     'proto/artifacts.py': [
         (r'\)\[:n\]', '**落盘文件名**的 slug 长度（不是交接内容；文件名截断不影响可读性）'),

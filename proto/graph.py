@@ -33,7 +33,7 @@ from langgraph.graph.message import add_messages
 from proto import trace
 from proto.agent import build_agent
 from proto.agent import try_answer_then_rerun  # 试答→重跑（两条路共用，E1）
-from proto.handoff.briefing import asked_text, render_briefing, settle
+from proto.handoff.briefing import asked_text, moot_older_waiting, render_briefing, settle
 from proto.handoff import render_hop  # noqa: E402 —— 唯一那条渲染路（见 handoff/__init__）
 from proto.handoff.ledger import render_ledger
 # 🔴 **顶层 import，但用"模块 + 属性"形式**（2026-11-04 复审 N3 修）：
@@ -262,6 +262,10 @@ def _feed_waiting(state: State) -> tuple[list[dict], list[str]]:
         #    ⚠️ 位置在**试答之后**：落账要用**最终**那个 outcome（试答重跑会换掉它）。
         settle(rec, outcome)
         if outcome.status == "completed":
+            # 🔴 **这条完成了 → 同技能更早的待答成了哑问题**（2026-11-06）——
+            #    和 `delegate` 那条路走**同一个函数**（判据与边界见它的 docstring：
+            #    快照没延长就一个字不碰 —— F7 的场景不动）。
+            out.extend(moot_older_waiting(rec, state.get("tasks") or []))
             logs.append(
                 f"prepare: ✅ {t['id']}（{t['skill']}）答复后**完成**"
                 f"　产物={outcome.artifacts or '（在回复里）'}"
@@ -319,7 +323,12 @@ def node_prepare(state: State) -> dict:
     # 🔴 投递那一跳的**结构化事实**（断言读它）：判据是 `run_by == "feed"` ——
     # 那是 `_feed_waiting` 在**真投出去之前**打的标记；技能不存在被**跳过**的不会带上它，
     # 所以"投给了谁"是准的（不靠解析 `logs` 里那句话）。
-    fed = [t["id"] for t in updated if t.get("run_by") == "feed"]
+    # ⚠️ **2026-11-06 补**：`updated` 里现在还可能有"哑待答被取代"的副本 ——
+    # 它们的 `run_by` 是**上一轮**留下的（可能也是 "feed"）✗ 会把"投给了谁"报多。
+    # 排掉 `superseded`：**投递只投 waiting 的，而落账不产生 superseded**
+    # （取代只来自 `moot_older_waiting`，它按 id 排除了被投递的那条）—— 两边不重叠。
+    fed = [t["id"] for t in updated
+           if t.get("run_by") == "feed" and t.get("stage") != "superseded"]
     user = _last_human(state)
     actions = (
         [{"by": "platform.prepare", "did": "feed", "tasks": fed, "chars": len(user)}]

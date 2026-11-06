@@ -348,6 +348,42 @@ def main() -> None:
           f"建了没声明：{sorted(set(built) - set(declared))}；"
           f"声明了没建：{sorted(set(declared) - set(built))}")
 
+    print("\n⑫ 哑待答：新任务完成 ＋ 用户已另起话题 → 旧待答**显式取代**（F7 边界不动）")
+    # 🔴 2026-11-06：用户没走 `↩` 答复通道、又发了新消息；新任务交付后旧待答永远挂着
+    #    （每轮重摆、答它=重跑旧任务）—— 实测 `logs/proto-20261105-174508.log`。
+    #    判据是**两条结构事实**：① 新任务已完成；② 用户快照**前缀延长**（用户又说过话）。
+    from proto.handoff.briefing import moot_older_waiting
+
+    def _t(tid: str, *, skill: str = "s", stage: str = "waiting_for_input",
+           turns: int = 1) -> dict:
+        return {"id": tid, "skill": skill, "stage": stage,
+                "user_turns": [{"n": i, "text": f"第{i}轮", "after": ""}
+                               for i in range(1, turns + 1)]}
+
+    done = _t("t-new", stage="completed", turns=2)   # 用户又说过话之后派的新任务，已完成
+    old = _t("t-old", turns=1)                        # 更早的待答（快照停在 1 轮）
+    mooted = moot_older_waiting(done, [old, done])
+    check("旧待答（用户又说过话 ＋ 新任务完成）→ 被取代",
+          [x["id"] for x in mooted] == ["t-old"] and mooted[0]["stage"] == "superseded",
+          repr(mooted))
+    check("返回的是**副本** —— 原 dict 一个字段都不动", old["stage"] == "waiting_for_input")
+    # 🔴 **F7 回归守卫**：同一轮里重派（快照没延长）→ 一个字都不许碰 ——
+    #    那正是"主 agent 自己编了答案重派、用户从没被问过"的场景，问题必须留着。
+    check("F7：快照没延长（同一轮重派）→ **不取代**",
+          moot_older_waiting(_t("t-guess", stage="completed", turns=1), [_t("t-old")]) == [])
+    check("不同技能 → 不动",
+          moot_older_waiting(_t("x", skill="a", stage="completed", turns=2),
+                             [_t("y", skill="b")]) == [])
+    check("更早的已经不是待答（completed / failed）→ 不动",
+          moot_older_waiting(done, [_t("t-old", stage="completed")]) == []
+          and moot_older_waiting(done, [_t("t-old", stage="failed")]) == [])
+    check("更晚的待答（快照更长）→ 不动",
+          moot_older_waiting(_t("x", stage="completed", turns=1), [_t("y", turns=2)]) == [])
+    check("没有快照的（fixture / 手写 state）→ 说不清就不动",
+          moot_older_waiting(done, [{"id": "t-fix", "skill": "s",
+                                     "stage": "waiting_for_input"}]) == [])
+    check("自己（同 id）→ 不动", moot_older_waiting(done, [done]) == [])
+
     print("\n" + "═" * 78)
     print(f"{'全部通过' if not FAIL else '有失败'}：{len(PASS)}/{len(PASS) + len(FAIL)}")
     for name in FAIL:

@@ -475,6 +475,48 @@ def main() -> None:
     check("`platform_fed_answer`：有 feed 动作 → 过（**不看 log**）",
           CHECKS["platform_fed_answer"](_run(fed), t1)[0] is True)
 
+    print("\n⑪ 投递重跑完成 → 更早的同技能待答**显式取代**（哑待答，2026-11-06）")
+    # 🔴 实测 `logs/proto-20261105-174508.log`：用户没走 `↩` 答复通道、又发了新消息，
+    #    新任务交付后旧待答永远挂着（每轮重摆、答它=重跑旧任务）。
+    #    规则与边界见 `briefing.moot_older_waiting` —— 这里守的是**投递那条路的接线**：
+    #    完成时它真的被调用、结果真的进了返回的 tasks（reducer 才合得上）。
+    turns1 = [{"n": 1, "text": "给我做个导学单", "after": ""}]
+    turns2 = [*turns1, {"n": 2, "text": "用在课前预习", "after": ""}]
+    proto.executor.run_task = lambda *a, **k: ExecOutcome(  # type: ignore[assignment]
+        status="completed", artifacts=["art_ok"], report="（交付了）", rounds=1)
+    st = {
+        "messages": [HumanMessage("用在课前预习")],
+        "answer_to": "t-new",
+        "tasks": [
+            # ⚠️ t-old 的 `run_by` 故意留 "feed"（真实形状：它上一轮被投递过、又问了）——
+            #    取代的副本带着它混回 `updated` 时，"投给了谁"不许被它污染。
+            {"id": "t-old", "skill": "guided-learning", "stage": "waiting_for_input",
+             "artifacts": [], "refs": [], "qa": [], "run_by": "feed", "user_turns": turns1},
+            {"id": "t-new", "skill": "guided-learning", "stage": "waiting_for_input",
+             "artifacts": [], "refs": [], "qa": [], "user_turns": turns2},
+        ],
+    }
+    out, _logs = graph._feed_waiting(st)
+    by_id = {t["id"]: t for t in out}
+    check("被投递的那条落成 completed", by_id.get("t-new", {}).get("stage") == "completed",
+          repr(by_id.get("t-new")))
+    check("更早的同技能待答被**显式取代**（进了返回的 tasks，reducer 才合得上）",
+          by_id.get("t-old", {}).get("stage") == "superseded", repr(by_id.get("t-old")))
+    # 🔴 取代副本不许污染"这轮投给了谁"（`node_prepare` 的 actions 读它）——
+    #    t-old 的 `run_by` 是上一轮留下的 "feed"，只认 run_by 会把它报成"投过"。
+    pre = graph.node_prepare({**st, "log": []})
+    fed_ids = [i for a in (pre.get("actions") or []) if a.get("did") == "feed"
+               for i in a.get("tasks", [])]
+    check("actions 里「投给了谁」只有被投的那条（取代副本不许混进来）",
+          fed_ids == ["t-new"], repr(pre.get("actions")))
+    # 🔴 **接线守卫**（AST，不看注释）：两条路（delegate / feed）都必须**真的调用**它 ——
+    #    少接一条，那条路上的哑待答就静默漏掉（delegate 那条没有 e2e 单测，只能这样钉）。
+    for _f in ("proto/agent.py", "proto/graph.py"):
+        _calls = [n for n in ast.walk(ast.parse(io.open(_f, encoding="utf-8").read()))
+                  if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                  and n.func.id == "moot_older_waiting"]
+        check(f"`{_f}` 里真的调了 `moot_older_waiting`（两条路都要接上）", bool(_calls), _f)
+
     print("\n" + "═" * 78)
     print(f"{'全部通过' if not FAIL else '有失败'}：{len(PASS)}/{len(PASS) + len(FAIL)}")
     for name in FAIL:

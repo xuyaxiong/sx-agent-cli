@@ -59,6 +59,10 @@ BAR = "─" * 74
 #: ⚠️ **空行不是退出**：原来空行就退出，一个多余的回车能把整场会话结束掉（见主循环的注释）。
 _EXIT_WORDS = frozenset({"exit", "quit", "退出", "再见"})
 
+#: 在待答卡片下打这些 = **显式跳过**（大小写不敏感）。
+#: ⚠️ **跳过必须是一个"打出来"的动作** —— 见 `_read_card_answer` 的 docstring。
+_SKIP_WORDS = frozenset({"skip", "跳过"})
+
 #: 开场白里的标题 —— **产品名**（用户 2026-10-30：*"我这不是 ai 助教 我是 SX Agent"*）。
 #: 面向用户，不是面向开发：所以不叫"原型"，也不按技能内容起名。
 APP_TITLE = "SX Agent"
@@ -648,6 +652,36 @@ def _turn_summary(snap: dict, elapsed: float) -> None:
     _emit("task", "\n".join(rows))
 
 
+def _read_card_answer(color: str) -> str | None:
+    """在待答卡片下读一条输入 —— **空行不作数**；跳过要**明说**（`skip` / `跳过`）。
+
+    返回答复原文；`None` = 跳过（显式词 / Ctrl-C / EOF）。
+
+    🔴 **为什么空行不再"跳过"**（2026-11-06，实测踩到）：`↩ 答它` 和 `👤 说别的`
+    是两个提示符、**共享同一条 stdin** —— 一句话归谁，由"**哪个提示符先读到**"决定。
+    实测一次真实会话（`logs/proto-20261105-174508.log`）：轮中缓冲里躺着一个杂换行
+    （提前敲的回车 / 粘贴的尾随换行），`↩` 提示符一出现就被它"空行跳过"消费掉，
+    用户随后打的**答复**落到 `👤`，变成了一条**新消息** —— 旧任务永远挂着
+    （那次 `t8b06800d` 一直 ❓，卡片每轮重新摆）。
+    ⇒ 空行是**杂音**，不许让它执行任何动作；跳过是一个**决定**，得打出来。
+    （同 2026-10-30 主提示符那条"空行不再退出" —— 同一个教训，那次只改了主提示符。）
+    """
+    hinted = False
+    while True:
+        try:
+            ans = input(paint("↩ 答它（打字即答复；要跳过就打 skip）┃ ", color)).strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return None
+        if ans.lower() in _SKIP_WORDS:
+            return None
+        if ans:
+            return ans
+        if not hinted:
+            print(paint("（空行不作数 —— 答复就直接打字；跳过请打 skip，回 👤 说别的）", color))
+            hinted = True
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="交互式跑原型（你当用户；技能从文件夹加载）")
     ap.add_argument(
@@ -803,12 +837,10 @@ def main() -> None:
                 #    这里是**输入通道**那个视图，排版归自己，取法归它。
                 q = asked_text(p)
                 print(paint(f"{icon}【{p.get('skill')}】问：{q}", color))
-                try:
-                    ans = input(paint("↩ 答它（回车跳过，回 👤 说别的）┃ ", color)).strip()
-                except (EOFError, KeyboardInterrupt):
-                    print()
-                    break
-                if not ans:
+                # 🔴 **空行不作数、跳过要明说** —— 见 `_read_card_answer` 的 docstring
+                #    （2026-11-06：杂换行曾把用户的答复挤到 `👤` 那条通道去）。
+                ans = _read_card_answer(color)
+                if ans is None:  # 显式跳过（skip / 跳过）/ Ctrl-C / EOF → 回 👤
                     break
                 t2 = time.time()
                 try:

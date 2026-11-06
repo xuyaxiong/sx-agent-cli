@@ -449,3 +449,55 @@ def settle(rec: dict, outcome: Any) -> str:
         + ("｜**平台故障**：这一轮没跑成" if outcome.fault else "")
     )
     return rec["stage"]
+
+
+def moot_older_waiting(done: dict, tasks: list[dict]) -> list[dict]:
+    """**刚完成的这条**让哪些更早的待答成了哑问题 → 显式标 `superseded`（**不是静默丢**）。
+
+    🔴 **为什么要它**（2026-11-06，实测踩到）：用户对卡片的问题**没走 `↩` 答复通道**，
+    而是又发了一条新消息（提示符时序，见 `evals/chat._read_card_answer` 的 docstring）——
+    主 agent 照常对同技能**重新委派**，新任务完成、交付了。而旧待答 `_supersede_old`
+    **不碰**（2026-11-04 F7：不许静默丢没被回答的问题）⇒ 它**永远挂着**：
+    每轮结束卡片都重新摆一遍，而"再答它"会拿**旧任务**重跑执行器（60–120s）。
+    实测会话：`logs/proto-20261105-174508.log` 的 `t8b06800d`（新任务 `tb742ef69` 已交付，
+    旧问题还在问"你想要什么主题"）。
+
+    ## 判据（两条，都是**结构事实**，不是猜）
+
+      ① **新任务已完成**（`done` 刚 settle 成 completed）—— 活已经干完了；
+      ② **用户在这条之后又说过话** —— `user_turns` 快照**前缀延长**
+         （`len(t) < len(done)` 且 `done` 的快照以 `t` 的为前缀）。
+
+    快照**没延长**（同一轮里重派）或**没有快照**（fixture / 手写 state）→ **一律不动**：
+    那正是 F7 的场景（主 agent 自己编了答案重派，用户从没被问过）—— 问题必须留着，
+    等用户真的看见它。**说不清就不动**（同 `ledger._SRC_DEFAULT` 的 fail-safe）。
+
+    ⚠️ **和 `_supersede_old` 的分工**：那条管"重派取代 failed"（在**建**的时候）；
+    这条管"完成了、且用户已另起话题"（在**落账**的时候）—— 两条都不碰
+    "用户还没机会说话"的待答。
+
+    ⚠️ 返回的是**改过 stage 的副本**（原 dict 不动，同 `_supersede_old`）——
+    交给 reducer 按 id 合并。取代**留痕**（`trace.note`，kind=`supersede`）。
+    """
+    done_turns = done.get("user_turns") or []
+    out: list[dict] = []
+    for t in tasks:
+        if t.get("id") == done.get("id") or t.get("skill") != done.get("skill"):
+            continue
+        if t.get("stage") != "waiting_for_input":
+            continue
+        t_turns = t.get("user_turns") or []
+        # 判据②：快照必须**前缀延长**（用户在这条之后又说过话）。
+        if (not t_turns or len(t_turns) >= len(done_turns)
+                or done_turns[: len(t_turns)] != t_turns):
+            continue
+        out.append({**t, "stage": "superseded"})
+        # 🔴 **取代要留痕**（"显式"那一半）：说清谁被谁取代、依据是什么 ——
+        #    判据可审计（"判断必须可审计"：依据"没有"也要显式写）。
+        trace.note(
+            f"🔁 {t['id']}（{t['skill']}）的待答**已被新任务 {done['id']} 取代** —— "
+            f"依据：用户在这条之后又说过话（原话快照 {len(t_turns)} → {len(done_turns)} 轮），"
+            f"且新任务已完成；旧问题不再摆出（**显式取代，不是静默丢**）",
+            kind="supersede",
+        )
+    return out
