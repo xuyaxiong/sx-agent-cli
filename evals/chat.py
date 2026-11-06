@@ -474,36 +474,45 @@ def _role_of(ev: dict) -> str:
     return "unknown"
 
 
-#: `tool_call_id → 工具名`，**跨事件累积**（不是每个事件重置）。
+#: 工具配对表：**`(role, tool_call_id)` → 工具名**，跨事件累积（不是每个事件重置）。
 #:
 #: 🔴 2026-11-03 修的一个真回归：`dump` 是**按 super-step 分批**发的 ——
 #: 主 agent 的 `tool_call` 落在第 1 步的 dump 里，它的 `ToolMessage`
 #: 却落在第 **2** 步的 dump 里。原来 `by_id` 是 `_on_dump` 的**局部变量**，
 #: 每个事件重建一次，于是跨事件那一半配不上，屏幕上是 `? 的返回：`。
 #: 旧文本契约时代靠"跨段 FIFO 队列"猜着补，删掉它时没做等价替换（漏了）。
-#: id 本身全局唯一，所以这张表全局共享反而是**对的**（并行执行器交错也配得上）。
+#:
+#: 🔴 **为什么键里必须带 `role`**（2026-11-06 修 SX-12）：`tool_call_id` 只在**一次
+#: 模型响应内**唯一 —— provider 每轮从 `call_0` 之类的号**重新发**（这里原来写着
+#: "id 本身全局唯一"，是错的）。主 agent 和执行器是两个 agent，id 空间**会撞**：
+#: 实测 pbl/zhiwo 各一次 —— 主 agent 的 `delegate`（call_0）先入表，执行器在它内部
+#: 跑的那几分钟里 `read_skill_file` 也叫 call_0，**把映射覆盖了**；回执几分钟后
+#: 才 dump，查表查到执行器的工具名（RETURN 行标成 `read_skill_file 的返回`）。
+#: 带上角色后两个 agent 的映射互不覆盖；**同一角色内配对仍然成立**（主 agent 的调用
+#: 和回执之间它自己被阻塞、没有别的 dump；执行器每轮整批 dump、消息序内配对）。
 #:
 #: ⚠️ **加个上限**（2026-11-04 复审 N5）：它只增不减，长会话会一直涨。
 #: 配对**只发生在同一轮之内**（tool_call 与它的返回都在同一次 `graph.invoke` 里），
 #: 所以到顶就整体清空 —— 丢的都是早就配完对的旧 id，不影响任何一次配对。
-_TOOL_NAMES: dict[str, str] = {}
+_TOOL_NAMES: dict[tuple[str, str], str] = {}
 _TOOL_NAMES_CAP = 2000
 
 
 def _on_dump(ev: dict) -> None:
     """消息轨迹事件 —— **消息对象本身就在事件里**。
 
-    工具配对用 `tool_call_id`（结构），不再"按段分队列"猜；
+    工具配对用 `(role, tool_call_id)`（结构），不再"按段分队列"猜；
     文本就是消息对象的 `content`（真字符串），不再反转义 Python repr；
     说话的是谁按 `ev["role"]` 取，**不从 `tag` 的措辞里认**。
     """
-    who = _ROLE_LABEL.get(_role_of(ev), "未知角色")
+    role = _role_of(ev)   # 配对键的一半 —— 两个 agent 的 id 空间会撞（见 `_TOOL_NAMES`）
+    who = _ROLE_LABEL.get(role, "未知角色")
     for m in ev["messages"]:
         if len(_TOOL_NAMES) >= _TOOL_NAMES_CAP:
             _TOOL_NAMES.clear()   # 见上面的注释：配对只在同一轮内，清空是安全的
         for c in getattr(m, "tool_calls", None) or []:
             if c.get("id"):
-                _TOOL_NAMES[c["id"]] = str(c.get("name"))
+                _TOOL_NAMES[(role, c["id"])] = str(c.get("name"))
             # ⚠️ **不截参数**：`delegate(task=...)` 就是交接本身，砍了等于看不到交接了什么。
             _emit("tool", f"{who} → {c.get('name')}（{trace.brief_args(c.get('args') or {})}）",
                   stamp=ev["ts"])
@@ -512,7 +521,7 @@ def _on_dump(ev: dict) -> None:
             continue  # 它说的话已由流式实时播过（同旧契约：dump 不重复播 AI 正文）
         content = str(m.content)
         if kind == "ToolMessage":
-            name = _TOOL_NAMES.get(getattr(m, "tool_call_id", "") or "", "?")
+            name = _TOOL_NAMES.get((role, getattr(m, "tool_call_id", "") or ""), "?")
             if name in _READ_TOOLS:
                 # 🔴 **读全文的工具：一个字都不贴**（见 `_READ_TOOLS`）。
                 _emit("ret", f"{name} 的返回：（**读了全文，{len(content)} 字** —— "

@@ -46,7 +46,7 @@
    （2026-11-06 实测：答复曾被一个缓冲里的杂换行挤到 `👤`，变成了新消息）。
 
 > 有效性自检：把 `_wrap` 里那句 `out.append(lead + cur)` 改回 `out.append(cur)`，① 必须红。
-> ⑤ 把 `_on_dump` 里的 `by_id` 配对改回"按出现顺序弹队列"，乱序用例必须红。
+> ⑤ 把 `_on_dump` 里的配对键改回只有 `id`（去掉 `(role, id)` 里的角色），跨角色撞车那条必须红。
 > ⑫ 把 `chat._on_event` 的 relay 分支改回 `[len("finalize: "):]`，⑫ 必须红。
 > ⑬ 把 `_read_card_answer` 的空行分支改回 `return None`（旧行为），⑬ 必须红。
 """
@@ -188,6 +188,28 @@ def main() -> None:
         check("乱序返回按 `tool_call_id` 对上",
               [t.split(" 的返回")[0] for t in rets5] == ["read_artifact", "read_skill"],
               repr(rets5))
+        # 🔴 **跨角色的 id 撞车**（2026-11-06 修，SX-12）：`tool_call_id` 只在**一次模型
+        #    响应内**唯一 —— provider 每轮从 `call_0` 之类的号**重新发**；主 agent 和
+        #    执行器是两个 agent，id 空间**会撞**。原来配对表是全局的（只有 id、没有角色）
+        #    → 执行器在 delegate 内部跑的那几分钟里的 dump **覆盖**了主 agent 的映射 →
+        #    回执（几分钟后才 dump）被标成执行器的工具名（实测：`read_skill_file 的返回`）。
+        #    ⚠️ 有效性自检：把配对键改回只有 `c["id"]`（去掉角色），下面「主 agent」那条必须红。
+        seen5.clear()
+        chat._on_event({"type": "dump", "role": trace.AGENT, "tag": "主 agent 第 5 步", "ts": "t", "messages": [
+            _tool_ai("delegate", {"skill_name": "x"}, "call_0"),
+        ]})
+        chat._on_event({"type": "dump", "role": trace.EXECUTOR, "tag": "run_task 第 3 轮", "ts": "t", "messages": [
+            _tool_ai("read_skill_file", {"skill_name": "x", "path": "references/a.md"}, "call_0"),
+            ToolMessage(content="（技能文件正文）", tool_call_id="call_0"),
+        ]})
+        chat._on_event({"type": "dump", "role": trace.AGENT, "tag": "主 agent 第 6 步", "ts": "t", "messages": [
+            ToolMessage(content="【交付】\n  ✅ 已完成", tool_call_id="call_0"),
+        ]})
+        rets_c = [t.splitlines()[0] for r, t in seen5 if r == "ret"]
+        check("撞车场景：执行器的返回仍标 `read_skill_file`",
+              any(t.startswith("read_skill_file 的返回") for t in rets_c), repr(rets_c))
+        check("撞车场景：主 agent 的回执**不许**被执行器的 id 抢走（仍标 `delegate`）",
+              rets_c and rets_c[-1].startswith("delegate 的返回"), repr(rets_c))
     finally:
         restore5()
 
