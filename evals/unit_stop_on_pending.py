@@ -229,6 +229,32 @@ def main() -> None:  # noqa: C901
           "fed_asking" in get_type_hints(AgentState),
           "少了它 → 中间件 `state.get('fed_asking')` 永远是 None")
 
+    # 🔴 **2026-11-06：从"顺手补"改成"按清单补"**（外审那轮冷水泼得对：两轮实锤的 bug
+    #    都落在**门禁够不到的接缝**上，而守卫密度在模块内很高、在**边界**上不成比例）。
+    #    ⇒ 把「`State` 的每个字段在 `AgentState` 里该不该有」做成**矩阵**：
+    #      新加一个字段，**必须先在这张表里表态**（下面的覆盖性断言会红）。
+    #    ⚠️ 光看"少声明"是不够的 —— **多声明**同样炸：带 `operator.add` 的字段被子图
+    #    原样回吐，父图那份就被又加一遍（实测 `1 → 5 → 12 → 27…` 指数膨胀，
+    #    `experiments/probe_double_prepare.py`）。这一半原来**只写在注释里**。
+    _FIELD_MATRIX: dict[str, tuple[bool, str]] = {
+        # 字段: (该不该在 AgentState 里, 为什么)
+        "messages": (True, "子图有自己的对话（add_messages，幂等）"),
+        "tasks": (True, "子图要读台账（`_merge_tasks` 按 id 合，幂等）"),
+        "fed_asking": (True, "`_StopWhenPending` 要**读**它 —— 本轮信号"),
+        "log": (False, "`operator.add` —— 子图回吐会让父图**每轮翻倍**"),
+        "actions": (False, "同上（`operator.add`）"),
+        "answer_to": (False, "子图不回吐，`feed` 才清得掉；它归 `feed` 每轮清"),
+    }
+    _s_fields, _a_fields = set(get_type_hints(State)), set(get_type_hints(AgentState))
+    check("矩阵**覆盖 `State` 的每一个字段**（新加字段必须在这里表态，不许靠顺手）",
+          set(_FIELD_MATRIX) == _s_fields,
+          f"没表态的：{sorted(_s_fields - set(_FIELD_MATRIX))}")
+    _wrong = [f"{f}（该{'在' if want else '不在'} AgentState）"
+              for f, (want, _) in _FIELD_MATRIX.items() if (f in _a_fields) != want]
+    check("每个字段在 `AgentState` 里的**在场/缺席**都与矩阵一致", not _wrong, repr(_wrong))
+    check("`AgentState` 里没有矩阵之外的字段（多一个也是没表态）",
+          _a_fields <= set(_FIELD_MATRIX), repr(sorted(_a_fields - set(_FIELD_MATRIX))))
+
     print("\n⑧ 🔴 **穷举证明的前提**：落终态只有那一条路（`dispatch`），它只有那两个调用点")
     # 这个机制的覆盖面是**证出来的**，不是跑出来的（见 `_StopWhenPending` 的 docstring）：
     #   一个 Task 进入 `waiting_for_input` 只有两条路 —— 因为 `settle()` 是**唯一**写终态

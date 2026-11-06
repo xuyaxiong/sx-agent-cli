@@ -39,7 +39,12 @@ from proto import artifacts as artifacts_mod
 # ⚠️ **只 import 它真正用的**（2026-11-05 收敛渲染时清掉 `BODY` / `HOPS` /
 #    `body_lines` / `section_head`）—— 渲染那四样现在归 `render_hop` 管，
 #    这里再 import 一份就是"两处定义"的种子。
-from proto.handoff import DELIVERY, DELIVERY_FAULT_REJECTED, render_hop
+from proto.handoff import (
+    DELIVERY,
+    DELIVERY_FAULT_REJECTED,
+    DELIVERY_FAULT_TIMEOUT,
+    render_hop,
+)
 
 # ──────────────────────────── schema：回执上有什么 ────────────────────────────
 
@@ -110,6 +115,15 @@ def next_note(kind: str, *, skill: str = "", fault_kind: str = "") -> str:
             "⚠️ 它说的话在上面【执行器说】里，**过一眼** —— 它可能在话里说了什么"
             "（这次它没调 `ask_user`，平台不替它转达）。"
         )
+    if kind == "fault" and fault_kind == "timeout":
+        # 🔴 **超时 ≠ 抖动**（2026-11-06，外审 F9）：它**一直在干活**，只是这一趟没干完 ——
+        #    原样再派是合理的；但**每次都超时就不是运气问题，是活太大**。
+        return (
+            "这次是**时间用完了**（不是它干不了，也不是内容有问题）—— "
+            "**可以原样再 `delegate` 一次**。\n"
+            "⚠️ 要是**老是**超时，说明这件活对一轮来说太大：**把它拆小**"
+            "（分成两次委派）。"
+        )
     if kind == "fault" and fault_kind == "rejected":
         # 🔴 **4xx 拒绝 ≠ 抖动**（2026-11-06，SX-07）：原样重发**会再被拒** ——
         #    该做的是换措辞/改内容（分类从哪来见 `handoff.FaultKind`）。
@@ -148,8 +162,18 @@ def build_receipt(outcome: Any, *, agent_answer: str = "", note: str = "") -> Re
     if kind == "fault":
         # 🔴 **两类故障两种交付行**（2026-11-06，SX-07）：`rejected`（4xx）是上游对这份
         #    内容的拒绝 —— 交付行就不能说"重试过一次仍失败"（根本没重试，见 `trace`）。
-        sections["deliver"] = (DELIVERY_FAULT_REJECTED
-                               if outcome.fault_kind == "rejected" else DELIVERY["fault"])
+        # 🔴 **三档故障三条交付行**（2026-11-06）：各有各的**处置**，不许借彼此的文案
+        #    （"重试过一次仍失败"对超时是假话 —— 它根本没重试；"原样重发会再被拒"对超时也是）。
+        if outcome.fault_kind == "rejected":
+            sections["deliver"] = DELIVERY_FAULT_REJECTED
+        elif outcome.fault_kind == "timeout":
+            # ⚠️ 跑了多久**说不清就不说**（fixture / 手写 outcome 没有 `wall_s`）——
+            #    留空比编一个数强（同 `Task.asked` 取不到时的规矩）。
+            _mins = (f"（跑到 {outcome.wall_s / 60:.0f} 分钟还没交）"
+                     if getattr(outcome, "wall_s", 0) else "")
+            sections["deliver"] = DELIVERY_FAULT_TIMEOUT.format(_mins)
+        else:
+            sections["deliver"] = DELIVERY["fault"]
     elif kind == "completed":
         sections["deliver"] = DELIVERY["completed"].format(len(outcome.artifacts))
     elif kind == "waiting":
@@ -243,6 +267,15 @@ def build_receipt(outcome: Any, *, agent_answer: str = "", note: str = "") -> Re
                 "**上游拒绝了这次请求**（4xx）—— 不是基础设施抖动，也不是执行器没干成；"
                 "**原样重发同一份内容会再被拒**。\n"
                 "**换措辞 / 改内容**再 `delegate` 一次；改不动就向用户说明这一段被拦了。"
+            )
+        elif outcome.fault_kind == "timeout":
+            # 🔴 **超时 ≠ 抖动**（2026-11-06，外审 F9）：**它一直在干活**，只是这一趟没干完 ——
+            #    "重试过一次仍然失败"对它就是**假话**（根本没重试，是平台按墙钟叫停的）。
+            sections["fault"] = (
+                f"这一轮**根本没跑完**：{outcome.fault}\n"
+                "**时间用完了**（整趟跑超了平台的上限）—— 不是它干不了，也不是内容有问题；"
+                "它**一直在干活**，只是这一趟没干完。\n"
+                "**可以原样再 `delegate` 一次**；要是**老是**超时，说明活太大，拆小一点再委派。"
             )
         else:
             sections["fault"] = (

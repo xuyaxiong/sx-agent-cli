@@ -65,6 +65,17 @@ _PLATFORM_RULE = (
 #: 一个任务最多让它 react 几轮（平台自保，不约束 skill 作者）
 MAX_REACT_ROUNDS = 3
 
+#: 🔴 **一趟的墙钟上限**（秒）—— 2026-11-06，外审 F9 的收尾。
+#:
+#: **它治的是什么**：单次调用有 `MODEL_TIMEOUT_S`（默认 300s 的**读间隔**超时）兜着，
+#: 但那是**一次调用**的界 —— 三轪 × 每次两回尝试 × 300s，最坏仍能拖到**几十分钟**，
+#: 用户那头就是"转圈转到不知道在干什么"。这里给**整趟**一个界。
+#:
+#: ⚠️ **它拦不住"一次阻塞调用"**（那个归 `MODEL_TIMEOUT_S`）—— 墙钟在**轮次边界**查，
+#: 所以最坏是 `MAX_WALL_S` ＋ 一次调用的最坏耗时。两条一起才是完整的闸门。
+#: 600s 是按已观测的"一轮 60–120 秒"定的（5–10 倍余量）。
+MAX_WALL_S = 600
+
 #: 每次 `run_task` 一个递增编号 —— 日志里用来**区分不同的 run**
 #: （一次进程会跑很多次 run_task，没有编号就分不清哪一行属于哪一次）
 _RUN_SEQ = itertools.count(1)
@@ -109,7 +120,10 @@ class ExecOutcome:
     #: ⚠️ 与 `status` 的关系：故障时 `status` 仍是 `incomplete`（三态是封闭的，没有第四种），
     #: **主 agent 该怎么做**由这个字段决定 —— 见回执的【平台故障】段。
     fault: str = ""
-    #: 🔴 **平台故障的"类"**（`FaultKind`：`transient` / `rejected` / `""`）—— 2026-11-06
+    #: 这一趟实际跑了多久（秒）—— `run_end` 那行一直印着它，现在**也进对象**：
+    #: 超时那条交付行要说"跑到 X 分钟还没交"（说不清就不说，见 `receipt`）。
+    wall_s: float = 0.0
+    #: 🔴 **平台故障的"类"**（`FaultKind`：`transient` / `rejected` / `timeout` / `""`）—— 2026-11-06
     #: （外测 SX-07）：4xx（除 408/429）是上游对**这份内容**的确定性拒绝 —— "原样再派"
     #: 对它就是**错的话**（重发会再被拒，该说"换措辞/改内容"）。四处引导句按它渲染；
     #: **不许从 `fault` 文本反解析**（判据一）。与 `fault` 同生共死：每次 `run_task`
@@ -305,6 +319,19 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
     messages: list = [HumanMessage(task_text)]
     outcome = ExecOutcome()
     for round_i in range(MAX_REACT_ROUNDS):
+        # 🔴 **整趟的墙钟**（外审 F9）：在**轮次边界**查（拦不住单次阻塞调用，那个归
+        #    `MODEL_TIMEOUT_S`）—— 超了就**不再开新一轮**，按故障交回主 agent。
+        #    ⚠️ 它是**故障**不是"执行器干不了"：它一直在干活，只是没干完（`timeout` 那档）。
+        if time.time() - t0 > MAX_WALL_S:
+            outcome.fault = f"整趟超过墙钟上限（{MAX_WALL_S}s）"
+            outcome.fault_kind = "timeout"
+            outcome.rounds = round_i
+            trace.note(
+                f"⚠️ {run_id} **时间用完了**（已跑 {time.time() - t0:.0f}s > 上限 {MAX_WALL_S}s）"
+                f" → 不再开新一轮，交回主 agent（原样再委派可以；老超时就拆小）",
+                kind="run_fault",
+            )
+            break
         # 不传 config —— 传了执行器会变成独立根图。
         # `stream_agent` 边跑边录（每个字都写进日志）—— 一次 LLM 调用那几十秒不再黑屏。
         # ⚠️ `who` 带上技能名：多个执行器**并行**时，流式行会交错，得能分辨是谁。
@@ -411,6 +438,7 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
                 f" → 不再推，交给主 agent"
             )
 
+    outcome.wall_s = time.time() - t0
     outcome.status = _structural_status(outcome)
 
     # 🔴 **「任务完成没」的判定记录**（2026-11-05）—— 判定那次 **LLM 调用**退休了，
@@ -428,13 +456,16 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
     #       `📤 交接 · 要信息` 的摘要 / 试答的【前提】），而**这一行是摘要** ——
     #       摘要里突然塞一句 132 字的原话，正是用户说的"没头没脑"。
     #       ⇒ 留一个**指路**（"它要的那句见上面 `ask_user`"），不复述。
+    # ⚠️ 故障那一档的**说法按 `fault_kind` 取**（三档各有各的处置，见 `handoff.FaultKind`）——
+    #    从对象取，不在这里现编；`""` 走默认那句（没故障时压根不印）。
+    _fault_label = {"rejected": "上游拒绝了这次请求",
+                    "timeout": "时间用完了"}.get(outcome.fault_kind, "平台故障")
     trace.note(
         f"{run_id} · {skill.name} **结束**：status={outcome.status}"
         f"（内部 {outcome.rounds} 轮，产物 {len(outcome.artifacts)} 个，"
-        f"{time.time() - t0:.1f}s）"
+        f"{outcome.wall_s:.1f}s）"
         + ("｜它要的那句见上面 `ask_user`" if outcome.asked else "")
-        + (f"｜**{'上游拒绝了这次请求' if outcome.fault_kind == 'rejected' else '平台故障'}**："
-           f"{outcome.fault}" if outcome.fault else ""),
+        + (f"｜**{_fault_label}**：{outcome.fault}" if outcome.fault else ""),
         kind="run_end",
     )
     return outcome
@@ -509,6 +540,11 @@ def _verdict(outcome: ExecOutcome, run_id: str) -> dict:
                    f" —— 这一轮**根本没跑成**，不是执行器干不了")
             nxt = ("**交回主 agent** —— **原样重发同一份内容会再被拒**："
                    "换措辞/改内容再 `delegate` 一次；改不动就向用户说明这一段被拦了")
+        elif outcome.fault_kind == "timeout":
+            why = (f"**时间用完了**（跑满 {MAX_WALL_S}s 墙钟）：{outcome.fault}"
+                   f" —— 它**一直在干活**，只是这一趟没干完，不是它干不了")
+            nxt = ("**交回主 agent** —— 原样再 `delegate` 一次可以；"
+                   "**老超时就说明活太大**，拆小一点再委派")
         else:
             why = f"**平台故障**（{outcome.fault}）—— 这一轮**根本没跑成**，不是执行器干不了"
             nxt = "**交回主 agent** —— 原样再 `delegate` 一次即可（不用改措辞、不用改参数、不用问用户）"

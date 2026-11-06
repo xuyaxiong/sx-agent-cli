@@ -582,14 +582,13 @@ def delegate(
     # 🔴 **平台故障 ≠ 执行器干不了**（2026-11-04 复审 N2/R8）：故障时那句"推了 N 轮"
     #    是假话（一轮都没跑完），而主 agent 该做的事也完全不同 —— 换说法重派 vs **原样重派**。
     if outcome.fault:
-        # ⚠️ 两类故障两种处置（2026-11-06，SX-07）：`fault_kind` 一起带进【下一步】。
-        trace.note(
-            f"delegate · {tid} "
-            + ("**上游拒绝了这次请求**（4xx）→ 没跑成（原样重发会再被拒）"
-               if outcome.fault_kind == "rejected"
-               else "**平台故障**（重试过仍失败）→ 没跑成"),
-            kind="delegate_failed",
-        )
+        # ⚠️ **三档故障三种说法**（2026-11-06：SX-07 的 rejected ＋ F9 的 timeout）：
+        #    `fault_kind` 一起带进【下一步】，措辞按它选 —— 从对象取，不在这里现编。
+        _note = {
+            "rejected": "**上游拒绝了这次请求**（4xx）→ 没跑成（原样重发会再被拒）",
+            "timeout": "**时间用完了**（整趟跑超墙钟）→ 没跑完（原样再委派可以；老超时就拆小）",
+        }.get(outcome.fault_kind, "**平台故障**（重试过仍失败）→ 没跑成")
+        trace.note(f"delegate · {tid} " + _note, kind="delegate_failed")
         return _out(rec, outcome, note=next_note("fault", fault_kind=outcome.fault_kind))
     trace.note(f"delegate · {tid} status=incomplete（推了 {outcome.rounds} 轮）→ failed",
                kind="delegate_failed")

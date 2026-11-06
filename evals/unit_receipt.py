@@ -333,6 +333,27 @@ def main() -> None:
     #    裸词"基础设施抖动"在否定句里是**正当的**（"不是基础设施抖动"），别误伤。
     check("rejected：【平台故障】段**没有**'平台侧的基础设施抖动…重试过'这句假话",
           "平台侧的基础设施抖动" not in rt and "重试过一次" not in rt, repr(rt))
+
+    # 🔴 **第三档：超时**（2026-11-06，外审 F9 的墙钟）：它**一直在干活**，只是这一趟没干完 ——
+    #    抖动那句（"重试过一次仍失败"）和拒绝那句（"原样重发会再被拒"）**对它都是假话**。
+    #    ⚠️ 这一条是**实测逼出来的**：第一版只改了交付行/台账/判定，【平台故障】段
+    #    还印着"重试过一次仍然失败"—— 渲染出来一看才发现（"四处引导句"是真四处）。
+    timed_out = ExecOutcome(
+        status="incomplete", artifacts=[], report="", rounds=2,
+        fault="整趟超过墙钟上限（600s）", fault_kind="timeout", wall_s=612.0)
+    tt = render_receipt(build_receipt(timed_out, note=next_note("fault", fault_kind="timeout")))
+    check("timeout：交付行说**时间用完了**，并带上跑了多久",
+          "时间用完了" in tt and "跑到 10 分钟" in tt, repr(tt.splitlines()[:3]))
+    check("timeout：【下一步】说**原样再派可以**，且多一句「老超时就拆小」",
+          "原样再 `delegate` 一次" in tt and "拆小" in tt, repr(tt))
+    check("timeout：**没有**那两句假话（重试过 / 原样重发会再被拒）",
+          "重试过一次" not in tt and "原样重发同一份内容会再被拒" not in tt, repr(tt))
+    # ⚠️ `wall_s` 说不清（fixture / 手写 outcome）→ **不编数**（同 `Task.asked` 的规矩）
+    _tt2 = render_receipt(build_receipt(
+        ExecOutcome(status="incomplete", fault="x", fault_kind="timeout"),
+        note=next_note("fault", fault_kind="timeout")))
+    check("timeout：`wall_s` 缺失时**不编「跑到 0 分钟」**", "跑到" not in _tt2,
+          repr(_tt2.splitlines()[:2]))
     check("transient（对照，⑨ 那条）：仍是'原样再派'", "原样再 `delegate` 一次" in t)
 
     print("\n" + "═" * 78)
