@@ -45,8 +45,7 @@ from proto.artifacts import (
     read_artifact,
     write_artifact,
 )
-from proto.skill_pack import read_skill_file  # 技能包文件（磁盘）
-from proto.skills import read_skill  # 技能领域
+from proto.skill_pack import read_skill, read_skill_file  # 技能包：两个读工具（磁盘）
 from proto.registry import registry  # 技能注册表（唯一持有者）
 
 #: 主 agent 的 system prompt —— 平台约定，**不约束 skill 作者**

@@ -6,7 +6,7 @@
 
 🔴 **技能包里的参考文件不是这里的字段**：它本来就在磁盘上读得到，
 装进对象里是多余的一份；读不读、读哪份是 LLM 自己的决策。
-列和读在 `proto/skill_pack.py`（`list_skill_files` / `read_skill_file`）。
+列和读、以及两个读工具（`read_skill` / `read_skill_file`）都在 `proto/skill_pack.py`。
 
 **平台对 skill 作者零强制约束**——不加任何字段：
   - ❌ 不要求声明**参数**（`params`）—— 参数名是平台的词汇表，用户的自然语言不该被塞进去；
@@ -18,14 +18,14 @@
     因为要求本来就在 `instructions` 里，再抄一遍是重复。
 
 🔴 **和 `artifacts.py` 是两个领域**（2026-10-30 分开）：这里只管**静态技能包**；
-运行期的交付物在 `artifacts.py`。**技能包怎么从磁盘读**在 `skill_pack.py`（I/O + 格式）。
+运行期的交付物在 `artifacts.py`。**技能包怎么从磁盘读、两个读工具**都在
+`skill_pack.py`（I/O + 格式 + 工具）—— 本模块**只剩纯领域对象 ＋ 内置表登记**，
+零磁盘 I/O、零工具（2026-11-05 搬完，F2/F3）。
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-
-from langchain.tools import tool
 
 from proto.registry import registry
 
@@ -102,32 +102,7 @@ registry.register_defaults({
 # 2026-11-03 审核删掉：零调用点，而且"技能清单只拼一次"的目标下，
 # 多一个同名出口就是多一个将来被抄错的地方。要清单请直接 `registry.catalog()`。
 
-
-@tool
-def read_skill(skill_name: str) -> str:
-    """按需读一个技能的**完整指令**（渐进式披露第二层），附带它自带哪些文件。
-
-    常驻在你眼前的只有技能名和一句话描述。写任务要求前若不确定这个技能
-    **交付什么、按什么标准交付**，用它读原文核对 —— **不要凭描述猜**。
-    """
-    # 🔴 这里原来是 `from proto.agent import SKILLS`（领域层反向依赖编排层，
-    #    就为了读到"评测替换过的那份表"）。注册表独立成模块后，那个环和这条
-    #    lazy import 一起消失了 —— 见 `proto/registry.py` 的模块 docstring。
-    skill = registry.get(skill_name)
-    if skill is None:
-        return f"没有技能「{skill_name}」。可用：{'、'.join(registry.names())}"
-    # ⚠️ **不用 `【…】`**（那是段名的专用符号）—— 它是**工具返回的头**，不是段名。
-    out = f"**技能「{skill.name}」** —— {skill.description}\n\n{skill.instructions}"
-    # 参考文件清单**现场扫盘**（不缓存在 Skill 上，见 `skill_pack` 的模块 docstring）。
-    # 有才带这一段 —— 没有就一个字不加（**没有就是没有**，不写"（无参考文件）"这种废话）。
-    from proto.skill_pack import skill_file_index_lines
-
-    files = skill_file_index_lines(skill.name)
-    if files:
-        # ⚠️ 同 `executor.run_task`：**`skill_name` 要写进清单**（调用方的第一个参数就是它）
-        out += (
-            f"\n\n**技能自带文件** —— 要用哪一份就用 `read_skill_file` 读全文："
-            f"**`skill_name` 传「{skill.name}」**，`path` 照抄下面的清单"
-            "（**不要凭文件名猜内容**）：\n" + "\n".join(files)
-        )
-    return out
+# ⚠️ `read_skill` 工具原来也住这里（它要磁盘 I/O，于是**函数内 lazy import**
+#    `proto.skill_pack` —— 一个被藏起来的环）。2026-11-05 搬去 `skill_pack.py`
+#    和 `read_skill_file` 作伴，本模块从此**没有任何 skill_pack 引用**。
+#    守卫：`evals/unit_registry.py` ① 的"proto 运行时 import 图无环"。

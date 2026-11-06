@@ -39,7 +39,7 @@ from proto.artifacts import (
     read_artifact,
     make_write_artifact,
 )
-from proto.skill_pack import read_skill_file, skill_file_index_lines  # 技能包文件（磁盘）
+from proto.skill_pack import read_skill_file, skill_file_prompt  # 技能包文件（磁盘）＋ 提示块（单源）
 from proto.skills import Skill  # 技能领域
 
 #: 平台约定 —— 尽量少。技能作者写什么都不会破坏它，因为它不要求作者做任何事。
@@ -255,27 +255,10 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
 
     briefing_text = briefing.strip() or "（暂无 —— 你需要的任何信息都要先问，不要猜）"
     # 技能自带文件时，把**清单**（路径 + 字数）一起给执行器 —— 正文按需 `read_skill_file` 读。
-    # 清单**现场扫盘**（不缓存在 `Skill` 上，见 `skill_pack` 的模块 docstring）；
-    # **没有自带文件就一个字不加**（单文件技能本来就没有）。
-    refs = ""
-    have = skill_file_index_lines(skill.name)
-    if have:
-        # 🔴 **必须把 `skill_name` 写进去**（2026-11-02 实测踩到）：清单里只有路径，
-        # 而 `read_skill_file(skill_name, path)` 的**第一个参数是技能名** ——
-        # 不写，执行器就只能**猜**：实测它试了「课堂活动配置生成」「classroom-activity-config」
-        # 「activity-config」「config」四个变体，全返回"没有自带文件"，
-        # 卡了 121 秒后放弃，反过来问用户"这个技能的确切名称是什么"。
-        # ⚠️ 这个坑只在"**技能包有 references 且活是委派出去的**"时才出现 ——
-        # 走委派的现有技能都没有 references，有 references 的真技能又被主 agent 自己干了，
-        # 所以一直没暴露；`EXEC_PATH=delegate` 一开，第一次跑就撞上。
-        # ⚠️ **不用 `【…】`**（那是**段名的专用符号**，独占行首就等于声明"这是个段名"，
-        #    而记录层靠这两条做确定性切分）—— 它是【技能指令】**里面**的一段，
-        #    不是和它平级的段。
-        refs = (
-            f"\n\n**技能自带文件** —— 要用哪一份就用 `read_skill_file` 读全文："
-            f"**`skill_name` 传「{skill.name}」**，`path` 照抄下面的清单"
-            "（**不要凭文件名猜内容**）：\n" + "\n".join(have)
-        )
+    # 🔴 这段提示**和 `read_skill` 工具返回的是同一份**（单源：`skill_file_prompt`）——
+    #    原来两处各拼一遍、**逐字重复**（2026-11-05 消，F2）；"必须写 skill_name"那条
+    #    实测教训也搬进了那个函数。清单现场扫盘、没有自带文件就返回空串（一个字不加）。
+    refs = skill_file_prompt(skill.name)
     # 🔴 **走唯一那条渲染路**（2026-11-05）：原来两个头都是就地写的字面量，
     #    而且**嵌套是平的**（【已知信息】和它里面的【任务】【用户原话】同在 0 列）。
     #    现在交接书整块缩在【已知信息】下面 —— 哪几段属于它，一眼看得出。

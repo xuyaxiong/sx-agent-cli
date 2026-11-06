@@ -20,6 +20,12 @@
 `list_skill_files()`（有哪些）和 `read_skill_file()`（读一份）。两者**都现场扫盘**，
 内存里不留副本。
 
+🔴 **两个 LLM 读工具也住这里**（2026-11-05，F2/F3）：`read_skill`（技能原文 ＋
+自带文件清单）和 `read_skill_file`（读一份文件）—— 它们同时要"领域对象"
+（`registry`）和"磁盘 I/O"（本模块），住在 `skills.py` 就得函数内 lazy import
+本模块（**一提就成环**，探针 `tmp/probe_cycle_skills_pack.py` 实测）。提示块本身
+（`skill_file_prompt`）也是**唯一一份** —— `executor.run_task` 的任务书用它。
+
 ## 🔴 **不限定子目录名**
 
 作者的资料放 `references/` 还是 `assets/` 还是别的，**是作者的事** ——
@@ -48,6 +54,7 @@ from pathlib import Path
 import yaml
 from langchain.tools import tool
 
+from proto.registry import registry
 from proto.skills import Skill
 
 #: 技能包的入口文件名 —— **只有这一个**。
@@ -137,6 +144,37 @@ def skill_file_index_lines(skill_name: str) -> list[str]:
     return [f"- {name}（{n} 字）" for name, n in list_skill_files(skill_name)]
 
 
+def skill_file_prompt(skill_name: str) -> str:
+    """【技能自带文件】提示块（清单常驻、正文按需）—— **唯一一份**；没文件返回空串。
+
+    🔴 **为什么抽成函数**（2026-11-05，F2）：这段提示原来在**两处各拼一遍、逐字重复**
+    —— `read_skill` 的工具返回（主 agent 侧）和 `executor.run_task` 的任务书（执行器侧）。
+    改一处忘另一处，同一个东西就是两副面孔（"一套，别分叉"；实测 diff 只差变量名）。
+
+    🔴 **必须把 `skill_name` 写进清单**（2026-11-02 实测踩到）：清单里只有路径，
+    而 `read_skill_file(skill_name, path)` 的**第一个参数是技能名** —— 不写，
+    执行器就只能**猜**：实测它试了「课堂活动配置生成」「classroom-activity-config」
+    「activity-config」「config」四个变体，全返回"没有自带文件"，卡了 121 秒后放弃，
+    反过来问用户"这个技能的确切名称是什么"。
+    ⚠️ 这个坑只在"**技能包有 references 且活是委派出去的**"时才出现 —— 走委派的现有技能
+    都没有 references，有 references 的真技能又被主 agent 自己干了，所以一直没暴露；
+    `EXEC_PATH=delegate` 一开，第一次跑就撞上。
+
+    ⚠️ **不用 `【…】`**（那是**段名的专用符号**，独占行首就等于声明"这是个段名"，
+    而记录层靠这两条做确定性切分）—— 它是【技能指令】**里面**的一段，不是和它平级的段。
+
+    ⚠️ **有才带这一段** —— 没有就返回空串（**没有就是没有**，不写"（无参考文件）"这种废话）。
+    """
+    files = skill_file_index_lines(skill_name)
+    if not files:
+        return ""
+    return (
+        f"\n\n**技能自带文件** —— 要用哪一份就用 `read_skill_file` 读全文："
+        f"**`skill_name` 传「{skill_name}」**，`path` 照抄下面的清单"
+        "（**不要凭文件名猜内容**）：\n" + "\n".join(files)
+    )
+
+
 def load_skill_file(skill_name: str, path: str) -> str | None:
     """读技能包里某个文件的全文；**不在清单里就返回 `None`**（见模块 docstring 的不变量）。
 
@@ -145,6 +183,33 @@ def load_skill_file(skill_name: str, path: str) -> str | None:
     if path not in {name for name, _ in list_skill_files(skill_name)}:
         return None
     return (PACK_DIRS[skill_name] / path).read_text(encoding="utf-8", errors="replace")
+
+
+@tool
+def read_skill(skill_name: str) -> str:
+    """按需读一个技能的**完整指令**（渐进式披露第二层），附带它自带哪些文件。
+
+    常驻在你眼前的只有技能名和一句话描述。写任务要求前若不确定这个技能
+    **交付什么、按什么标准交付**，用它读原文核对 —— **不要凭描述猜**。
+    """
+    # 🔴 这里原来是 `from proto.agent import SKILLS`（领域层反向依赖编排层，
+    #    就为了读到"评测替换过的那份表"）。注册表独立成模块后，那个环和这条
+    #    lazy import 一起消失了 —— 见 `proto/registry.py` 的模块 docstring。
+    # 🔴 **2026-11-05 从 `skills.py` 搬来这里**（F2/F3）：它同时要用"领域对象"
+    #    （`registry`）和"磁盘 I/O"（本模块的文件清单）—— 住在 `skills.py` 就得
+    #    **函数内 lazy import** 本模块（一提就成环，探针 `tmp/probe_cycle_skills_pack.py`
+    #    实测：提到顶层当场 ImportError）。搬来和 `read_skill_file` 作伴：环没了，
+    #    两个读工具也住在同一处。
+    skill = registry.get(skill_name)
+    if skill is None:
+        return f"没有技能「{skill_name}」。可用：{'、'.join(registry.names())}"
+    # ⚠️ **不用 `【…】`**（那是段名的专用符号）—— 它是**工具返回的头**，不是段名。
+    out = f"**技能「{skill.name}」** —— {skill.description}\n\n{skill.instructions}"
+    # 参考文件清单**现场扫盘**（不缓存在 Skill 上，见本模块 docstring）。
+    # 提示块是**唯一一份**（`skill_file_prompt` —— 任务书那边用的是同一个函数）；
+    # 没有自带文件时它返回空串（**一个字不加**）。
+    out += skill_file_prompt(skill.name)
+    return out
 
 
 @tool

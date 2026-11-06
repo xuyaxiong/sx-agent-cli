@@ -26,6 +26,9 @@ R1 修掉的是"同一张表有三个绑定点"：
    - 全仓不许往 `*.SKILLS` 上**写**（"赋两次值"的回潮）—— 判据是**形状**不是拼写：
      `x.SKILLS = m` / `x.SKILLS: dict = m` / `x.SKILLS |= m` / `setattr(x, "SKILLS", m)`
      四种一起管（原来只看第一种，后三种全漏 —— 2026-11-03 审核实测）
+   - **proto 运行时 import 图无环**（含函数内；`if TYPE_CHECKING:` 不算）——
+     `skills` ↔ `skill_pack` 那个环原来靠函数内 lazy import 掩盖（2026-11-05 把两个
+     读工具搬去 `skill_pack` 后消失）；这条盯着**任何**新环
 
 **② 运行时语义**
    - `replace` 之后 **`read_skill` 必须看到新表** —— 这条是 R1 的核心验收：
@@ -51,7 +54,7 @@ import io
 import re
 from pathlib import Path
 
-from proto import skills
+from proto import skill_pack
 from proto.registry import _Registry, registry
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -174,6 +177,72 @@ def main() -> None:
     assigned = [f"{p.relative_to(ROOT)}:{ln}" for p in files for ln in _skill_writes(_tree(p))]
     check("全仓没有往 `*.SKILLS` 上写（\"赋两次值\"不许回潮）", not assigned, repr(assigned))
 
+    # ── proto 运行时 import 图**无环**（2026-11-05，F3 的机制）──
+    # 🔴 为什么是机制：`skills` ↔ `skill_pack` 那个环原来靠**函数内 lazy import** 掩盖 ——
+    #    探针实测（`tmp/probe_cycle_skills_pack.py`）：把它提到顶层**当场 ImportError**
+    #    （"partially initialized module"）。两个读工具搬去 `skill_pack` 后环消了；
+    #    这条盯着**任何**新环 —— **包括藏进函数里的**（藏起来正是它原来的形态）。
+    # ⚠️ 口径 = **运行时真会执行的 import**：函数内的**算**；`if TYPE_CHECKING:` 里的
+    #    **不算**（运行时不执行 —— registry 那条是正规写法，不是环）。
+    def _runtime_imports(p: Path) -> list[tuple[int, str, list[str]]]:
+        """(行号, 模块, 名字们)。模块级**不钻** if/try 块；函数体的直接子句算。"""
+        tree = _tree(p)
+        out: list[tuple[int, str, list[str]]] = []
+
+        def grab(nodes: list[ast.stmt]) -> None:
+            for n in nodes:
+                if isinstance(n, ast.Import):
+                    out.extend((n.lineno, a.name, []) for a in n.names)
+                elif isinstance(n, ast.ImportFrom):
+                    out.append((n.lineno, n.module or "", [a.name for a in n.names]))
+
+        grab(tree.body)
+        for n in ast.walk(tree):
+            if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                grab(n.body)
+        return out
+
+    proto_files = _py_files("proto")
+    mod_of = {
+        p: ("proto." + ".".join(p.relative_to(ROOT / "proto").with_suffix("").parts))
+        .removesuffix(".__init__")
+        for p in proto_files
+    }
+    g: dict[str, set[str]] = {m: set() for m in mod_of.values()}
+    for p in proto_files:
+        for _ln, mod, names in _runtime_imports(p):
+            for t in (mod, *(f"{mod}.{nm}" for nm in names)):
+                if not t.startswith("proto"):
+                    continue
+                parts = t.split(".")
+                # 连带父包：import 子模块会先执行父包的 __init__
+                for i in range(2, len(parts) + 1):
+                    anc = ".".join(parts[:i])
+                    if anc in g:
+                        g[mod_of[p]].add(anc)
+
+    GRAY, BLACK = 1, 2
+    color: dict[str, int] = {}
+    stack: list[str] = []
+    cycles: list[str] = []
+
+    def dfs(m: str) -> None:
+        color[m] = GRAY
+        stack.append(m)
+        for nxt in sorted(g[m]):
+            if color.get(nxt) == GRAY:
+                cycles.append(" → ".join([*stack[stack.index(nxt):], nxt]))
+            elif nxt not in color:
+                dfs(nxt)
+        stack.pop()
+        color[m] = BLACK
+
+    for m in sorted(g):
+        if m not in color:
+            dfs(m)
+    check("proto 运行时 import 图**无环**（含函数内；TYPE_CHECKING 不算）",
+          not cycles, repr(cycles))
+
     # ─────────────────────────── ② 运行时语义 ───────────────────────────
 
     print("\n② 运行时语义（换表之后所有人都得看见）")
@@ -182,8 +251,8 @@ def main() -> None:
 
     builtin = registry.names()
     registry.replace({"only-one": Skill(name="only-one", description="临时", instructions="干活")})
-    out = skills.read_skill.invoke({"skill_name": "only-one"})
-    miss = skills.read_skill.invoke({"skill_name": "lesson-prep"})
+    out = skill_pack.read_skill.invoke({"skill_name": "only-one"})
+    miss = skill_pack.read_skill.invoke({"skill_name": "lesson-prep"})
     check("replace 后 `read_skill` 看到新表（核心验收点）", "only-one" in out, repr(out[:60]))
     check("replace 后旧技能不在表里（不是「两份表并存」）", "没有技能" in miss, repr(miss[:60]))
 
