@@ -117,6 +117,19 @@ def default() -> Session:
     return _DEFAULT
 
 
+def use(thread_id: str = "") -> Session:
+    """把当前上下文的会话设成一个新的 —— **不开作用域**（进程退出即会话结束）。
+
+    ⚠️ **只给"进程就是一次会话"的宿主用**（CLI / 跑批的子进程）：那种宿主里
+    "当前会话"从启动到退出**只有一个**，包 `with` 只是白白多一层缩进。
+    ⚠️ **web 那种"一个进程多个会话"的宿主必须用 `session()`** —— 用 `use()` 的话
+    后一个请求会把前一个顶掉，而前一个还在跑。
+    """
+    s = Session(thread_id=thread_id)
+    _current.set(s)
+    return s
+
+
 @contextmanager
 def session(thread_id: str = "") -> Iterator[Session]:
     """开一个**会话**（库的对外 API —— web 每个请求一层）。

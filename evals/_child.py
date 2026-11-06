@@ -6,8 +6,8 @@
 
 | 状态 | 存在哪 | 不隔离的后果 |
 |---|---|---|
-| 产物库（`proto.artifacts`） | **模块级全局**（对外只有函数） | 上轮的产物带进下轮，产物 ID 递增、`_recover_artifacts` 扫描范围越来越大 |
-| `trace.LOG_FILE` | **进程级**，导入时开文件 | 所有 run 混进同一个日志 |
+| 产物库（`proto.artifacts`） | **会话级**（2026-11-06 起；原来模块级全局） | 上轮的产物带进下轮，产物 ID 递增、`_recover_artifacts` 扫描范围越来越大 |
+| 日志（`trace.log_file()`） | **会话级**（同上；原来进程级、导入时开文件） | 所有 run 混进同一个日志 |
 | `config.get_model` | `lru_cache` | 跨 run 复用同一个模型实例 |
 | 崩了 | 整个进程 | 一个 case 炸掉整批 |
 
@@ -47,7 +47,7 @@ from evals.harness import dump_artifacts, dump_run_record, install, snapshot
 
 
 def run_case(case: dict, rep: int, out_dir: Path | None = None) -> dict:
-    from proto import trace
+    from proto import session, trace
     from proto import artifacts
 
     inst = install(case)
@@ -55,7 +55,9 @@ def run_case(case: dict, rep: int, out_dir: Path | None = None) -> dict:
     from proto.graph import build, next_pending
 
     graph = build()
-    config = {"configurable": {"thread_id": f"{case['id']}-r{rep}"}}
+    _tid = f"{case['id']}-r{rep}"
+    config = {"configurable": {"thread_id": _tid}}
+    session.use(_tid)             # 🔴 子进程就是一次会话（日志因此**按 case 分文件**）
 
     turns: list[dict] = []
     seen = 0
@@ -154,7 +156,7 @@ def run_case(case: dict, rep: int, out_dir: Path | None = None) -> dict:
         "error": error,
         "wall_s": round(time.time() - t0, 1),
         #: 本次 run 的原始 trace 文件 —— 父进程判完软断言后把它作为附录并进 `_run.md`
-        "trace_log": str(trace.LOG_FILE),
+        "trace_log": str(trace.log_file()),
     }
 
 

@@ -341,6 +341,24 @@ def main() -> None:
         if _f is not None:
             _f.unlink(missing_ok=True)
 
+    print("\n⑬ 三个入口都**开了会话**（不然 `thread_id` 进不了事件、日志也不带标识）")
+    # 🔴 光有 `Session` 不够 —— **入口不开会话**的话，一切都落在**默认会话**里：
+    #    行为"看起来没变"（那是设计目标），但 `thread_id` 压根没进事件，
+    #    多会话时等于白改。**这是接线，不是机制** —— 所以用源码检查盯着。
+    #    有效性自检：把任意一个入口里的 `session.use(...)` 删掉，这里必须红。
+    _entries = {
+        "proto/__main__.py": "CLI",
+        "evals/chat.py": "交互式",
+        "evals/_child.py": "跑批子进程",
+    }
+    _not_wired = []
+    for _f, _who in _entries.items():
+        _src = io.open(_f, encoding="utf-8").read()
+        if "session.use(" not in _src and "session.session(" not in _src:
+            _not_wired.append(f"{_f}（{_who}）")
+    check("三个入口都开了会话（`session.use` / `session.session`）", not _not_wired,
+          f"没开的：{_not_wired}")
+
     print("\n" + "═" * 78)
     print(f"{'全部通过' if not FAIL else '有失败'}：{len(PASS)}/{len(PASS) + len(FAIL)}")
     for name in FAIL:

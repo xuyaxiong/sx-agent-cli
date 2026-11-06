@@ -44,7 +44,7 @@ from evals.harness import (  # noqa: E402
     install,
     snapshot,
 )
-from proto import trace  # noqa: E402
+from proto import session, trace  # noqa: E402
 from proto.graph import build, next_pending  # noqa: E402
 from proto.handoff.briefing import asked_text  # noqa: E402
 from proto import artifacts as artifacts_mod  # noqa: E402 —— 全仓只留**一个**别名
@@ -745,6 +745,7 @@ def main() -> None:
     )
     graph = build()
     config = {"configurable": {"thread_id": args.thread}}
+    session.use(args.thread)      # 🔴 进程就是一次会话（`thread_id` 进事件、日志带标识）
 
     from proto.config import describe
 
@@ -781,7 +782,7 @@ def main() -> None:
     print("技能清单")
     _print_skills(skills, indent="   ")
     print(BAR)
-    print(f"日志   {trace.LOG_FILE}")
+    print(f"日志   {trace.log_file()}")
     print(f"记录   {out_dir}")
     print(BAR)
     print("直接说你要什么。退出：Ctrl-C 或 exit。\n")
@@ -919,7 +920,7 @@ def main() -> None:
         "fault": inst["fault"],
         "error": error,
         "wall_s": round(time.time() - t0, 1),
-        "trace_log": str(trace.LOG_FILE),
+        "trace_log": str(trace.log_file()),
         "skills_dir": str(args.skills),
     }
     dump_artifacts(out_dir, tag, 1, result)

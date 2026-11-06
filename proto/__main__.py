@@ -63,7 +63,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 from langchain_core.messages import HumanMessage
 
-from proto import trace
+from proto import session, trace
 from proto.config import describe
 from proto.graph import build, next_pending
 from proto.handoff.briefing import asked_text
@@ -205,13 +205,18 @@ def main() -> None:
                     help="--say 模式下自动应答（不给就把问题打出来停住，不替用户编答案）")
     args = ap.parse_args()
 
+    # 🔴 **CLI 进程就是一次会话**（`use` 不开作用域 —— 包 `with` 只是白白多一层缩进）。
+    #    开了它 `thread_id` 才进事件、日志才带会话标识。⚠️ **必须在 `subscribe` 之前** ——
+    #    订阅挂的是**当前会话**。
+    session.use(args.thread)
+
     graph = build()
     config = {"configurable": {"thread_id": args.thread}}
     trace.subscribe(_on_event)      # 🔴 显示层从这一刻起只认事件
 
     print(BAR)
     print(f"主 agent = 完整 agent（自己决定：直接答 / 自己干 / 委派） · 模型={describe()}")
-    print(f"日志：{trace.LOG_FILE}")
+    print(f"日志：{trace.log_file()}")
     print(BAR)
 
     def turn(text: str, answer_to: str = "") -> dict | None:
@@ -298,7 +303,7 @@ def main() -> None:
             print(BAR)
 
     trace.close()
-    print(f"完整日志：{trace.LOG_FILE}")
+    print(f"完整日志：{trace.log_file()}")
 
 
 if __name__ == "__main__":
