@@ -44,11 +44,10 @@ from evals.harness import (  # noqa: E402
     install,
     snapshot,
 )
-from proto import artifacts as proto_artifacts  # noqa: E402
 from proto import trace  # noqa: E402
 from proto.graph import build, next_pending  # noqa: E402
 from proto.handoff.briefing import asked_text  # noqa: E402
-from proto import artifacts as artifacts_mod  # noqa: E402
+from proto import artifacts as artifacts_mod  # noqa: E402 —— 全仓只留**一个**别名
 from proto.registry import registry  # noqa: E402
 
 # ⚠️ 路径一律走 `harness`（`ROOT` / `RUNS_DIR` / `DEFAULT_SKILLS_DIR`）——
@@ -735,7 +734,7 @@ def main() -> None:
     # 于是 `write_artifact` 的返回里能给出**真实路径**，用户当场就能打开看。
     # 落点和最后 `dump_artifacts` 的目录**必须一致**，否则前后两份文件对不上。
     # ⚠️ 走函数而不是直接赋值 —— 写错模块会当场 AttributeError（见 `use_dir` 的 docstring）
-    proto_artifacts.use_dir(out_dir / "artifacts" / f"{tag}__r1")
+    artifacts_mod.use_dir(out_dir / "artifacts" / f"{tag}__r1")
 
     skills = registry.values()
     # 🔴 **开场白只有一套**（用户 2026-11-02：*"合成一套啊 以开发态为主"*）——

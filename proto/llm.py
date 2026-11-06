@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import time
 import warnings
 from typing import Any
 
@@ -74,7 +75,6 @@ def safe_structured(
             "喂了哪几份见上一行的「判定材料」",
             kind="llm_io" if kind else "",
         )
-    import time
 
     for attempt in (1, 2):
         # ⚠️ **计时起点在循环里**（2026-11-05 修）：原来在**外面** —— 第二次尝试的

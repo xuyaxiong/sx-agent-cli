@@ -78,7 +78,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="主 agent（完整 agent）＋ 技能 / Task / 执行器")
     ap.add_argument("--thread", default="proto-1")
     ap.add_argument("--say", help="非交互：只跑这一句")
-    ap.add_argument("--answer", default="难度要基础的", help="--say 模式下自动应答")
+    ap.add_argument("--answer", default="",
+                    help="--say 模式下自动应答（不给就把问题打出来停住，不替用户编答案）")
     args = ap.parse_args()
 
     graph = build()
@@ -114,6 +115,12 @@ def main() -> None:
                 if p is None:
                     break
                 print(f"\n❓【{p.get('skill')}】问：{asked_text(p)}")
+                # 🔴 **没给 `--answer` 就不自动应答**（2026-11-06）：默认值原来是某次
+                #    测试留下的 `"难度要基础的"` —— 作为通用默认值，它是在**替用户编一个
+                #    没说过的前提**（正是这套代码反复防的事）。把问题打出来就停。
+                if not args.answer:
+                    print("   （没给 `--answer` —— 不自动应答；要自动答就带上 `--answer '…'`）")
+                    break
                 print(f"   自动答复：{args.answer}")
                 result = turn(args.answer, answer_to=p["id"])
                 if result is None:

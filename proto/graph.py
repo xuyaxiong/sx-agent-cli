@@ -302,10 +302,8 @@ def node_prepare(state: State) -> dict:
     fed_asking = any(t.get("stage") == "waiting_for_input" for t in updated)
 
     # 投递后的最新台账（reducer 按 id 合并，这里先自己合一遍，好把最新状态渲染出来）
-    merged = {t["id"]: t for t in (state.get("tasks") or [])}
-    for t in updated:
-        merged[t["id"]] = t
-    tasks = list(merged.values())
+    # ⚠️ 复用 `_merge_tasks`（同一逻辑一处定义）—— 原来这里手搓了一遍一模一样的合并。
+    tasks = _merge_tasks(state.get("tasks"), updated)
     if not tasks:
         # ⚠️ **`answer_to` 每条返回路径都要清**（它跟 checkpointer 活到下一轮，
         #    不清的话后面每一轮都会被当成"在回答那条"）—— 见 `State.answer_to`。
