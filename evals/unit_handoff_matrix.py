@@ -201,7 +201,10 @@ def main() -> None:  # noqa: C901
         print("".join(c.ljust(x) for c, x in zip(r, w)))
     print()
     n_bad = sum(1 for r in rows for c in r[1:] if c == BAD)
-    print(f"缺口：{n_bad} 处（{BAD}）")
+    # ⚠️ **全绿时不许印那个 ❌**（2026-11-06 修）：原来是无条件 `（{BAD}）`，
+    #    于是"缺口 0 处"也印成 `缺口：0 处（❌）` —— 正是"看起来像功能坏了"那一类
+    #    （读的人先看见红叉，再读数字才发现是 0）。有缺口才摆标记。
+    print(f"缺口：{n_bad} 处" + (f"（{BAD}）" if n_bad else f"（{OK}）"))
     for r in rows:
         for name, c in zip(("①来源", "②截断/出处", "③膨胀标记", "④结构分层", "⑤硬传"), r[1:]):
             if c == BAD:

@@ -61,19 +61,11 @@ HISTORY = "沿革（改过什么、为什么改）"
 DATE = re.compile(r"20\d\d-\d\d-\d\d")
 
 #: 🔴 **欠账清单**：还没按体例整理的模块 —— **只许缩短**（改完一个删一行）。
-#: ⚠️ 加进来要在评审里说清（它是"欠账"，不是"豁免"）。
-PENDING = {
-    "proto/agent.py",
-    "proto/artifacts.py",
-    "proto/config.py",
-    "proto/executor.py",
-    "proto/graph.py",
-    "proto/llm.py",
-    "proto/registry.py",
-    "proto/skill_pack.py",
-    "proto/skills.py",
-    "proto/__main__.py",
-}
+#: ✅ **2026-11-06：清单空了。** 全仓 `proto/` 的 19 个模块都按体例整理过一遍
+#: （每个都用 AST 比对证明过"代码一字未动"；过程中翻出 ~15 处"注释与代码对不上"，
+#: 逐条核实后修掉）。
+#: ⚠️ 以后**加进来要在评审里说清**（它是"欠账"，不是"豁免"）。
+PENDING: set[str] = set()
 
 #: 一行 docstring 的包标记 —— 没有正文可分段（不是欠账）
 EXEMPT = {"proto/__init__.py"}

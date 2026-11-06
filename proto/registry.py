@@ -1,26 +1,13 @@
 """技能注册表 —— `{name: Skill}` 的**唯一持有者**。
 
-## 为什么单独一个模块
+## 这个文件是什么
 
-原来这张表定义在 `skills.py`，然后被三处各自绑定：
+全进程只有这一张技能表：`skills.py` 在 import 时把内置表登记进来（`register_defaults`），
+此后**谁都不许直接拿表** —— 读走 `get()` / `all()` / `values()` / `names()` / `catalog()`，
+换表走 `replace()` / `extend()` / `reset()`，每次调用查的都是**当前**那一张。
+（本模块不认识 `Skill`：只在类型标注里 import 它，见 `if TYPE_CHECKING` 那一行。）
 
-    skills.SKILLS       ← 定义
-    agent.py:45         from proto.skills import SKILLS          （值导入，绑定死在 import 那一刻）
-    graph.py:107        函数内 from proto.skills import SKILLS   （每次调用重新绑定）
-
-由此长出两个病：
-
-1. **反向依赖**：`skills.read_skill` 为了读到"评测替换过的那份表"，得在函数里
-   `from proto.agent import SKILLS` —— **领域层依赖编排层**，就为了绕开一个环。
-   而那个环本身就是"注册表没有独立的家"造成的。
-2. **换一次技能要赋两次值**：`evals/harness.py` 曾经是这样
-
-       proto.agent.SKILLS = merged
-       proto.skills.SKILLS = merged     # 漏这句 → 多轮投递时执行器"像换了个人"（实测踩过）
-
-   那不是隐患，是**当时靠纪律维持的正确性**。本模块把纪律换成机制。
-
-## 铁律
+## 设计原则（不变量）
 
 🔴 **对外只给函数，不给 dict。** 任何 `from proto.registry import SKILLS` 的写法
    都是在重新制造一个绑定点 —— 一律走 `get()` / `all()` / `values()`，每次调用查当前表。
@@ -29,6 +16,25 @@
 
 🔴 **未初始化时 `get()` 直接抛错，不静默返回 None。** 静默的后果是"没有这个技能"
    这种看着像业务事实的假话，比当场崩掉难查得多（同 handoff 那条"禁止静默失配"）。
+
+## 关键取舍
+
+**为什么单独一个模块**：这张表原来定义在 `skills.py`，然后被三处各自绑定：
+
+    skills.SKILLS       ← 定义
+    agent.py            from proto.skills import SKILLS          （值导入，绑定死在 import 那一刻）
+    graph.py            函数内 from proto.skills import SKILLS   （每次调用重新绑定）
+
+由此长出两个病：
+
+1. **反向依赖**：`skills.read_skill` 为了读到"评测替换过的那份表"，得在函数里
+   `from proto.agent import SKILLS` —— **领域层依赖编排层**，就为了绕开一个环。
+   而那个环本身就是"注册表没有独立的家"造成的。
+2. **换一次技能要赋两次值**：`evals/harness.py` 曾经是 `proto.agent.SKILLS = merged`
+   之后还得补一句 `proto.skills.SKILLS = merged` —— 漏掉那句，多轮投递时执行器
+   "像换了个人"（实测踩过）。
+
+那不是隐患，是**当时靠纪律维持的正确性**。本模块把纪律换成机制。
 """
 
 from __future__ import annotations
@@ -42,13 +48,13 @@ if TYPE_CHECKING:  # 仅用于类型标注 —— **运行时不 import**，否�
 class _Registry:
     """一张内置表 + 一张当前表。
 
-    **为什么要有"内置表"这一层**（不是为了好看）：`replace` 之后如果直接拿当前表当
-    下次合并的底，case 之间就会**串**。原来 harness 里 `{**proto.skills.SKILLS, **extra}`
-    就是这个形态 —— 第一个 replace 的 case 跑完，`proto.skills.SKILLS` 已经是它那份了，
-    第二个 case 再"合并"就把前一个 case 的技能带进来。
+    **为什么要有"内置表"这一层**：`replace` 之后如果直接拿当前表当下次合并的底，
+    case 之间就会**串** —— 第一个 case 装过的技能被第二个 case"合并"进来
+    （原来 harness 里 `{**proto.skills.SKILLS, **extra}` 就是这个形态）。
+    默认表单独存，`reset()` 才有干净的落点。
 
     ⚠️ **今天走不到**（跑批一 case 一子进程，进程内只 `install()` 一次）—— 留着是因为
-    它**本来就该对**：一旦做"同进程多 case"就立刻用得上。默认表单独存，`reset()` 才干净。
+    它**本来就该对**：一旦做"同进程多 case"就立刻用得上。
     """
 
     def __init__(self) -> None:
@@ -109,8 +115,8 @@ class _Registry:
     def catalog(self) -> str:
         """技能清单的**唯一排版来源**（渐进式披露第一层）。
 
-        原来是三处各写一遍（`skills.catalog`（已删）、`agent._MAIN_PROMPT` 的拼接、
-        harness 的 catalog），改一处忘另一处就两副面孔。
+        以前三处各写一遍（`skills.catalog`（已删）、`agent._MAIN_PROMPT` 的拼接、
+        harness 的 catalog）—— 改一处忘另一处就是两副面孔。
         """
         self._require_init()
         return "\n".join(f"- {s.name}：{s.description}" for s in self._current.values())

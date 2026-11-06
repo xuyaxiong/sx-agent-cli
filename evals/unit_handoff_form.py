@@ -195,6 +195,14 @@ def main() -> None:  # noqa: C901
                 b = n.body
                 if b and isinstance(b[0], ast.Expr) and isinstance(b[0].value, ast.Constant) \
                    and isinstance(b[0].value.value, str):
+                    # 🔴 **`@tool` 的 docstring 不算"解释"**（2026-11-06 补缝）：它是**工具
+                    #    schema**，模型**真的看得见** —— 段名规矩与用词体系对它一样管。
+                    #    实测这条缝漏过两处：`write_artifact` 里的「成品」、`delegate` 里的「摘要」。
+                    if isinstance(n, ast.FunctionDef) and any(
+                            (isinstance(d, ast.Name) and d.id == "tool")
+                            or (isinstance(d, ast.Attribute) and d.attr == "tool")
+                            for d in n.decorator_list):
+                        continue
                     skip.add(id(b[0].value))
         for n in ast.walk(tree):
             if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in skip:
@@ -264,6 +272,14 @@ def main() -> None:  # noqa: C901
                 b = n.body
                 if b and isinstance(b[0], ast.Expr) and isinstance(b[0].value, ast.Constant) \
                    and isinstance(b[0].value.value, str):
+                    # 🔴 **`@tool` 的 docstring 不算"解释"**（2026-11-06 补缝）：它是**工具
+                    #    schema**，模型**真的看得见** —— 段名规矩与用词体系对它一样管。
+                    #    实测这条缝漏过两处：`write_artifact` 里的「成品」、`delegate` 里的「摘要」。
+                    if isinstance(n, ast.FunctionDef) and any(
+                            (isinstance(d, ast.Name) and d.id == "tool")
+                            or (isinstance(d, ast.Attribute) and d.attr == "tool")
+                            for d in n.decorator_list):
+                        continue
                     skip.add(id(b[0].value))
         for n in ast.walk(tree):
             if isinstance(n, ast.Constant) and isinstance(n.value, str) and id(n) not in skip:
