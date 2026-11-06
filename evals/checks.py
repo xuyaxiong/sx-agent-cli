@@ -241,6 +241,29 @@ def check_platform_fed_answer(run: dict, turn: dict) -> Result:
 #    它们是 `platform_relayed` / `no_platform_relay` 的**旧名别名** ✗（零 case 用）——
 #    同一个语义两处定义，就是"一套，别分叉"要防的 ✓ 删别名，留正主。
 @_reg
+def check_no_lost_question(run: dict, turn: dict) -> Result:
+    """**还在等用户答复的任务，这一轮必须被透传过** —— 问题不许两头落空。
+
+    断的是**析取**，因为这类轮次（"一次答一个" ＋ 平台强制试答）**两种结局都对**：
+      - 主 agent 答得上 → 重跑 → `completed`（用户不该再被问）；
+      - 答不上 → 问题**原样透传**给用户（`finalize` 的兜底）。
+    押其中任何一种都会 flaky（实测 `t-feed-rerun`：两遍各走了一种）——
+    而"**没交付、问题也没出去**"是两种结局都不允许的，那才是真丢。
+
+    ⚠️ `failed`（推满轮次）**不算丢**：那是交回主 agent 决定的事，不是用户的。
+    同 `platform_relayed`：读 `actions`（对象），不读日志串。
+    """
+    tasks = _tasks(turn)
+    if not tasks:
+        return False, "一个 task 都没有"
+    relayed = {i for a in _actions(run, turn, "relay") for i in (a.get("tasks") or [])}
+    lost = [f"{t['id']}({t['skill']})" for t in tasks
+            if t.get("stage") == "waiting_for_input" and t["id"] not in relayed]
+    return not lost, (f"这些 task 还在等答复，但**没透传给用户**：{lost}" if lost
+                      else f"{len(tasks)} 个 task：等答复的都透传了（或已交付）")
+
+
+@_reg
 def check_reply_chars_under(run: dict, turn: dict, n: int) -> Result:
     got = len(turn.get("reply") or "")
     return got < n, f"回复 {got} 字（上限 {n}）"
