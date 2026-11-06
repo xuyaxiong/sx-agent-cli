@@ -60,7 +60,7 @@ import itertools
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 
 
 class Session:
@@ -87,6 +87,13 @@ class Session:
         #: ⚠️ 每个元素是 `[fn, handle]`：`fn` 本身没法从 `list.remove` 里找回句柄，
         #: 而退订要能定位到"哪一个"。见 `trace._Subscription`。
         self.subs: list[list] = []
+        # ── 日志（`proto/trace.py` 用）──
+        #: 这个会话的日志文件 —— **惰性建**（没写过日志的会话**不产生文件**）。
+        #: ⚠️ 建文件 / 起名字是 `trace` 的事（它才知道 `LOG_DIR` 和那个后缀），
+        #: 这里只**存**。
+        self.log_file: Path | None = None
+        #: 打开着的句柄 —— 跟着 `log_file` 一起由 `trace` 建。
+        self.log_fh: Any = None
 
 
 #: 默认会话 —— **只有上下文里没设时才取得到**（见「关键取舍 ②」）。
@@ -101,6 +108,13 @@ def current() -> Session:
     ⚠️ 回落是**故意的**（设计原则 2）：CLI / 跑批 / 单测都不设上下文，靠它保持原行为。
     """
     return _current.get() or _DEFAULT
+
+
+def default() -> Session:
+    """**默认会话**那个对象 —— 给宿主**预置状态**用（比如 `trace` 在 import 时把
+    进程日志文件挂上去）。⚠️ 别拿它当"当前会话"，那是 `current()` 的事。
+    """
+    return _DEFAULT
 
 
 @contextmanager

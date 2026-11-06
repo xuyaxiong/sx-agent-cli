@@ -184,11 +184,25 @@
     动它要碰 `_recorder` docstring 里"**格式逐字节一致**"那条，所以**单独一步评估**。
     ⚠️ 有效性自检：订阅退回模块级 list → `unit_decision` ⑪ 当场红（实测能看到
     A 收到 B 的事件）；删掉 `thread_id` 那行 → 同一条红。
+30. **日志改成"每会话一个文件"**（2026-11-06，用户定：*"先按乙"*）。上一条留的尾巴：
+    日志也要按会话分。两条路 —— **甲**（一个文件 ＋ 每行加会话列）／**乙**（每会话一个文件）
+    —— 选了 **乙**，**全部理由是格式不用动**：`_recorder` 的 docstring 写着"格式与事件源
+    重构前**逐字节一致**……日志是权威记录"，甲要碰那条，乙**一个字都不用改**。
+    ⇒ `LOG_FILE` 仍是**默认会话**的文件（CLI / 跑批 / 单测都不开 `session()`，行为不变）；
+    开了会话的走 `log_file()` —— **惰性建**（没写过日志的会话**不产生文件**），
+    文件名带会话标识（`thread_id` **消毒**后截断 40 字：它由宿主给，直接拼进路径会被
+    `/`、`..` 带出去）。`_fh` 从**模块级句柄**改成 `_fh()` 函数（当前会话的句柄）。
+    ⚠️ 代价：`unit_stream_join` 原来靠 `trace._fh = buf` 猴补丁，4 处改成
+    `session.default().log_fh`。
+    ⚠️ 有效性自检：把 `_fh()` 改回模块级句柄 → `unit_decision` ⑫ 红（**而且第一版
+    它是以 `FileNotFoundError` 崩的、不是红** —— 补了 `exists()` 才干净，同
+    `unit_console` 那条"用 `find` 不用 `index`"的教训）。
 """
 
 from __future__ import annotations
 
 import os
+import re
 import time
 from datetime import datetime
 from typing import Any, Callable
@@ -208,8 +222,34 @@ LOG_DIR.mkdir(exist_ok=True)
 _TAG = os.getenv("PROTO_LOG_TAG", "").strip()
 _SUFFIX = f"-{_TAG}" if _TAG else ""
 
+#: **默认会话**的日志文件 —— CLI / 跑批 / 单测都不开 `session()`，它们用的就是它。
+#: ⚠️ 开了会话就**各有各的文件**（见 `log_file()`）。**日志格式一个字没改** ——
+#: 这是选"每会话一个文件"（而不是"一个文件加会话列"）的全部理由：`_recorder` 的
+#: "格式逐字节一致"那条约束**不用动**。〔沿革 30〕
 LOG_FILE = LOG_DIR / f"proto-{time.strftime('%Y%m%d-%H%M%S')}{_SUFFIX}.log"
-_fh = LOG_FILE.open("w", encoding="utf-8")
+session.default().log_file = LOG_FILE
+session.default().log_fh = LOG_FILE.open("w", encoding="utf-8")
+
+
+def log_file() -> Path:
+    """**当前会话**的日志文件 —— 第一次写日志时才建（没写过日志的会话**不产生文件**）。
+
+    ⚠️ 文件名里会话那一段**要消毒**：`thread_id` 由**宿主**给（web 那边可能就是用户 ID），
+    直接拼进路径会被 `/`、`..` 带出去。非 `[A-Za-z0-9_-]` 一律换 `_`，再截断。
+    """
+    s = session.current()
+    if s.log_file is None:
+        safe = re.sub(r"[^A-Za-z0-9_-]", "_", s.thread_id)[:40] or "session"
+        s.log_file = LOG_DIR / f"proto-{time.strftime('%Y%m%d-%H%M%S')}-{safe}{_SUFFIX}.log"
+    return s.log_file
+
+
+def _fh() -> Any:
+    """当前会话**打开着的**日志句柄 —— 没开就开（跟着 `log_file()` 一起惰性建）。"""
+    s = session.current()
+    if s.log_fh is None:
+        s.log_fh = log_file().open("w", encoding="utf-8")
+    return s.log_fh
 
 BAR = "═" * 78
 
@@ -289,11 +329,11 @@ def _publish(ev: dict) -> None:
         try:
             fn(ev)
         except Exception as e:  # noqa: BLE001 —— 见 subscribe 的 docstring
-            _fh.write(
+            _fh().write(
                 f"[{stamp()}] ⚠️ 事件订阅者出错"
                 f"（{getattr(fn, '__qualname__', fn)}）：{type(e).__name__}: {e}\n"
             )
-            _fh.flush()
+            _fh().flush()
 
 
 def _mark_hole(ev: dict, e: Exception) -> None:
@@ -317,8 +357,8 @@ def _write(line: str = "") -> None:
 
     ⚠️ 私有：别处直接调它就绕过了事件总线 —— 展示层看不见那一行，而且是**静默**的。
     """
-    _fh.write(line + "\n")
-    _fh.flush()
+    _fh().write(line + "\n")
+    _fh().flush()
 
 
 # ──────────────────────────── 事件发射器（业务代码只调这一层） ────────────────────────────
@@ -744,7 +784,11 @@ def _chunk_text(chunk) -> str:
 
 
 def close() -> None:
-    _fh.close()
+    """关掉**当前会话**的日志句柄（没开过就什么都不做）。"""
+    s = session.current()
+    if s.log_fh is not None:
+        s.log_fh.close()
+        s.log_fh = None
 
 
 # ──────────────────────────── 记录器：唯一的文件落盘者 ────────────────────────────

@@ -308,6 +308,39 @@ def main() -> None:
     check("`subscribe()` 的句柄**能退订**（退订后不再收到；重复调不炸）",
           len(_seen_a) == _n_before, f"退订后还收到了 {len(_seen_a) - _n_before} 条")
 
+    print("\n⑫ 日志**按会话分文件**（每会话一个；**格式一个字没改**）")
+    # 🔴 选"每会话一个文件"而不是"一个文件加会话列"，**全部理由是格式不用动** ——
+    #    `_recorder` 的 docstring 写着"格式与事件源重构前逐字节一致……日志是权威记录"。
+    #    有效性自检：把 `_write` 里的 `_fh()` 改回模块级句柄，下面必须红。
+    _a_log = _b_log = None
+    with session_mod.session(thread_id="user-A"):
+        trace.note("A 会话的日志")
+        _a_log = trace.log_file()
+    with session_mod.session(thread_id="user-B"):
+        trace.note("B 会话的日志")
+        _b_log = trace.log_file()
+
+    # ⚠️ **文件可能压根没建出来**（回归时正是如此：句柄退回进程级 → 谁也没开这个文件）
+    #    —— 所以先 `exists()` 再读。少了这一步，自检会以 **`FileNotFoundError` 崩掉**、
+    #    输出里**没有 ❌ 行**，读的人看不出红的是哪一条（同 `unit_console` 那条"用 `find`
+    #    不用 `index`"的教训）。
+    _a_txt = _a_log.read_text(encoding="utf-8") if _a_log and _a_log.exists() else ""
+    _b_txt = _b_log.read_text(encoding="utf-8") if _b_log and _b_log.exists() else ""
+    check("两个会话**各有一个日志文件**（而且真的建出来了）",
+          bool(_a_log) and _a_log != _b_log
+          and _a_log.exists() and _b_log.exists(),
+          f"{_a_log}（存在={bool(_a_log and _a_log.exists())}） / "
+          f"{_b_log}（存在={bool(_b_log and _b_log.exists())}）")
+    check("文件名里带**会话标识**（一眼可辨）",
+          bool(_a_log) and "user-A" in _a_log.name and "user-B" in _b_log.name,
+          f"{getattr(_a_log, 'name', '?')} / {getattr(_b_log, 'name', '?')}")
+    check("A 的文件里**只有 A 的**、B 的只有 B 的（内容不串）",
+          "A 会话的日志" in _a_txt and "B 会话的日志" not in _a_txt
+          and "B 会话的日志" in _b_txt, f"A={_a_txt[-80:]!r} B={_b_txt[-80:]!r}")
+    for _f in (_a_log, _b_log):          # 测试产物自己收走（`logs/` 已经够乱了）
+        if _f is not None:
+            _f.unlink(missing_ok=True)
+
     print("\n" + "═" * 78)
     print(f"{'全部通过' if not FAIL else '有失败'}：{len(PASS)}/{len(PASS) + len(FAIL)}")
     for name in FAIL:

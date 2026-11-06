@@ -44,7 +44,7 @@ os.environ["PROTO_LOG_TAG"] = "unit-stream-join"
 from langchain_core.messages import AIMessageChunk
 from langgraph.graph import END, START, StateGraph
 
-from proto import trace
+from proto import session, trace
 
 PASS: list[str] = []
 FAIL: list[str] = []
@@ -76,13 +76,14 @@ class _FakeGraph:
 def _run(script: list[tuple[str, str]]) -> str:
     """跑一遍 stream_agent，把日志文件的内容读回来。"""
     buf = io.StringIO()
-    old_fh = trace._fh
-    trace._fh = buf
+    _s = session.default()
+    old_fh = _s.log_fh
+    _s.log_fh = buf
     try:
         for _ in trace.stream_agent(_FakeGraph(script), {}, {}, "测试", role=trace.AGENT):
             pass
     finally:
-        trace._fh = old_fh
+        _s.log_fh = old_fh
     return buf.getvalue()
 
 
@@ -140,7 +141,8 @@ def main() -> None:
             yield "values", {"messages": ["重试之后第一步走完了"]}
 
     buf = io.StringIO()
-    old_fh, trace._fh = trace._fh, buf
+    _s = session.default()
+    old_fh, _s.log_fh = _s.log_fh, buf
     g = _FlakyFirstStep()
     raised, got = False, []
     try:
@@ -149,7 +151,7 @@ def main() -> None:
     except TimeoutError:
         raised = True
     finally:
-        trace._fh = old_fh
+        _s.log_fh = old_fh
     log = buf.getvalue()
     check("第一步抖动（输入 chunk 已吐）→ **重试**，不原样抛",
           not raised and g.calls == 2, f"raised={raised}, calls={g.calls}")
@@ -172,12 +174,13 @@ def main() -> None:
             yield "values", {"messages": []}
 
     buf = io.StringIO()
-    old_fh, trace._fh = trace._fh, buf
+    _s = session.default()
+    old_fh, _s.log_fh = _s.log_fh, buf
     g = _FlakyAtStart()
     try:
         got = list(trace.stream_agent(g, {}, {}, "测试", role=trace.AGENT))
     finally:
-        trace._fh = old_fh
+        _s.log_fh = old_fh
     log = buf.getvalue()
     check("抖在**任何 chunk 之前** → 重试成功（整轮照常返回）",
           bool(got) and g.calls == 2, f"calls={g.calls}")
@@ -244,11 +247,12 @@ def main() -> None:
             yield "values", {"messages": []}
 
     buf = io.StringIO()
-    old_fh, trace._fh = trace._fh, buf
+    _s = session.default()
+    old_fh, _s.log_fh = _s.log_fh, buf
     try:
         list(trace.stream_agent(_FlakyAfterText(), {}, {}, "测试", role=trace.AGENT))
     finally:
-        trace._fh = old_fh
+        _s.log_fh = old_fh
     log = buf.getvalue()
     check("第 1 次尝试那半行**在日志里**（不然读者不知道被作废的是什么）",
           "这半行来自第1次尝试" in log, repr(log[-300:]))

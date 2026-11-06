@@ -94,6 +94,9 @@ ALLOWED: dict[str, list[tuple[str, str]]] = {
     ],
     'proto/trace.py': [
         (r'%f"\)\[:-3\]', '时间戳砍到毫秒'),
+        (r'\)\[:40\]',
+         '**日志文件名**的消毒截断：`thread_id` 由**宿主**给（web 那边可能就是用户 ID），'
+         '可能很长 —— 截的是**文件名**，不是任何交接内容'),
     ],
     'proto/config.py': [
         (r'parents\[1\]', '路径层级，不是文本'),
