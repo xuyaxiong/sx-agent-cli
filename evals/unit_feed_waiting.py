@@ -27,8 +27,20 @@ import sys
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
+import os
+
+# 🔴 **单测的日志打 tag**（2026-11-06）：`logs/` 里真会话与测试垃圾混在一起，复盘时
+#    grep 不动 —— 打上 tag 后文件名是 `proto-<ts>-unit-<名字>.log`，一眼可辨
+#    （清理：`rm logs/*-unit-*.log`）。复用跑批那个 `PROTO_LOG_TAG`（`evals/_child.py`）。
+# ⚠️ **必须排在所有非标准库 import 之前**：`proto.trace` 在 import 那一刻读 env 定文件名，
+#    而 `from evals import chat` 这种**间接** import 也会把它拉进来（实测踩过：
+#    第一版插在 `from evals import chat` 之后 → 日志照样没 tag）。
+#    守卫：`unit_feed_waiting` ⑮。
+os.environ["PROTO_LOG_TAG"] = "unit-feed-waiting"
+
 from langchain_core.messages import HumanMessage
 
+import proto.agent
 import proto.executor
 from proto import graph
 from proto.executor import ExecOutcome
@@ -339,7 +351,7 @@ def main() -> None:
             "qa": [], "user_turns": [],
         }],
     }
-    out9 = graph.node_prepare(state9)
+    out9 = graph.node_feed(state9)
     acts9 = out9.get("actions") or []
     check("投递那一跳写了**结构化动作**（`did=feed`）",
           [a.get("did") for a in acts9] == ["feed"], repr(acts9))
@@ -502,20 +514,170 @@ def main() -> None:
           repr(by_id.get("t-new")))
     check("更早的同技能待答被**显式取代**（进了返回的 tasks，reducer 才合得上）",
           by_id.get("t-old", {}).get("stage") == "superseded", repr(by_id.get("t-old")))
-    # 🔴 取代副本不许污染"这轮投给了谁"（`node_prepare` 的 actions 读它）——
+    # 🔴 取代副本不许污染"这轮投给了谁"（`node_feed` 的 actions 读它）——
     #    t-old 的 `run_by` 是上一轮留下的 "feed"，只认 run_by 会把它报成"投过"。
-    pre = graph.node_prepare({**st, "log": []})
+    pre = graph.node_feed({**st, "log": []})
     fed_ids = [i for a in (pre.get("actions") or []) if a.get("did") == "feed"
                for i in a.get("tasks", [])]
     check("actions 里「投给了谁」只有被投的那条（取代副本不许混进来）",
           fed_ids == ["t-new"], repr(pre.get("actions")))
-    # 🔴 **接线守卫**（AST，不看注释）：两条路（delegate / feed）都必须**真的调用**它 ——
+    # 🔴 **反例两条**（判据的边界，外审 N3 点的就是这里 —— 原来只测了"延长"那一条）：
+    #    说不清就不动。① 快照**没延长**（同一轮里重派 = F7 场景）；② **没有快照**。
+    from proto.handoff.briefing import moot_older_waiting
+
+    _same = {"id": "t-same", "skill": "guided-learning", "stage": "waiting_for_input",
+             "artifacts": [], "refs": [], "qa": [], "user_turns": turns2}
+    check("快照**没延长**（同一轮里重派）→ 一个字不碰（F7 场景：主 agent 自己编答案重派）",
+          moot_older_waiting({"id": "t-done", "skill": "guided-learning",
+                              "user_turns": turns2}, [_same]) == [])
+    _no_snap = {"id": "t-nosnap", "skill": "guided-learning", "stage": "waiting_for_input",
+                "artifacts": [], "refs": [], "qa": []}
+    check("**没有快照**（fixture / 手写 state）→ 一个字不碰（说不清就不动）",
+          moot_older_waiting({"id": "t-done", "skill": "guided-learning",
+                              "user_turns": turns2}, [_no_snap]) == [])
+    # 🔴 **接线守卫**（AST，不看注释）：两条路（delegate / feed）都必须**真的走到**它 ——
     #    少接一条，那条路上的哑待答就静默漏掉（delegate 那条没有 e2e 单测，只能这样钉）。
+    # 🔴 **2026-11-06 改（外审 F5 收口）**：调用点从"两条路各写一次"收进 `agent.dispatch`
+    #    （两条路都走它，见它的 docstring）—— 所以这里断的是"**收在一处**"，
+    #    "那两条路真的调了 dispatch"由 `unit_stop_on_pending` ⑧ 补上（两段合起来才是覆盖面）。
+    _moot_sites: set[tuple[str, str]] = set()
     for _f in ("proto/agent.py", "proto/graph.py"):
-        _calls = [n for n in ast.walk(ast.parse(io.open(_f, encoding="utf-8").read()))
-                  if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
-                  and n.func.id == "moot_older_waiting"]
-        check(f"`{_f}` 里真的调了 `moot_older_waiting`（两条路都要接上）", bool(_calls), _f)
+        _tree = ast.parse(io.open(_f, encoding="utf-8").read())
+        for _fn in [n for n in ast.walk(_tree)
+                    if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]:
+            if any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
+                   and n.func.id == "moot_older_waiting" for n in ast.walk(_fn)):
+                _moot_sites.add((_f, _fn.name))
+    check("`moot_older_waiting` **收在一处**（`agent.dispatch` —— 两条路都走它）",
+          _moot_sites == {("proto/agent.py", "dispatch")}, repr(sorted(_moot_sites)))
+
+    print("\n⑫ `node_feed` 必须**只有一条返回路径**，且它写回 `answer_to=''`（外审 N1）")
+    # 🔴 实测（2026-11-06，外审 N1；探针 `tmp/probe_n1_e2e.py`）：
+    #    `State.answer_to` 的注释**声称**"每条返回路径都写回 ''"—— 而主返回路径（有 tasks
+    #    那条）漏了。后果不是"少写一个键"：`answer_to` 跟着 checkpointer 活到下一轮，
+    #    于是**在 `↩` 下答过一次之后**，用户回车跳过待答、回 `👤` 说的**任何新消息**
+    #    都会被 `_feed_waiting` 当成"在回答那条"投给旧任务 —— 每次白跑一趟执行器
+    #    （60–120s）＋ 答非所问，而且**每一轮都这样**。
+    #    ⚠️ 单测原来抓不到：`_feed_waiting` 的用例都**直接喂** `answer_to`（那是它的**输入**），
+    #    没人看**节点返回的 dict 有哪些键**。同类信号 `fed_asking` 有守卫
+    #    （`unit_stop_on_pending` ⑦ 盯两个 schema），`answer_to` 一个都没有 —— 补上。
+    #
+    # 🔴 **2026-11-06 晚：根治的形状变了**（外审 F4 拆分之后）。原来靠"**每条**返回路径
+    #    都要写"这条纪律 + 守卫盯着每一条；现在投递**只有一条返回路径**了 ——
+    #    **没有第二条可漏**。所以守卫也跟着改成断**条数**（多一条就红）：
+    #    纪律守不住的地方，靠形状守住。
+    _tree = ast.parse(io.open("proto/graph.py", encoding="utf-8").read())
+    _fn = next(n for n in ast.walk(_tree)
+               if isinstance(n, ast.FunctionDef) and n.name == "node_feed")
+    _returns = [n for n in ast.walk(_fn) if isinstance(n, ast.Return)]
+    _keys: set[str] = set()
+    _bad: list[str] = []
+    for _r in _returns:
+        if not isinstance(_r.value, ast.Dict):     # 返回值不是字面量 dict → 守卫看不见它
+            _bad.append(f"第 {_r.lineno} 行：返回值不是字面量 dict（守卫够不着 → 请改守卫）")
+            continue
+        _keys |= {k.value for k in _r.value.keys
+                  if isinstance(k, ast.Constant) and isinstance(k.value, str)}
+    _missing = {"answer_to", "fed_asking"} - _keys
+    check("`node_feed` **只有一条** `return`（多一条 = 又有了「漏写哪条」的机会）",
+          len(_returns) == 1, f"{len(_returns)} 条")
+    check("它的返回值写回 `answer_to=''` ＋ `fed_asking`（本轮信号，本轮写）",
+          not _bad and not _missing, repr(_bad or sorted(_missing)))
+
+    # 再按**今天这条真实路径**跑一遍（AST 管"有没有"，这里管"值对不对"）
+    _done = {"id": "t1", "skill": "quiz", "stage": "completed",
+             "artifacts": [], "refs": [], "qa": []}
+    _ret = graph.node_feed({"messages": [HumanMessage("顺便再出三道题")],
+                            "tasks": [_done], "answer_to": "t1", "log": []})
+    check("投递后 `answer_to` 清成空串 ＋ `fed_asking` 写成本轮值",
+          _ret.get("answer_to") == "" and "fed_asking" in _ret,
+          repr({k: _ret.get(k) for k in ("answer_to", "fed_asking")}))
+    # 台账那半：`prepare` 不再碰这两个键（它们跟着投递走了）—— 免得两处都写又漂开
+    _prep = graph.node_prepare({"messages": [HumanMessage("你好")], "tasks": [_done]})
+    check("`node_prepare` **不碰** `answer_to` / `fed_asking`（它们归 `feed`，一处写）",
+          "answer_to" not in _prep and "fed_asking" not in _prep, repr(sorted(_prep)))
+
+    print("\n⑬ 🔴 `moot_older_waiting` 的判据②建在一个**前提**上：快照只增不改")
+    # 外审 N3（【判断】）：判据②用"列表相等"做**前缀判定**（`done_turns[:len(t_turns)] == t_turns`），
+    # 它成立的前提是 **`user_turns` 快照 append-only** —— 谁把它改成"按需重算"（比如只留最近 N 轮、
+    # 或渲染时现取），前缀判定就**静默失效**（永远判"没延长" → 哑待答再也不被取代）。
+    # ⇒ 把前提本身钉住（**性质测试**，不是三个 case）：消息只往后长，快照必须前缀稳定。
+    from langchain_core.messages import AIMessage
+
+    from proto.agent import _user_turns
+
+    _msgs = [
+        HumanMessage("第一句"),
+        AIMessage("主 agent 的回话"),
+        HumanMessage("第二句"),
+        AIMessage("平台透传的那条（也进快照的 after）"),
+        HumanMessage("第三句"),
+    ]
+    _stable = all(_user_turns(_msgs)[: len(_user_turns(_msgs[: k]))] == _user_turns(_msgs[: k])
+                  for k in range(1, len(_msgs) + 1))
+    check("`_user_turns` **前缀稳定**（消息只增 → 旧轮次的快照一字不变）", _stable,
+          repr([t["n"] for t in _user_turns(_msgs)]))
+    # 另一半前提：快照**存在 Task 上**（不是渲染时现取）—— 投递那条路才会自动带着它。
+    _rec_keys = [n.value for n in ast.walk(ast.parse(
+        io.open("proto/agent.py", encoding="utf-8").read()))
+        if isinstance(n, ast.Constant) and n.value == "user_turns"]
+    check("`delegate` 把快照**存进 Task**（键在 `rec` 字面量里 —— 现取就没有 append-only 可言）",
+          bool(_rec_keys))
+
+    print("\n⑭ 默认执行路径是 `auto`（产品行为：两条路都开）")
+    # 外审 N5 那一小项。⚠️ 真正靠这个默认值的**只有 `python -m proto`** ——
+    # `evals.chat` 与 `evals.harness` 都按 case 显式设（harness 每次 `or "auto"` 重置）。
+    # 所以这里守的是"**别把它写死成别的值忘了改回**"（比如为了验 delegate 改成 "delegate"）。
+    check("`proto.agent.EXEC_PATH` 默认是 `auto`", proto.agent.EXEC_PATH == "auto",
+          f"当前 = {proto.agent.EXEC_PATH!r}")
+
+    print("\n⑮ 每个单测模块都**打日志 tag**（`logs/` 里真会话与测试垃圾要分得开）")
+    # 外审 N4 那条的延伸：`trace` 在 **import 那一刻**就开日志文件 —— 于是每个单测进程
+    # 都往 `logs/` 扔一个文件（实测 2186 个里 658 个是 0 字节，真会话只有 43 个）。
+    # 打 tag 之后文件名是 `proto-<ts>-unit-<名字>.log`：**真会话一眼可辨**，
+    # 清理就是 `rm logs/*-unit-*.log`。
+    # ⚠️ **必须是机制**：新加一个单测模块忘了设 → 它的日志就混进真会话里，
+    #    而且**没有任何地方会红**（这次就是靠这条守卫把它钉住的）。
+    import glob as _glob
+    import re as _re
+
+    _untagged: list[str] = []
+    for _f in sorted(_glob.glob("evals/unit_*.py")):
+        _src = io.open(_f, encoding="utf-8").read()
+        # 设了 tag ＋ 文件名带 `unit-`（值写错成别的，等于没打）
+        if 'os.environ["PROTO_LOG_TAG"] = "unit-' not in _src:
+            _untagged.append(_f)
+    check("每个 `evals/unit_*.py` 都设了 `PROTO_LOG_TAG=\"unit-…\"`",
+          not _untagged, repr(_untagged))
+    # ⚠️ 还有一半：**必须排在所有非标准库 import 之前**（`trace` 在 import 那一刻读 env
+    #    定文件名）。⚠️ 只查"在 `import proto` 之前"**不够** —— 实测踩过：`unit_decision`
+    #    的 tag 原来设在 `from evals import chat` 之后，而**那一行就把 `proto.trace`
+    #    间接导进来了** → 日志照样没 tag，而"直接 proto import"那版守卫**放它过去了**。
+    #    ⇒ 判据改成：赋值行必须早于**第一个非标准库 import**（`sys.stdlib_module_names`）。
+    import sys as _sys
+
+    _late: list[str] = []
+    for _f in sorted(_glob.glob("evals/unit_*.py")):
+        _tree = ast.parse(io.open(_f, encoding="utf-8").read())
+        _set_at = [n.lineno for n in ast.walk(_tree)
+                   if isinstance(n, ast.Assign)
+                   and any(isinstance(t, ast.Subscript) for t in n.targets)
+                   and "PROTO_LOG_TAG" in ast.dump(n)]
+        _imp_at = []
+        for _n in ast.walk(_tree):
+            if isinstance(_n, ast.Import):
+                _mods = [a.name.split(".")[0] for a in _n.names]
+            elif isinstance(_n, ast.ImportFrom):
+                _mods = [( _n.module or "").split(".")[0]]
+            else:
+                continue
+            if any(m and m not in _sys.stdlib_module_names and m != "__future__"
+                   for m in _mods):
+                _imp_at.append(_n.lineno)
+        if not _set_at or (_imp_at and min(_set_at) > min(_imp_at)):
+            _late.append(_f)
+    check("而且**排在第一个非标准库 import 之前**（间接 import 也会拉进 `proto.trace`）",
+          not _late, repr(_late))
 
     print("\n" + "═" * 78)
     print(f"{'全部通过' if not FAIL else '有失败'}：{len(PASS)}/{len(PASS) + len(FAIL)}")

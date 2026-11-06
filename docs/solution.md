@@ -410,7 +410,8 @@
 
 | 节点 | 做什么 | 硬/软 |
 |------|--------|-------|
-| `prepare` | ① 把用户原话**投给待答任务**（`_feed_waiting`）② 把**任务台账**注入主 agent 上下文 | **硬**（平台保证投递与注入） |
+| `feed` | 把用户原话**投给待答任务**（`_feed_waiting` —— 只有带 `answer_to` 的那条） | **硬**（平台保证投递） |
+| `prepare` | 把**任务台账**注入主 agent 上下文 | **硬**（平台保证注入） |
 | `finalize` | **无条件**把待答的执行器原话贴进回复（透传） | **硬**（保证不丢） |
 
 **都只提供事实，不替它做决定**（"用户是不是在回答"是理解问题，该柔性）。
@@ -1134,7 +1135,7 @@ def _supersede_old(runtime, skill_name) -> list[dict]:
 #### 4.5.1 图结构
 
 ```
-START → prepare → agent → finalize → END
+START → feed → prepare → agent → finalize → END
 ```
 
 #### 4.5.2 State

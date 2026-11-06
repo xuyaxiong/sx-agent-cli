@@ -9,11 +9,12 @@
 ## 图的形状
 
 ```
-START → prepare → agent → finalize → END
+START → feed → prepare → agent → finalize → END
 ```
 
 | 节点 | 干什么 | 硬/软 |
 |---|---|---|
+| `feed` | 用户这条消息标了 `answer_to` 就**定向投给那一个**待答任务（里面**同步跑执行器**） | **硬**（平台保证投递） |
 | `prepare` | 把**任务台账**注入主 agent 上下文 | **硬**（平台保证注入） |
 | `agent` | 主 agent —— 完整的 agent（自己的工具 + 自己的循环） | LLM 驱动 |
 | `finalize` | 检查待答都问出去了吗，没问就补 | **硬**（保证不丢） |
@@ -85,7 +86,7 @@ uv run python -m proto --say "帮我备课，三年级数学"
 | `skills.py` | Skill 定义（**只有 `description` + `instructions`**）+ 产物库 |
 | `executor.py` | 执行器：**三态判定 + 出口限制** |
 | `agent.py` | 主 agent：工具集 + 系统提示 + `delegate`（建 Task + 三态分派） |
-| `graph.py` | 图：`prepare` / `agent` / `finalize` + `_merge_tasks` reducer |
+| `graph.py` | 图：`feed` / `prepare` / `agent` / `finalize` + `_merge_tasks` reducer |
 | `trace.py` | 全量日志到 `../logs/proto-<时间戳>.log`（含每次 LLM 调用的 PROMPT 与 RESPONSE 原文） |
 | `__main__.py` | 交互式 CLI（显示 Task 列表、上下文体积、隔离比） |
 

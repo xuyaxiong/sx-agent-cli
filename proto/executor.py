@@ -340,6 +340,23 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
                     kind="run_fault",
                 )
             break
+        if not resp:
+            # 🔴 **流一步都没吐**（2026-11-06 审计）：原来这里 `resp = {}` 直接往下走，
+            #    `resp["messages"]` 抛 KeyError —— 而且**不在上面那个 `try` 里**，
+            #    于是这一轮既没记 `fault`、也没说人话，整个 invoke 炸穿到最外层
+            #    （用户看到的是"平台故障 + 一段 KeyError 栈"，读日志的人查不出所以然）。
+            #    按**同一套故障处置**：这一轮没跑成 → 交回主 agent（同上面 `except`）。
+            #    ⚠️ 主 agent 那边有同类兜底（`graph.node_agent` 的 `stream_empty`）——
+            #    执行器这条原来没有。
+            outcome.fault = "流式一步都没吐（stream 为空）"
+            outcome.fault_kind = "transient"
+            outcome.rounds = round_i + 1
+            trace.note(
+                f"⚠️ {_at(run_id, round_i + 1)}**流式一步都没吐** → 这一轮没跑成，"
+                f"交回主 agent（同平台故障处置）",
+                kind="run_fault",
+            )
+            break
         trace.dump_trace(_at(run_id, round_i + 1), resp["messages"],
                          role=trace.EXECUTOR)
 

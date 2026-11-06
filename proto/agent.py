@@ -261,6 +261,40 @@ def try_answer_then_rerun(
     return o2, answer
 
 
+def dispatch(skill: Any, rec: dict, tasks: list[dict], *, trigger: str,
+             messages: list) -> tuple[Any, str, list[dict]]:
+    """**派发编排** —— 两条路（`delegate` / `graph._feed_waiting`）共用的那一段。
+
+    🔴 **为什么抽出来**（外审 F5 的账）：核心早就统一了（`try_answer_then_rerun` /
+    `settle` / `moot_older_waiting` 三样共用），但**它们之间的顺序**原来是两条路各写一遍 ——
+    于是"重入前要先落账"这条**只在一条路上成立**（实测：`tmp/probe_feed_rerun_briefing.py`
+    —— 投递那条路的试答重跑拿到的是**上一轮**的 `report`，而 `delegate` 那条是新的）。
+    顺序这种东西，**写两遍就一定会漂**；收进一处，漂不动了。
+
+    顺序（每一步都有理由，别调）：
+      ① `run_task` —— 执行器干活（独立上下文，用完即弃）
+      ② `absorb_outcome` —— **重入前先落账**：下面 `try_answer_then_rerun` 里的重跑
+         就是一次重入，它的交接书要看到**这一轮**的 report / asked
+      ③ `run_by = trigger` —— 台账据此说清"全文在哪"（回执 / 没有回执）
+      ④ 它要信息 → `try_answer_then_rerun`（主 agent 先试答，答得上就重跑）
+      ⑤ `settle` —— **状态迁移唯一入口**（`absorb` 幂等，这里再落一次换"不可能漏写"）
+      ⑥ 完成了 → `moot_older_waiting`（同技能更早的哑待答**显式取代**）
+
+    ⚠️ **只做编排，不做出口措辞** —— 回执（`delegate`）/ 日志（`_feed_waiting`）
+    各渲染各的（"视图可以有很多个，事实源只能有一个"）；这里返回**事实**：
+    `(最终 outcome, 主 agent 的试答, 被取代的 Task)`。
+    """
+    outcome = executor.run_task(skill, render_briefing(rec), rec.get("user_turns"))
+    absorb_outcome(rec, outcome)
+    rec["run_by"] = trigger
+    answer = ""
+    if outcome.status == "waiting_for_input":
+        outcome, answer = try_answer_then_rerun(rec, skill, outcome, messages=messages)
+    settle(rec, outcome)
+    mooted = moot_older_waiting(rec, tasks) if outcome.status == "completed" else []
+    return outcome, answer, mooted
+
+
 def _cmd(
     runtime: ToolRuntime, recs: list[dict] | None, msg: str, *, handoff: dict | None = None
 ) -> Command:
@@ -484,12 +518,15 @@ def delegate(
         trace.note(f"取代了 {len(superseded)} 个同技能的未了结 Task：{[t['id'] for t in superseded]}",
                    kind="supersede")
 
-    def _out(rec: dict, outcome: Any, *, agent_answer: str = "", note: str = "") -> Command:
+    def _out(rec: dict, outcome: Any, *, agent_answer: str = "", note: str = "",
+             mooted: list[dict] | None = None) -> Command:
         """统一的返回口 —— **总是带上被取代的旧 Task**。
 
         🔴 它做两件事，**一次做完**：构造**回执对象**、渲染成文本 ——
         文本进 `content`（模型只看这个），对象挂 `additional_kwargs`（模型看不到，
         记录层读它）。见 `proto/handoff/receipt.py` 的 docstring。
+
+        ⚠️ `mooted` 由 `dispatch` 算好传进来（**取代的判据只有一处**，见它的 docstring）。
         """
         r = build_receipt(outcome, agent_answer=agent_answer, note=note)
         text = render_receipt(r)
@@ -497,65 +534,51 @@ def delegate(
         # 正文**不在这里 dump**：主 agent 的逐步骤 dump 里已经有它（`graph.node_agent`）。
         trace.handoff("回执", "执行器", "主 agent", text,
                       structured=f"Receipt(kind={r['kind']}，{len(r['sections'])} 段)")
-        # 🔴 **它完成了 → 同技能更早的待答成了哑问题**（2026-11-06）：用户没走 `↩` 答复
-        #    通道、而是又发了新消息，新任务（这条）已经交付 —— 旧问题再摆出来只会误导
-        #    （答它=重跑旧任务）。判据与边界见 `moot_older_waiting` 的 docstring
-        #    （**同一轮里重派的 F7 场景不动**：快照没延长就一个字都不碰）。
-        mooted = (moot_older_waiting(rec, runtime.state.get("tasks") or [])
-                  if outcome.status == "completed" else [])
-        return _cmd(runtime, [rec, *superseded, *mooted], text, handoff=r)
+        return _cmd(runtime, [rec, *superseded, *(mooted or [])], text, handoff=r)
 
-    # ① 派发 —— run_task 内部已含「出口限制」：既没完成也没提问会被推回去继续
-    # 第三个参数是用户原话（给执行器的 `read_user_turn` 用）—— 交接书里只有清单，全文按需取
-    outcome = executor.run_task(skill, render_briefing(rec), rec.get("user_turns"))
-    absorb_outcome(rec, outcome)
+    # ① 派发 —— 编排（run_task → 落账 → 试答 → 落账 → 取代）走**两条路共用**的那个函数；
+    #    `run_task` 内部已含「出口限制」：既没完成也没提问会被推回去继续。
+    outcome, answer, mooted = dispatch(
+        skill, rec, runtime.state.get("tasks") or [],
+        trigger="delegate", messages=runtime.state.get("messages") or [],
+    )
 
     # ② 按**三态枚举**分派 —— 穷举，没有第四种（用户「封闭原则」）
-    # ⚠️ 状态迁移一律走 `settle()`（**唯一一处**：写字段 + 定 stage）——
+    # ⚠️ 状态迁移一律走 `settle()`（**唯一一处**，在 `dispatch` 里）——
     #    原来这里手写 `rec.update(stage=…, artifacts=outcome.artifacts, …)`，
     #    **无条件覆盖**会把"这一轮没产出就不抹掉上一轮产物"的保护当场抵消（实测踩过）。
     if outcome.status == "completed":
         # 🔴 **平台不下"完成了"的结论**（2026-11-05）：三态是**结构算的**
         #    （交没交产物 / 报没报要信息）—— "**够不够**"由主 agent 判：
         #    回执把交付账（产物 ID + 梗概 + 正文入口）摆给它，它自己看 ✓。
-        settle(rec, outcome)
         # ⚠️ **文案从 `receipt.next_note` 取**（不就地写）：样例文档要渲染同一份 —— 见它的 docstring。
-        return _out(rec, outcome, note=next_note("completed", skill=skill.name))
+        # ⚠️ `agent_answer`：试答补上的那次要把"你补的信息"一起带上（原来在 waiting 分支里
+        #    分了一次；`dispatch` 收口后 outcome 已经是**最终**三态，这里一并带）。
+        return _out(rec, outcome, agent_answer=answer,
+                    note=next_note("completed", skill=skill.name), mooted=mooted)
 
     if outcome.status == "waiting_for_input":
-        # ③ 在要信息 → 平台强制先让主 agent 试答（**两条路共用这一步**，
-        #    见 `try_answer_then_rerun` 的 docstring —— 投递重跑那条也走它）
-        outcome, answer = try_answer_then_rerun(
-            rec, skill, outcome, messages=runtime.state.get("messages") or []
+        # ③ 在要信息 —— **试答那一步已经在 `dispatch` 里走过了**（两条路共用同一个函数）。
+        #    走到这里 = 试答答不上（或答了仍缺）→ 登记待答，由平台原样转给用户。
+        # 🔴 **说清这一跳的「谁 → 谁」**（用户 2026-11-05：*"谁答不上被转发给谁了"*）：
+        #    执行器问的那句，**由平台原样转给用户**。
+        #    ⚠️ 「**主 agent 答不上**」这半句**不写在这儿** —— 两个原因：
+        #      ① 它就在上面那条 `🧭 DECIDE` 的【结果】里（`can_answer = False`），
+        #         同一个事实不写两遍；
+        #      ② 展示层上屏时**已经加了**「分支：主 agent 答不上 → 」这个前缀
+        #         （`chat._on_event`）—— 再写一遍终端上就是同一个意思印两回。
+        trace.note(
+            f"delegate · {tid}（{skill.name}）**登记待答** —— 执行器问的那句"
+            f"由平台原样转给用户（不由主 agent 代问）",
+            kind="waiting",
         )
+        return _out(rec, outcome, note=next_note("waiting"))
 
-        if outcome.status == "completed":
-            # 试答补上了 → 重跑完成（`agent_answer` 让回执把"你补的信息"也带上）
-            settle(rec, outcome)
-            return _out(rec, outcome, agent_answer=answer)
-
-        if outcome.status == "waiting_for_input":
-            settle(rec, outcome)
-            # 🔴 **说清这一跳的「谁 → 谁」**（用户 2026-11-05：*"谁答不上被转发给谁了"*）：
-            #    执行器问的那句，**由平台原样转给用户**。
-            #    ⚠️ 「**主 agent 答不上**」这半句**不写在这儿** —— 两个原因：
-            #      ① 它就在上面那条 `🧭 DECIDE` 的【结果】里（`can_answer = False`），
-            #         同一个事实不写两遍；
-            #      ② 展示层上屏时**已经加了**「分支：主 agent 答不上 → 」这个前缀
-            #         （`chat._on_event`）—— 再写一遍终端上就是同一个意思印两回。
-            trace.note(
-                f"delegate · {tid}（{skill.name}）**登记待答** —— 执行器问的那句"
-                f"由平台原样转给用户（不由主 agent 代问）",
-                kind="waiting",
-            )
-            return _out(rec, outcome, note=next_note("waiting"))
-        # 补了信息之后反而变成 incomplete → 落到下面的 failed 分支
-
-    # ④ 只剩 `incomplete` —— 推了 N 轮，**既没交产物、也没申报要信息**。
+    # ④ 只剩 `incomplete`（含"试答补了信息之后反而变成 incomplete"那条）——
+    #    推了 N 轮，**既没交产物、也没申报要信息**。
     #    按评审人 E2「情况 A：执行失败」→ **交给主 agent 决定**，而不是拿去烦用户。
     #    ⚠️ 平台**不猜**它为什么没交（不读正文 ✓）：可能它真干不了，也可能它把答案
     #    **写在了回复里**（正文交付是反模式，平台不认）—— 两种都由主 agent 看回执决定 ✓。
-    settle(rec, outcome)
     # 🔴 **平台故障 ≠ 执行器干不了**（2026-11-04 复审 N2/R8）：故障时那句"推了 N 轮"
     #    是假话（一轮都没跑完），而主 agent 该做的事也完全不同 —— 换说法重派 vs **原样重派**。
     if outcome.fault:

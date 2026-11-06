@@ -1,11 +1,18 @@
-"""图：prepare（注入台账）→ agent（主 agent 循环）→ finalize（兜底补问）。
+"""图：feed（投递用户原话给待答任务）→ prepare（注入台账）→ agent（主 agent 循环）
+→ finalize（兜底补问）。
 
-**主 agent 是完整的 agent**，流程由它自己驱动。平台在旁边只做两件事：
+**主 agent 是完整的 agent**，流程由它自己驱动。平台在旁边只做三件事：
 
+  - **投递**（feed）：用户这条消息标了 `answer_to`（通道填的）就投给那**一个**待答任务
+    —— 里面**同步跑执行器**（60–120 秒），所以**单起一个节点**（外审 F4）
   - **注入**（prepare）：把**任务台账**（谁在干什么、干到哪了、还缺什么）摆到它面前
     —— **只提供事实，不替它做决定**（"用户是不是在回答"是理解问题，该柔性）
   - **兜底**（finalize）：循环结束后检查待答都问出去了吗，没问就补进回复
     —— 保证**不丢**
+
+⚠️ **feed 和 prepare 分成两个节点**（2026-11-06）：原来挤在一个 `prepare` 里，
+而"先投递、后注入台账"（台账才反映投递后的新状态）只能靠注释提醒 ——
+现在**顺序就是图的边**，改不动也藏不住。
 
 三个概念：
 
@@ -32,9 +39,9 @@ from langgraph.graph.message import add_messages
 
 from proto import trace
 from proto.agent import build_agent
-from proto.agent import try_answer_then_rerun  # 试答→重跑（两条路共用，E1）
-from proto.handoff.briefing import asked_text, moot_older_waiting, render_briefing, settle
-from proto.handoff import render_hop  # noqa: E402 —— 唯一那条渲染路（见 handoff/__init__）
+from proto.agent import dispatch  # 派发编排（两条路共用，F5 收口）
+from proto.handoff.briefing import asked_text
+from proto.handoff import render_hop  # 唯一那条渲染路（见 handoff/__init__）
 from proto.handoff.ledger import render_ledger
 # 🔴 **顶层 import，但用"模块 + 属性"形式**（2026-11-04 复审 N3 修）：
 #    `_feed_waiting` 里原来是**函数内** `from proto.executor import run_task` ——
@@ -85,15 +92,18 @@ class State(TypedDict):
     #: - 有它 → `_feed_waiting` **只投给那一个**任务；
     #: - 没有 → **一条都不投**（那是主 agent 的输入）。
     #:
-    #: ⚠️ **用后即清**（`node_prepare` 在每条返回路径上都写回 `""`）——
+    #: ⚠️ **用后即清**（`node_feed` 写回 `""` —— 它**只有一条返回路径**，没有第二条可漏）——
     #: 它跟着 checkpointer 活到下一轮，不清的话**后面每一轮都会被当成"在回答那条"** ✗。
+    #: ⚠️ 这句话曾经**只是声称**：主返回路径漏写过一次（2026-11-06 外审 N1 实测，
+    #: 探针 `tmp/probe_n1_e2e.py` 三轮都误投）—— 现在由 `unit_feed_waiting` ⑫
+    #: 按 AST 盯着**每一条** `return`（"每条返回路径都要写"这类规矩**不能只写在注释里**）。
     #: ⚠️ 也**别加进 `AgentState`**：理由同 `actions`（子图会把声明过的字段原样回吐）。
     answer_to: NotRequired[str]
     #: 🔴 **这一轮投递之后，执行器又问了一个**（`discussion-log` F18 的
     #: **「投递后又问」那一形状** —— 见 `agent._StopWhenPending`）。
     #:
     #: ⚠️ **两个 schema 都要声明，少一个就静默失效**（2026-11-04 实测踩到）：
-    #:   · `State`（这里）—— `node_prepare` 要往**父图**写它；
+    #:   · `State`（这里）—— `node_feed` 要往**父图**写它；
     #:     **没声明的话 LangGraph 会把那个键悄悄丢掉**（不报错、不警告）；
     #:   · `AgentState` —— 子图里的 `agent._StopWhenPending` 要**读**它。
     #: 只加了一边的那一跑：拦下的 2 次**全是「本批回执」那条**，这一条一次没生效
@@ -129,18 +139,18 @@ class AgentState(TypedDict):
     #: **为什么子图需要它**：`agent._StopWhenPending`（主 agent 的 `before_model` 中间件）
     #: 要判断"这一轮平台会不会贴一条新问题给用户"。待答只可能在两处产生：
     #:   · **「本批回执」**（主 agent 自己调 `delegate` → 回执 waiting）—— 它扫**工具回执**就能认；
-    #:   · **「投递后又问」**（平台在 `prepare` 里把用户答复投给执行器 → 执行器又问了一个）——
+    #:   · **「投递后又问」**（平台在 `feed` 里把用户答复投给执行器 → 执行器又问了一个）——
     #:     这一轮主 agent 手里**什么都没有**（消息末尾是 `HumanMessage`），
     #:     所以只能由平台**把事实写在这儿**。
     #:
-    #: ⚠️ **本轮有效**（`node_prepare` **每条返回路径**都写 True/False）——
-    #: 它不是"长期挂着的 pending"。漏写一条返回路径，它就会残留到下一轮，
+    #: ⚠️ **本轮有效**（`node_feed` 每轮都写 True/False —— 它只有一条返回路径）——
+    #: 它不是"长期挂着的 pending"。漏写它就会残留到下一轮，
     #: 于是"上一轮执行器提问、下一轮用户问天气"时主 agent 被**无故收话**（同 `answer_to`）。
     #: ⚠️ 它是 **bool、没有 reducer** —— 子图回吐同一个值，不会像 `log` 那样每轮翻倍。
     fed_asking: NotRequired[bool]
 
 
-# ──────────────────────────── prepare：注入待答 ────────────────────────────
+# ────────────────── feed：投递用户原话（会跑执行器）／prepare：注入台账 ──────────────────
 
 
 def _last_human(state: State) -> str:
@@ -193,11 +203,11 @@ def _feed_waiting(state: State) -> tuple[list[dict], list[str]]:
         return [], []
 
     out: list[dict] = []
-    logs = [f"prepare: 定向投递 → {target}（`answer_to` 指的那条；其余待答不动）"]
+    logs = [f"feed: 定向投递 → {target}（`answer_to` 指的那条；其余待答不动）"]
     for t in waiting:
         skill = registry.get(t["skill"])
         if skill is None:
-            logs.append(f"prepare: ⚠️ {t['id']} 的技能「{t['skill']}」不存在，跳过")
+            logs.append(f"feed: ⚠️ {t['id']} 的技能「{t['skill']}」不存在，跳过")
             continue
 
         # 🔴 **历次答复必须累积**（2026-10-29 人在环实测暴露）：
@@ -223,7 +233,7 @@ def _feed_waiting(state: State) -> tuple[list[dict], list[str]]:
         #    **绝不拿 `report` 顶替**，那正是这次要修的错。
         rec = {**t, "qa": [*(t.get("qa") or []),
                            {"by": "用户", "q": t.get("asked") or "", "a": user}]}
-        trace.section(f"prepare · 投递用户原话 → {t['id']} · {t['skill']}", kind="feed")
+        trace.section(f"feed · 投递用户原话 → {t['id']} · {t['skill']}", kind="feed")
         trace.block("投过去的原话", user)
         trace.note(f"累计问答 {len(rec['qa'])} 对（历次一起带上，否则执行器会重问）")
         # 交接关键日志：投递这一跳（交接书正文由 `run_task` 那边记）
@@ -239,50 +249,94 @@ def _feed_waiting(state: State) -> tuple[list[dict], list[str]]:
         # 用户原话也一起带上（快照在 Task 上，所以这条重入路径**自动**有它）
         # ⚠️ **属性访问**（`executor.run_task`）而不是 `from … import run_task` ——
         #    这样 `harness.install()` 改 `proto.executor.run_task` 打的桩才生效（见文件顶部的注释）。
-        outcome = executor.run_task(skill, render_briefing(rec), rec.get("user_turns"))
-        # 🔴 **这轮是平台起的**（不是主 agent 派发的）—— 台账据此说清"全文在哪"：
-        # 这一趟**没有回执**（回执是 `delegate` 的工具返回），全文不在主 agent 上下文里。
-        # 不记这个事实的话，台账会指着一个**存在但内容不对**的出处（2026-11-04 复审 E2）。
-        rec["run_by"] = "feed"
-        # 🔴 **E1（用户 2026-11-04 定："肯定得统一啊 都先走试答啊"）**：
-        #    投递重跑后**还是缺信息**，也要先让主 agent 用自己的上下文试答一次 ——
-        #    它这时已经知道**用户刚答的那句**，很可能答得上；直接又登记待答的话，
-        #    用户刚答完一轮就**又被问一遍**。与首次派发走**同一个函数**。
-        if outcome.status == "waiting_for_input":
-            outcome, answer = try_answer_then_rerun(
-                rec, skill, outcome, messages=state.get("messages") or []
+        # 🔴 **编排走两条路共用的那个函数**（外审 F5 的收口，2026-11-06）：
+        #    run_task → **先落账**（重入前要 `render_briefing`，见 `absorb_outcome`）→
+        #    `run_by` → 试答重跑 → `settle` → 取代哑待答。
+        #    以前这五步这条路上各写一遍、`delegate` 那条也各写一遍 —— 于是顺序漂了
+        #    （实测：这条路的试答重跑拿到的是**上一轮**的 report，见
+        #    `tmp/probe_feed_rerun_briefing.py`）。顺序写两遍就一定会漂，收进一处。
+        #    ⚠️ 试答成对的「问」在上面就取好了（`t.get("asked")`，**旧**那句 = 用户
+        #    正在答的那句 ✓）—— `dispatch` 里的落账不碰它（`rec` 与 `t` 是两份）。
+        #    ⚠️ `trigger="feed"` = **这轮是平台起的**（不是主 agent 派发的）：台账据此
+        #    说清"全文在哪" —— 这一趟**没有回执**，全文不在主 agent 上下文里。
+        #    不记这个事实的话，台账会指着一个**存在但内容不对**的出处（2026-11-04 复审 E2）。
+        outcome, answer, mooted = dispatch(
+            skill, rec, state.get("tasks") or [],
+            trigger="feed", messages=state.get("messages") or [],
+        )
+        if answer:
+            logs.append(
+                f"feed: 🔁 {t['id']} 仍缺信息 → 主 agent 试答（{len(answer)} 字）后重跑"
             )
-            if answer:
-                logs.append(
-                    f"prepare: 🔁 {t['id']} 仍缺信息 → 主 agent 试答（{len(answer)} 字）后重跑"
-                )
-        # ⚠️ 状态迁移走 `settle()`（**唯一一处**）—— 三条分支只决定"日志怎么说"。
+        # ⚠️ 状态迁移走 `settle()`（**唯一一处**，在 `dispatch` 里）—— 三条分支只决定"日志怎么说"。
         #    原来这里手写 `rec.update(stage="completed", artifacts=outcome.artifacts)`，
         #    会把"这一轮没产出就不抹掉上一轮产物"的保护抵消（2026-11-03 审核实测踩到）。
-        #    ⚠️ 位置在**试答之后**：落账要用**最终**那个 outcome（试答重跑会换掉它）。
-        settle(rec, outcome)
         if outcome.status == "completed":
             # 🔴 **这条完成了 → 同技能更早的待答成了哑问题**（2026-11-06）——
-            #    和 `delegate` 那条路走**同一个函数**（判据与边界见它的 docstring：
+            #    `dispatch` 里算好带出来的（判据与边界见 `moot_older_waiting`：
             #    快照没延长就一个字不碰 —— F7 的场景不动）。
-            out.extend(moot_older_waiting(rec, state.get("tasks") or []))
+            out.extend(mooted)
             logs.append(
-                f"prepare: ✅ {t['id']}（{t['skill']}）答复后**完成**"
+                f"feed: ✅ {t['id']}（{t['skill']}）答复后**完成**"
                 f"　产物={outcome.artifacts or '（在回复里）'}"
             )
         elif outcome.status == "waiting_for_input":
-            logs.append(f"prepare: ⏳ {t['id']}（{t['skill']}）答复后**还是缺信息** → 仍待答")
+            logs.append(f"feed: ⏳ {t['id']}（{t['skill']}）答复后**还是缺信息** → 仍待答")
         else:
-            logs.append(f"prepare: ❌ {t['id']}（{t['skill']}）答复后仍未完成 → failed")
+            logs.append(f"feed: ❌ {t['id']}（{t['skill']}）答复后仍未完成 → failed")
         out.append(rec)
     return out, logs
 
 
-def node_prepare(state: State) -> dict:
-    """① 把用户原话投给待答任务（见 `_feed_waiting`）→ ② 注入任务台账。
+def node_feed(state: State) -> dict:
+    """① 把用户原话投给**它标明的那一个**待答任务（见 `_feed_waiting`）。
 
-    **顺序不能反**：先投递，注入的台账才反映投递后的新状态
-    （任务可能刚从"待答"变成"已完成"）—— 主 agent 看到的是最新的，就不会重复派。
+    🔴 **为什么单起一个节点**（2026-11-06，外审 F4）：这一步里**同步跑执行器**
+    （60–120 秒），而原来的节点名 `prepare` 只说了"准备 / 注入台账" —— 名字把最重的
+    那件事藏起来了。拆开之后图上是 `feed → prepare`：**顺序由图的边保证**
+    （先投递、后注入台账 —— 台账才反映投递后的新状态），不用再靠注释提醒。
+
+    🔴 **只有一条返回路径**（这是有意的）：`answer_to` / `fed_asking` 都是**本轮信号**，
+    漏写一条返回路径它们就会残留到下一轮（外审 N1 实测：残留的 `answer_to` 让用户
+    跳过待答后说的**每一句新话**都被投给旧任务）。**一条路 = 没有第二条可漏**。
+    守卫见 `unit_feed_waiting` ⑫（AST 盯 `return` 的键）。
+    """
+    updated, logs = _feed_waiting(state)
+
+    # 🔴 **这一轮投递之后，执行器又问了一个吗**（F18 的「投递后又问」那一形状）——
+    #    判据是**结构事实**：`_feed_waiting` 里 `settle()` 把投递过的那条落成了
+    #    `waiting_for_input`（投递后完成了就是 `completed`，不会误判）。
+    #    ⚠️ **本轮信号，本轮写**（它是 bool、没有 reducer）—— 漏写就会残留到下一轮，
+    #    于是"上一轮执行器提问、下一轮用户问天气"时主 agent 被**无故收话**（同 `answer_to`）。
+    fed_asking = any(t.get("stage") == "waiting_for_input" for t in updated)
+
+    fed = [t["id"] for t in updated
+           if t.get("run_by") == "feed" and t.get("stage") != "superseded"]
+    actions = (
+        [{"by": "platform.feed", "did": "feed", "tasks": fed,
+          "chars": len(_last_human(state))}]
+        if fed else []
+    )
+    return {
+        "tasks": updated,           # reducer 按 id 合并
+        "log": logs,                # `feed: …`（投递那几行）—— reducer 是 operator.add
+        "actions": actions,
+        # 🔴 **这一条 2026-11-06 补（外审 N1）**：拆之前主返回路径漏写过它（早返回写了）——
+        #    于是"在 `↩` 下答过一次"之后的**每一轮**都带着残留的 `answer_to`：
+        #    用户回车跳过待答、回 `👤` 说的**任何新消息**都会被 `_feed_waiting`
+        #    当成"在回答那条"投给旧任务（每次白跑一趟执行器 + 答非所问，**持续**如此）。
+        #    实测：`tmp/probe_n1_e2e.py`（真 checkpointer，三轮都误投）。
+        "answer_to": "",
+        "fed_asking": fed_asking,
+    }
+
+
+def node_prepare(state: State) -> dict:
+    """② 把**任务台账**注入主 agent 上下文。
+
+    **投递已经在 `feed` 里做完了**（顺序由图的边保证：`feed → prepare`）——
+    所以这里读到的 `state["tasks"]` **已经是投递后的最新状态**
+    （reducer 在 `feed` 返回那一刻就合过了，不用再自己合一遍）。
 
     **只提供事实，不替它做决定**（"要不要重跑"是理解问题，该柔性）。
 
@@ -292,23 +346,12 @@ def node_prepare(state: State) -> dict:
     ⚠️ **目前是全量注入**（用户确认）。若台账变长到撑上下文，
     可改成只注入活跃的（进行中 / 待答 / 最近完成的），老归档不注入。
     """
-    updated, logs = _feed_waiting(state)
-
-    # 🔴 **这一轮投递之后，执行器又问了一个吗**（F18 的「投递后又问」那一形状）——
-    #    判据是**结构事实**：`_feed_waiting` 里 `settle()` 把投递过的那条落成了
-    #    `waiting_for_input`（投递后完成了就是 `completed`，不会误判）。
-    #    ⚠️ **两条返回路径都要写**（含下面那个早返回）—— 它是**本轮信号**，
-    #    不是长期挂着的 pending；漏写一条它就会残留到下一轮（同 `answer_to`）。
-    fed_asking = any(t.get("stage") == "waiting_for_input" for t in updated)
-
-    # 投递后的最新台账（reducer 按 id 合并，这里先自己合一遍，好把最新状态渲染出来）
-    # ⚠️ 复用 `_merge_tasks`（同一逻辑一处定义）—— 原来这里手搓了一遍一模一样的合并。
-    tasks = _merge_tasks(state.get("tasks"), updated)
+    tasks = state.get("tasks") or []
     if not tasks:
-        # ⚠️ **`answer_to` 每条返回路径都要清**（它跟 checkpointer 活到下一轮，
-        #    不清的话后面每一轮都会被当成"在回答那条"）—— 见 `State.answer_to`。
-        #    `fed_asking` 同理：**本轮信号，本轮写**。
-        return {**({"log": logs} if logs else {}), "answer_to": "", "fed_asking": fed_asking}
+        # 闲聊轮次：没有台账可注入，一个字都不加。
+        # ⚠️ 这里**只剩这一件事** —— `answer_to` / `fed_asking` 那种"每条返回路径都要写"
+        #    的本轮信号已经跟着投递搬到 `feed` 了（那个节点只有一条返回路径）。
+        return {}
 
     # 台账怎么渲染在 `proto/handoff/ledger.py`（schema 与模板放一起）
     waiting = [t for t in tasks if t.get("stage") == "waiting_for_input"]
@@ -318,26 +361,9 @@ def node_prepare(state: State) -> dict:
     # 主 agent 的东西，复盘时最该看到的就是它。见 `trace.handoff`。
     trace.handoff("台账", "平台", "主 agent", text,
                   structured=f"Task × {len(tasks)} → render_ledger", full=True)
-    # 🔴 投递那一跳的**结构化事实**（断言读它）：判据是 `run_by == "feed"` ——
-    # 那是 `_feed_waiting` 在**真投出去之前**打的标记；技能不存在被**跳过**的不会带上它，
-    # 所以"投给了谁"是准的（不靠解析 `logs` 里那句话）。
-    # ⚠️ **2026-11-06 补**：`updated` 里现在还可能有"哑待答被取代"的副本 ——
-    # 它们的 `run_by` 是**上一轮**留下的（可能也是 "feed"）✗ 会把"投给了谁"报多。
-    # 排掉 `superseded`：**投递只投 waiting 的，而落账不产生 superseded**
-    # （取代只来自 `moot_older_waiting`，它按 id 排除了被投递的那条）—— 两边不重叠。
-    fed = [t["id"] for t in updated
-           if t.get("run_by") == "feed" and t.get("stage") != "superseded"]
-    user = _last_human(state)
-    actions = (
-        [{"by": "platform.prepare", "did": "feed", "tasks": fed, "chars": len(user)}]
-        if fed else []
-    )
     return {
         "messages": [SystemMessage(content=text)],
-        "tasks": updated,  # reducer 按 id 合并
-        "log": logs + [f"prepare: 注入台账（{len(tasks)} 项，其中待答 {len(waiting)} 条）"],
-        "actions": actions,
-        "fed_asking": fed_asking,   # ← F18「投递后又问」的本轮信号，见 `AgentState.fed_asking`
+        "log": [f"prepare: 注入台账（{len(tasks)} 项，其中待答 {len(waiting)} 条）"],
     }
 
 
@@ -493,6 +519,10 @@ def next_pending(state: State, skill: str = "") -> dict | None:
 
 def build():
     g = StateGraph(State)
+    # 🔴 **两个节点，顺序由边保证**（2026-11-06，外审 F4）：`feed`（投递 —— 里面同步跑
+    #    执行器，60–120 秒）→ `prepare`（注入台账）。原来挤在一个 `prepare` 里，
+    #    节点名把最重的那件事藏起来了；拆开后"先投递、后注入"也不用再靠注释提醒。
+    g.add_node("feed", node_feed)
     g.add_node("prepare", node_prepare)
     main_agent = build_agent(AgentState)  # 主 agent：完整的 agent（工具 + 循环）
 
@@ -554,7 +584,8 @@ def build():
 
     g.add_node("agent", node_agent)
     g.add_node("finalize", node_finalize)
-    g.add_edge(START, "prepare")
+    g.add_edge(START, "feed")
+    g.add_edge("feed", "prepare")
     g.add_edge("prepare", "agent")
     g.add_edge("agent", "finalize")
     g.add_edge("finalize", END)

@@ -48,7 +48,7 @@
 | `artifacts.py` | **产物领域** | 产物库（**私有表 + 读 API** `get/has/ids/items/count/chars`）· ID 发号器 · 类型→扩展名**硬性派发** · 当场落盘 · `store/read/list_artifact` | 不管技能 |
 | `executor.py` | 执行器 | `_PLATFORM_RULE` · **三态由结构定**（`_structural_status`，见 §3.2.3）· `ask_user`（申报要信息）· 出口限制循环 · `run_task()` · `ExecOutcome` · **`read_user_turn`**（闭包造，见 §3.2.2） | **不持有状态、不跨轮、不直接问用户** |
 | `agent.py` | 主 agent | `_MAIN_PROMPT` · `delegate` 工具（含平台强制的四步）· **交接书** `render_briefing` · **用户原话快照** `_user_turns` · `absorb_outcome` | **不解析、不抽取参数** |
-| `graph.py` | 图 | `State`/`AgentState` · `prepare`（投递 + 台账注入）· `agent` · `finalize`（透传）· `build()` | 不做业务判断 |
+| `graph.py` | 图 | `State`/`AgentState` · `feed`（投递）· `prepare`（台账注入）· `agent` · `finalize`（透传）· `build()` | 不做业务判断 |
 | `trace.py` | 可观测 | 全量日志 · **逐 super-step + 逐字流式**（`stream_agent`）· 参数摘要策略（`brief_args`） | 不截断正文（记录层不砍） |
 | `__main__.py` | 裸原型 CLI | 交互式跑内置玩具技能 | — |
 
@@ -114,7 +114,7 @@ config ──► trace ──► (所有模块都在写日志)
      │  HumanMessage(text)
      ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│ ① prepare（平台节点 · 纯代码）                                        │
+│ ① feed（平台节点 · 纯代码）                                          │
 │                                                                     │
 │   ⓪ _feed_waiting：**定向**投给 `answer_to` 指的那一条待答（没有标识就不投）│
 │        └─► run_task(skill, render_briefing(rec))   ← 重入执行器        │
@@ -277,7 +277,7 @@ ExecOutcome{status, artifacts, report, rounds, asked, fault}
 
 ### 3.2 逐跳展开
 
-#### 3.2.1 ② 台账注入（`graph.node_prepare`）
+#### 3.2.1 ② 台账注入（`graph.node_prepare`；投递那一步见 ① `graph.node_feed`）
 
 ```
 【平台提示】你已委派出去的工作（共 {N} 项）：
@@ -1146,7 +1146,7 @@ class AgentState(TypedDict):     # 主 agent 子图 —— **故意不含 log**
 ### 6.1 图结构
 
 ```
-START → prepare → agent → finalize → END        （compile(checkpointer=InMemorySaver())）
+START → feed → prepare → agent → finalize → END （compile(checkpointer=InMemorySaver())）
 ```
 
 ### 6.2 `Task.stage`（5 态）
@@ -1201,6 +1201,7 @@ START → prepare → agent → finalize → END        （compile(checkpointer=
 ```
 用户：帮我备课
   │
+  ├─ feed      没有 `answer_to` → 一条都不投
   ├─ prepare   无台账（首次）→ 不注入
   ├─ agent     信息太少 → 先问（**Task = 0**）
   └─ finalize  无待答 → 不补
@@ -1216,7 +1217,7 @@ START → prepare → agent → finalize → END        （compile(checkpointer=
   │
 用户：第1课时
   │
-  ├─ prepare   _feed_waiting：原话投给待答 Task（qa 累积 1 对：它问的那句 ＋ 用户答的）
+  ├─ feed      _feed_waiting：原话投给待答 Task（qa 累积 1 对：它问的那句 ＋ 用户答的）
   │            → 执行器这次拿到课时 → 交了产物（art_001 落盘）→ completed
   │            → 台账注入：「t…「lesson-prep」✅ 它交付了产物 → art_001」
   ├─ agent     看到台账（不用重派）→ 回复"备课搞定了…文件：art_001 → C:\…"

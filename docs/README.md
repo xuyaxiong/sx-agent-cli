@@ -196,7 +196,7 @@ README.md（本文）              入口 + **导航**（找东西 / 写东西�
 │
 ├── executor.py    执行器（三态**按结构**定 + 出口限制 + `ask_user` 申报口）
 ├── agent.py       主 agent（工具 + 系统提示 + 交接书渲染）
-├── graph.py       图（prepare / agent / finalize）
+├── graph.py       图（feed / prepare / agent / finalize）
 ├── trace.py       全量日志
 └── __main__.py    交互式 CLI
 

@@ -41,6 +41,16 @@ from typing import Any
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
+import os
+# 🔴 **单测的日志打 tag**（2026-11-06）：`logs/` 里真会话与测试垃圾混在一起，复盘时
+#    grep 不动 —— 打上 tag 后文件名是 `proto-<ts>-unit-<名字>.log`，一眼可辨
+#    （清理：`rm logs/*-unit-*.log`）。复用跑批那个 `PROTO_LOG_TAG`（`evals/_child.py`）。
+# ⚠️ **必须排在所有非标准库 import 之前**：`proto.trace` 在 import 那一刻读 env 定文件名，
+#    而 `from evals import chat` 这种**间接** import 也会把它拉进来（实测踩过：
+#    第一版插在 `from evals import chat` 之后 → 日志照样没 tag）。
+#    守卫：`unit_feed_waiting` ⑮。
+os.environ["PROTO_LOG_TAG"] = "unit-stop-on-pending"
+
 from langchain.agents import create_agent
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import AIMessage, ToolMessage
@@ -219,19 +229,25 @@ def main() -> None:  # noqa: C901
           "fed_asking" in get_type_hints(AgentState),
           "少了它 → 中间件 `state.get('fed_asking')` 永远是 None")
 
-    print("\n⑧ 🔴 **穷举证明的前提**：`settle()` 只有那两个调用位置")
+    print("\n⑧ 🔴 **穷举证明的前提**：落终态只有那一条路（`dispatch`），它只有那两个调用点")
     # 这个机制的覆盖面是**证出来的**，不是跑出来的（见 `_StopWhenPending` 的 docstring）：
     #   一个 Task 进入 `waiting_for_input` 只有两条路 —— 因为 `settle()` 是**唯一**写终态
     #   的地方（`Task.stage` 全仓只有 `superseded` / `running` / `settle` 三个写点），
-    #   而 `settle()` 只在 `delegate` 和 `_feed_waiting` 里被调用。
+    #   而 `settle()` 只在 `agent.dispatch` 里被调用，`dispatch()` 又只被
+    #   `delegate` 和 `_feed_waiting` 调用。
     # ⚠️ **多一个调用位置 = 多一条产生待答的路 = 那个证明当场失效** ——
     #    而且新路**不会被 `_StopWhenPending` 覆盖**（它只认那两个形状）→ 静默退回"复述"。
     #    ⇒ 这条必须**会红**，不能靠记得。
+    # 🔴 **2026-11-06 改（外审 F5 收口）**：`settle()` 原来在 `delegate` / `_feed_waiting`
+    #    里各调一次 —— 两条路的**顺序**于是各写一遍，实测漂过一次（投递那条路的试答重跑
+    #    拿到的是上一轮的 report，见 `tmp/probe_feed_rerun_briefing.py`）。现在收进
+    #    `agent.dispatch`。**证明的形状没变，只是多了一跳**：所以这里要**两段一起**断 ——
+    #    `settle` 只许在 `dispatch` 里，`dispatch` 只许被那两条路调。
     import ast
     from pathlib import Path
 
-    def _settle_call_sites() -> set[tuple[str, str]]:
-        """全仓扫 `settle(...)` 的调用，返回 {(文件, 所在函数)}。"""
+    def _call_sites(fname: str) -> set[tuple[str, str]]:
+        """全仓扫 `fname(...)` 的调用，返回 {(文件, 所在函数)}。"""
         root = Path(__file__).resolve().parent.parent / "proto"
         found: set[tuple[str, str]] = set()
         for py in root.rglob("*.py"):
@@ -241,17 +257,22 @@ def main() -> None:  # noqa: C901
             for fn in fns:
                 for node in ast.walk(fn):
                     if (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
-                            and node.func.id == "settle"):
+                            and node.func.id == fname):
                         rel = py.relative_to(root.parent).as_posix()
                         found.add((rel, fn.name))
         return found
 
-    _expected = {("proto/agent.py", "delegate"), ("proto/graph.py", "_feed_waiting")}
-    _sites = _settle_call_sites()
-    check("`settle()` 的调用位置**只有** `delegate` 和 `_feed_waiting`",
-          _sites == _expected,
+    _settle_expected = {("proto/agent.py", "dispatch")}
+    _sites = _call_sites("settle")
+    check("`settle()` 的调用位置**只有** `agent.dispatch`（写终态的唯一入口）",
+          _sites == _settle_expected,
           f"实际：{sorted(_sites)} —— 多一条就说明**多了一条产生待答的路**，"
           f"而 `_StopWhenPending` **不认**它（覆盖面的证明失效，会静默退回复述）")
+    _dispatch_expected = {("proto/agent.py", "delegate"), ("proto/graph.py", "_feed_waiting")}
+    _d_sites = _call_sites("dispatch")
+    check("`dispatch()` 的调用位置**只有** `delegate` 和 `_feed_waiting`",
+          _d_sites == _dispatch_expected,
+          f"实际：{sorted(_d_sites)} —— 同上：多一条就是多一条产生待答的路")
 
     print("\n" + "═" * 78)
     print(f"{'全部通过' if not FAIL else '有失败'}：{len(PASS)}/{len(PASS) + len(FAIL)}")
