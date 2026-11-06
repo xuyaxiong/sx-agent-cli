@@ -103,10 +103,11 @@ uv run python -m proto --say "帮我备课，三年级数学"
 
 ## 验证脚本
 
-在 `../experiments/`。文档引用、且**当前能跑**的三个：
+在 `../experiments/`。文档引用、且**当前能跑**的两个：
 
 ```bash
-uv run python -m experiments.debug_exit            # 出口限制
-uv run python -m experiments.debug_judge_variants  # 判定提示词对比（调真实模型，慢）
-uv run python -m experiments.probe_api             # API 签名核查
+uv run python -m experiments.debug_exit            # 出口限制（调真实模型）
+uv run python -m experiments.probe_api             # API 签名核查（不调模型）
 ```
+
+（`debug_judge_variants` 2026-11-06 已删 —— 判定退休后它验的东西不存在了。）

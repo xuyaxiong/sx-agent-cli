@@ -3,8 +3,14 @@
 > 这些脚本**不是 MVP 的一部分**，是推演过程中用来取证的一次性工具。
 > 保留它们是为了让 `docs/` 里的实测结论**可复现**。
 >
-> ⚠️ **5 个已经跑不起来了**（见下表），因为原型重构时删掉了它们依赖的 API。
-> 保留原样是为了留下"当时验的是什么"的记录，**不打算修**。
+> ✅ **2026-11-06：能跑的都在跑，跑不起来的已删。** 9 个脚本依赖的 API 早被删了
+> （判定退休、技能表收进 registry、`skills.py` 拆分…），**一跑就炸**；它们的结论都已写进
+> `../docs/`，脚本本身只是取证过程 —— 与其留着"看起来能跑其实不能"，不如删掉
+> （`git log` 里都还在）。
+>
+> ⚠️ 顺带修好 `debug_exit.py`：它**原来也在"跑不起来"那一堆里**（`from proto.skills import
+> SKILLS` —— 那张表 2026-11-03 收进 `registry` 了，这行没跟着改），而它验的「出口限制」
+> **是活的机制** —— 所以修，不删。
 
 ## 怎么跑
 
@@ -31,19 +37,6 @@ uv run python -m experiments.probe_api             # API 签名核查（不调�
 | **`debug_exit.py`** | 出口限制：执行器既没完成、也没提问时，平台会不会把它推回去 | `solution.md` §7.1 · `docs/README.md`「跑起来」 |
 | `probe_api.py` | 已装版本里离线文档提到的关键 API 是否可用、签名是否一致 | `solution.md` §7.1 |
 | `exp01`–`exp07` | LangGraph `interrupt()` 机制取证（**已否决路线的证据**）：能否穿透 tool 包装 / 为什么被吞 / 批量恢复 / 上下文隔离量化 / 答复能否传回正确的执行器 | `docs/discussion-log.md`「三、推演过程」§6.11 §9.5 |
-
-## 跑不起来的（依赖的 API 已被删）
-
-| 脚本 | 当时验什么 | 断在哪 |
-|---|---|---|
-| `debug_abandon.py` | 挂起后用户**不回答、直接换话题** | L48 `build("interrupt")`，而 `proto/graph.py` 的 `build()` **不收参数** → 运行时 TypeError |
-| `debug_body_question.py` | 执行器**用正文提问**时系统能不能接住 | `proto.skills.Deliverable`、`run_skill` 已删 |
-| `debug_criteria.py` | `completion_criteria`（评审人 D1 的落点，**结论是砍掉**） | `proto.agent._check_criteria`、`_judge_completion` 已删 |
-| `debug_delivery.py` | 交付物清单（一个 skill 可以有任意多样、形态不同） | `proto.skills.run_skill` 已删 |
-| `debug_executor.py` | 执行器行为 | `proto.skills.finish`、`run_skill` 已删 |
-| `test_judge_material.py` | **判定**的「实际执行结果」怎么取材（保头保尾 / 全部轮次） | `proto.handoff.judgement` **2026-11-05 整个模块删了**（判定退休）|
-| `debug_judge_variants.py` | 4 种「完成判定」提示词对比（**F 6/6 vs C 4/6** 那条结论就是它跑出来的）| 同上 —— 判定提示词已经不存在 |
-| `debug_clip_marker.py` | 截断标记的措辞（判定会把它当成作者占位符）| 同上 —— 判定那套截断没了 |
 
 ## 其它
 

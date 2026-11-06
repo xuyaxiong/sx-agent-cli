@@ -14,7 +14,7 @@
 
   C. **不误伤**：正常"提问"和"交付"两种出口**不受影响**，一轮就返回
 
-    uv run python debug_exit.py
+    uv run python -m experiments.debug_exit
 """
 
 from __future__ import annotations
@@ -42,10 +42,14 @@ NO_EXIT = Skill(
 )
 
 # ── C 用：正常任务，两种出口各一个 ──
-from proto.skills import SKILLS  # noqa: E402
+from proto.registry import registry  # noqa: E402 —— 技能表唯一持有者
 
-NORMAL_DELIVER = SKILLS["guided-learning"]  # 有产物落库
-NORMAL_ASK = SKILLS["quiz"]  # 缺难度时会提问
+# ⚠️ 原来写的是 `from proto.skills import SKILLS` —— 那张表 2026-11-03 收进
+#    `registry` 了（技能表唯一持有者），这行一直没跟着改，脚本**一跑就炸**。
+#    `skills.py` 在 import 时就 `register_defaults`，所以这里直接取得到。
+NORMAL_DELIVER = registry.get("guided-learning")  # 有产物落库
+NORMAL_ASK = registry.get("quiz")  # 缺难度时会提问
+assert NORMAL_DELIVER and NORMAL_ASK, "内置技能表里没有这两个技能（`proto/skills.py` 改过？）"
 
 
 def show(label: str, outcome) -> None:
