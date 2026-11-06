@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import re
@@ -839,7 +840,8 @@ def main() -> None:
             # 用户白等一场、还得重新起进程。现在按**轮**兜：这一轮没跑成，说清原因，
             # 提示符接着来 —— 把刚才那句再说一遍就行。
             try:
-                state = graph.invoke({"messages": [HumanMessage(text)], "log": []}, config)
+                state = asyncio.run(graph.ainvoke(
+                    {"messages": [HumanMessage(text)], "log": []}, config))   # 异步驱动
             except Exception as e:  # noqa: BLE001
                 import traceback
 
@@ -874,10 +876,10 @@ def main() -> None:
                     break
                 t2 = time.time()
                 try:
-                    state = graph.invoke(
+                    state = asyncio.run(graph.ainvoke(
                         {"messages": [HumanMessage(ans)], "log": [], "answer_to": p["id"]},
                         config,
-                    )
+                    ))
                 except Exception as e:  # noqa: BLE001 —— 同主循环：炸一轮 ≠ 结束会话
                     print(f"\n⚠️ **这一轮没跑成**（平台故障）：{type(e).__name__}: {e}\n")
                     break

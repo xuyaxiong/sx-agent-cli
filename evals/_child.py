@@ -28,6 +28,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 import time
@@ -112,7 +113,7 @@ def run_case(case: dict, rep: int, out_dir: Path | None = None) -> dict:
             # 判据见 `checks.py` 顶部。
             if i == 1 and case.get("initial_tasks"):
                 init["tasks"] = case["initial_tasks"]
-            state = graph.invoke(init, config)
+            state = asyncio.run(graph.ainvoke(init, config))   # 异步驱动（见 `graph` 的说明）
             snap = snapshot(state, user, seen, i, round(time.time() - t1, 1))
             if answer_to:
                 snap["answer_to"] = answer_to   # 记录层如实标：这句是在答哪一条

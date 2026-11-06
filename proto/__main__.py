@@ -56,6 +56,7 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import sys
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -229,7 +230,13 @@ def main() -> None:
         if answer_to:
             init["answer_to"] = answer_to
         try:
-            result = graph.invoke(init, config)
+            # 🔴 **异步驱动**（asyncio 迁移第 1 步）：节点**一个没改**，LangGraph 会把同步
+            #    节点丢进线程跑 —— 行为一个字不变，但**解开了"有 async 节点就不能同步驱动"
+            #    那个约束**（实测：同步驱动 + async 节点直接报 `No synchronous function
+            #    provided`）。之后才能一个一个把节点改成 `async def`。
+            #    ⚠️ `session.current()` 在那种线程里**认得出会话** —— langchain 的
+            #    `run_in_executor` 会 `copy_context()`（实测过）。
+            result = asyncio.run(graph.ainvoke(init, config))
         except Exception as e:  # noqa: BLE001
             print(f"\n⚠️ **这一轮没跑成**（平台故障）：{type(e).__name__}: {e}")
             print("   会话还在 —— 把刚才那句**再说一遍**就行。\n")
