@@ -171,6 +171,19 @@
     见 `handoff.FaultKind`）。按 `status_code` 判、不用 provider 的类型：trace 层不认识
     openai（换一家 SDK 就失效），`status_code` 是 HTTP 语义，鸭子类型就够；
     说不准就当抖动（保守）。
+29. **事件总线改成会话级**（2026-11-06）。起因：用户定 —— *"我这个会封装成一个库 面向
+    多用户 所以所有东西都应该是面向 session 级的"*。原来 `_subs` 是**模块级** list：
+    一个进程一份，谁订阅谁收到**所有人**的事件。而这是 **N2 修法开出的新接缝** ——
+    N2 把"归属"从 `state`（每会话一份）搬到了事件总线（每进程一份），
+    于是**"按会话隔离"这个性质丢了**。⇒ 三件：①订阅挂到 `Session.subs`（`subscribe`
+    往**当前会话**加）；②`_publish` 给每个事件加 **`thread_id`**（**在这一层加**，
+    不是八个发射器各带一个 —— 加漏一个就是"某类事件不知道属于谁"）；
+    ③`subscribe()` **返回句柄**（`_Subscription.cancel()`，重复调安全）——
+    会话结束要能摘掉订阅，否则长期运行**只增不减**。
+    ⚠️ **日志还没按会话分**（`_fh` 仍是进程级、格式也没加会话列）：下一步。
+    动它要碰 `_recorder` docstring 里"**格式逐字节一致**"那条，所以**单独一步评估**。
+    ⚠️ 有效性自检：订阅退回模块级 list → `unit_decision` ⑪ 当场红（实测能看到
+    A 收到 B 的事件）；删掉 `thread_id` 那行 → 同一条红。
 """
 
 from __future__ import annotations
@@ -180,6 +193,7 @@ import time
 from datetime import datetime
 from typing import Any, Callable
 
+from proto import session
 from proto.config import app_root
 from proto.handoff.decision import RESULT_BY, render_decision
 
@@ -214,32 +228,64 @@ _EVENT_TYPES = (
     "section", "note", "block", "stream", "dump", "decision", "handoff", "cut",
 )
 
-_subs: list[Callable[[dict], None]] = []
+class _Subscription:
+    """`subscribe()` 的返回 —— **拿它退订**。
+
+    ⚠️ 为什么不是"返回 `fn` 让调用方自己 `remove`"：订阅者常常是**绑定方法**
+    （`chat._on_event`），每次取属性都是**新对象** —— `list.remove` 找不到它。
+    所以句柄**记着它在哪个列表、是哪一个槽**。
+    """
+
+    __slots__ = ("_owner", "_slot")
+
+    def __init__(self, owner: list, slot: list) -> None:
+        self._owner, self._slot = owner, slot
+
+    def cancel(self) -> None:
+        """退订。**重复调是安全的**（已经不在里面就什么都不做）。"""
+        try:
+            self._owner.remove(self._slot)
+        except ValueError:
+            pass
 
 
-def subscribe(fn: Callable[[dict], None]) -> None:
-    """订阅事件总线。事件按发布顺序同步送达每个订阅者。
+def subscribe(fn: Callable[[dict], None]) -> _Subscription:
+    """订阅**当前会话**的事件总线。事件按发布顺序同步送达每个订阅者。
 
     🔴 订阅者抛异常**不会炸业务**：兜住并原样记进日志文件 ——
     展示层坏了最多是"看不见"，不能把正在跑的一轮弄死。
+
+    ⚠️ **订阅挂在会话上，不是模块上**（原来 `_subs` 是模块级 list）：多会话共享进程时，
+    A 的展示层收不到 B 的事件。〔沿革 29〕
+    ⚠️ **返回句柄**（`_Subscription`）：会话结束要能摘掉订阅，否则长期运行**只增不减**。
+    不接返回值也行（老调用点一个没改）。
     """
-    _subs.append(fn)
+    slot = [fn]
+    session.current().subs.append(slot)
+    return _Subscription(session.current().subs, slot)
 
 
 def _publish(ev: dict) -> None:
-    """发一个事件：**先记录器**（唯一落盘者），再同步送每个订阅者（展示层）。
+    """发一个事件：**先记录器**（唯一落盘者），再同步送**当前会话**的订阅者（展示层）。
 
     🔴 记录器**不走订阅者那张网**：展示层坏了最多是"看不见"，记录层丢一条却是
     **权威记录破了个洞** —— 所以它单独兜，且兜住之后 `_mark_hole` **把洞标出来**。〔沿革 11〕
+
+    ⚠️ **`thread_id` 是这一层加的**（不是每个发射器自己带）：八个形状共用一处，
+    加漏一个就是"某类事件不知道属于谁"。〔沿革 29〕
     """
     if ev.get("type") not in _EVENT_TYPES:
         # 形状只有那八种：打错一个字母，记录器与展示层都会**静默跳过**它 —— 宁可当场炸。
         raise ValueError(f"未知事件形状 type={ev.get('type')!r}：{list(_EVENT_TYPES)}")
+    # 🔴 **会话标识**（多会话共享进程时，这是"这条事件属于谁"的唯一来源）。
+    #    ⚠️ 默认会话的 `thread_id` 是空串 —— 单会话宿主（CLI / 跑批）行为不变。
+    ev["thread_id"] = session.current().thread_id
     try:
         _recorder(ev)
     except Exception as e:  # noqa: BLE001 —— 不炸业务，但**必须把洞标出来**（见 _mark_hole）
         _mark_hole(ev, e)
-    for fn in list(_subs):
+    for slot in list(session.current().subs):
+        fn = slot[0]
         try:
             fn(ev)
         except Exception as e:  # noqa: BLE001 —— 见 subscribe 的 docstring

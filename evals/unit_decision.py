@@ -276,6 +276,38 @@ def main() -> None:
     check("置 `PROTO_LOG_PROMPT=1`：**全量打出来**（含正文原话）",
           "PROMPT（发给 LLM 的全文）" in on and "守卫用的假原话" in on, on[:200])
 
+    print("\n⑪ 事件总线**按会话隔离**（用户：多用户 web，所有东西都该面向 session 级）")
+    # 🔴 原来 `_subs` 是**模块级** list —— 一个进程一份，谁订阅谁收到**所有人**的事件。
+    #    N2 把"归属"从 `state`（每会话一份）搬到了事件总线（每进程一份），
+    #    ⇒ **"按会话隔离"这个性质就丢了**（那正是 N2 修法开出的新接缝）。
+    #    现在：订阅挂在**会话**上、事件带 `thread_id`、句柄**可退订**。
+    #    有效性自检：把 `trace.subscribe` 改回模块级 list、或删掉 `_publish` 里那行
+    #    `ev["thread_id"] = …`，下面必须红。
+    from proto import session as session_mod
+
+    _seen_a: list[dict] = []
+    _seen_b: list[dict] = []
+    with session_mod.session(thread_id="user-A"):
+        _ha = trace.subscribe(_seen_a.append)
+        with session_mod.session(thread_id="user-B"):
+            trace.subscribe(_seen_b.append)
+            trace.note("B 的事件")
+        trace.note("A 的事件")
+        _n_before = len(_seen_a)
+        _ha.cancel()
+        _ha.cancel()          # 重复调**要安全**（会话结束时会再摘一次）
+        trace.note("A 退订之后的事件")
+
+    check("A 的订阅者**收不到** B 会话的事件",
+          not [e for e in _seen_a if "B 的事件" in str(e.get("text", ""))], repr(_seen_a))
+    check("A 的订阅者**收得到**自己会话的事件",
+          any("A 的事件" in str(e.get("text", "")) for e in _seen_a), repr(_seen_a))
+    check("事件带 `thread_id`（多会话时「这条属于谁」的唯一来源）",
+          bool(_seen_b) and _seen_b[-1].get("thread_id") == "user-B",
+          repr(_seen_b[-1].get("thread_id") if _seen_b else "（没收到）"))
+    check("`subscribe()` 的句柄**能退订**（退订后不再收到；重复调不炸）",
+          len(_seen_a) == _n_before, f"退订后还收到了 {len(_seen_a) - _n_before} 条")
+
     print("\n" + "═" * 78)
     print(f"{'全部通过' if not FAIL else '有失败'}：{len(PASS)}/{len(PASS) + len(FAIL)}")
     for name in FAIL:

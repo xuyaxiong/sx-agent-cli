@@ -36,6 +36,9 @@
   把 `thread_id` 带进事件、日志行带会话列、`subscribe()` 返回句柄（可退订）。
 - **默认会话是进程级的、永不回收**。单会话宿主无所谓；多会话宿主里它应当**取不到**
   （或当场炸），而不是悄悄接住 —— 等真有第二个宿主时再定。
+- **日志还没按会话分**（`trace._fh` 仍是进程级、格式也没加会话列）：下一步。
+  ⚠️ 动它要碰"日志格式逐字节一致"那条（`trace._recorder` 的 docstring），
+  所以单独一步评估 —— **不是顺手改**。
 
 ## 沿革（改过什么、为什么改）
 
@@ -78,6 +81,12 @@ class Session:
         self.artifact_seq: Iterator[int] = itertools.count(1)
         #: 产物落盘到哪。`None` = 只进内存（跑批那条路径就是这样）。
         self.artifact_dir: Path | None = None
+        # ── 事件总线（`proto/trace.py` 用）──
+        #: 这个会话的**订阅者**（展示层）。`trace.subscribe` 往这儿加，
+        #: `_publish` 只送这儿 —— 所以 A 会话的展示层收不到 B 会话的事件。
+        #: ⚠️ 每个元素是 `[fn, handle]`：`fn` 本身没法从 `list.remove` 里找回句柄，
+        #: 而退订要能定位到"哪一个"。见 `trace._Subscription`。
+        self.subs: list[list] = []
 
 
 #: 默认会话 —— **只有上下文里没设时才取得到**（见「关键取舍 ②」）。
