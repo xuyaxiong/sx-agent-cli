@@ -25,6 +25,17 @@ import sys
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
+import os
+
+# 🔴 **单测的日志打 tag**（2026-11-06）：`logs/` 里真会话与测试垃圾混在一起，复盘时
+#    grep 不动 —— 打上 tag 后文件名是 `proto-<ts>-unit-<名字>.log`，一眼可辨
+#    （清理：`rm logs/*-unit-*.log`）。复用跑批那个 `PROTO_LOG_TAG`（`evals/_child.py`）。
+# ⚠️ **必须排在所有非标准库 import 之前**：`proto.trace` 在 import 那一刻读 env 定文件名，
+#    而 `from evals import chat` 这种**间接** import 也会把它拉进来（实测踩过：
+#    第一版插在 `from evals import chat` 之后 → 日志照样没 tag）。
+#    守卫：`unit_feed_waiting` ⑮。
+os.environ["PROTO_LOG_TAG"] = "unit-briefing"
+
 from proto.handoff import BODY, SECTION
 from proto.handoff.briefing import _flat, _one_line_limit, render_briefing
 from proto import artifacts
