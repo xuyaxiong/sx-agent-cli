@@ -65,7 +65,7 @@ import os
 #    守卫：`unit_feed_waiting` ⑮。
 os.environ["PROTO_LOG_TAG"] = "unit-artifact-race"
 
-from proto import artifacts
+from proto import artifacts, session
 from proto.artifacts import store_artifact
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -183,6 +183,49 @@ def main() -> None:
           + (f"\n      {bad_files}" if bad_files else ""))
     if bad_files:
         raise SystemExit(1)
+
+    # ── ④ 会话隔离（2026-11-06）──
+    #
+    # 用户定：*"我这个会封装成一个库 面向多用户 所以所有东西都应该是面向 session 级的"*。
+    # 原来表 / 发号器 / 落盘目录都是**模块级** —— 于是 `list_artifacts` 的 docstring 写着
+    # "**本会话**"、读的却是**进程级**那张表：多会话时用户 B 会看到用户 A 的**全部产物**
+    # （含落盘路径），ID 空间也共享。
+    # ⚠️ **有效性自检**：把 `artifacts` 里任意一处 `session.current()` 改回模块级全局，
+    #    下面必须红。
+    print("\n④ 会话隔离：两个会话并行，A 看不见 B 的产物")
+    artifacts.clear()
+    with session.session(thread_id="user-A"):
+        a_id = store_artifact("A 的教案", "A 的", "md", "A 的内容")
+        a_list = artifacts.list_artifacts.invoke({})   # 真工具（`@tool` 包过）
+    with session.session(thread_id="user-B"):
+        b_id = store_artifact("B 的导学单", "B 的", "md", "B 的内容")
+        b_list = artifacts.list_artifacts.invoke({})
+        b_reads_a = artifacts.get(a_id)
+        b_count = artifacts.count()
+
+    leaks: list[str] = []
+    if a_id != "art_001" or b_id != "art_001":
+        leaks.append(f"发号器不是会话级的：A={a_id} B={b_id}（各自都该从 art_001 起）")
+    if "A 的教案" in b_list:
+        leaks.append(f"B 的清单里出现了 A 的产物：{b_list!r}")
+    if "B 的导学单" in a_list:
+        leaks.append(f"A 的清单里出现了 B 的产物：{a_list!r}")
+    # 🔴 **这里断的不是"读不到"，是"读到的是自己的"**：两个会话**各从 `art_001` 起**
+    #    ⇒ **跨会话重号是设计如此**。所以 B 拿 `art_001` 应当读到 **B 自己**那份；
+    #    读到 A 的才是泄漏。（第一版我把断言写成 `is None`，它当场红了 ——
+    #    **红得对，是断言错了**：重号不假，但隔离成立。）
+    if b_reads_a is None or b_reads_a.get("title") != "B 的导学单":
+        leaks.append(f"B 拿 A 的 ID `get()` 读到的不是自己那份：{b_reads_a!r}")
+    if b_count != 1:
+        leaks.append(f"B 的库里有 {b_count} 条（该只有它自己那 1 条）")
+    print(f"  {'✅' if not leaks else '❌'} 两个会话的产物**互不可见**"
+          + (f"\n      {leaks}" if leaks else ""))
+    if leaks:
+        raise SystemExit(1)
+    # ⚠️ **重号把一件事从"锦上添花"变成"必需"**：多会话日志/事件里光看 `art_001`
+    #    **指代不明** —— 所以"事件带 `thread_id`、日志行带会话列"不是可选项（那是下一轮）。
+    print("  ✅ 跨会话**重号**（各从 art_001 起）—— 这是设计；⚠️ 因此日志/事件"
+          "**必须带会话标识**才不歧义（下一轮做）")
 
     print(f"✅ 对照组炸了（{lost2} 次），说明测试**能**探到碰撞。")
     if lost:
