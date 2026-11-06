@@ -219,8 +219,6 @@
     ⚠️ 守卫 `unit_feed_waiting` ⑮ 从"只守 `PROTO_LOG_TAG`"扩成"两个都守"；
     `unit_frozen_paths` **豁免**（它测的就是**默认路径**，设了就被顶掉 —— 而它写进
     临时目录，本来就不污染 `logs/`）。
-    ⚠️ 顺带修了 `unit_comment_style` ④ 的一个**假红**：`PROTO_LOG_DIR = "tmp/logs"`
-    被当成"具体文件引用"，而它是**目录名** —— 判据收紧成"**有扩展名或有下一层**才算"。
 """
 
 from __future__ import annotations

@@ -469,11 +469,11 @@ running · completed · waiting_for_input · failed · superseded
 
 1. **先做了 `completion_criteria`**（可选元数据，放 `metadata.platform` 里，
    兼容通用规范——DeepAgents 就是这么放 `include_tools` 的）。
-   实测 `debug_criteria.py` 9/9 通过。
+   实测 `debug_criteria.py`（**脚本已删**）9/9 通过。
 2. **用户质疑**：*"criteria 根本也是 LLM 判断，其实也是软机制，
    搞这么软硬结合感觉就单纯在提高复杂度，没有本质提升。"*
    —— **质疑成立**：`_check_criteria` 本质就是"把要求放进提示词让 LLM 逐条核对"。
-3. **跑对比实验**（`debug_judge_variants.py`，6 个用例，5 种提示词）：
+3. **跑对比实验**（`debug_judge_variants.py` —— **脚本已删**；6 个用例，5 种提示词）：
 
    | 变体 | 全对 |
    |------|------|

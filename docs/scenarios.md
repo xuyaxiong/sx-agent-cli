@@ -213,7 +213,7 @@
 > **`completion_criteria` 已移除**（实测证明它没有增量价值，见 `architecture-review.md` D1）。
 > 现在用**三态判定 + 明确规则**：`completed` / `waiting_for_input` / `incomplete`，
 > 且判定提示词里带上 `instructions` + `given` + 产出 + 产物数量。
-> **测试**：`debug_judge_variants.py`（5 种提示词对比）、`debug_exit.py`（出口限制）。
+> **测试**：`debug_judge_variants.py`（**脚本已删**；5 种提示词对比）、`debug_exit.py`（出口限制）。
 
 ### S18 · 执行器**没干完就停**时不许它停 ✅
 

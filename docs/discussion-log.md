@@ -1482,7 +1482,7 @@ F18 原来的根因表写的是"**提示词 —— 模型没听**"。重读提�
 它是**整个基线里最大的成本项**，而且**产物越长越必然触发** ——
 而"产物长"恰恰是这个架构要支持的正常场景。
 
-### 修法与实测（`experiments/debug_clip_marker.py`）
+### 修法与实测（`experiments/debug_clip_marker.py`，**脚本已删**）
 
 我第一版修法是"改标记措辞 + 在判定规则里加说明"。**实测证明那个修法是有害的** ——
 它把假阴性换成了假阳性。真正的修法是**调预算**。
@@ -3523,7 +3523,7 @@ def after_answer(state):
 > 都走 `entry_route` 的确定性续跑。
 > **信号从哪来不重要，落点只有一个。** 这就是"统一到同一个状态机"的价值。
 
-**实测**（`debug_body_question.py`，DeepSeek v4 pro）：
+**实测**（`debug_body_question.py` —— **脚本已删**；DeepSeek v4 pro）：
 
 | 场景 | 执行器实际输出 | 结果 |
 |------|--------------|------|
@@ -3632,7 +3632,7 @@ class Skill:
 3. 最后必须调用 finish 登记结果：delivered 列出你实际交付了哪些。
 ```
 
-**实测**（`debug_delivery.py`，DeepSeek v4 pro，48 秒）：
+**实测**（`debug_delivery.py` —— **脚本已删**；DeepSeek v4 pro，48 秒）：
 
 | 场景 | 结果 |
 |------|------|

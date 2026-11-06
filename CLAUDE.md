@@ -58,14 +58,14 @@
 | **正文交付是反模式** | 平台只保证**产物**；不许为"正文交付"造任何机制 |
 | **一套，别分叉** | 同一个语义只许有一处定义（段名 / 来源标注 / 出口分类…）；**显示给人的和传给 LLM 的是同一份** |
 | **把规矩变成机制** | 只靠记性的规矩必然烂 —— 要么进守卫（**会红**），要么别写 |
-| **注释体例** | 模块头五节（是什么／原则／取舍／遗留／**沿革**）；历史只进沿革、正文写 `〔沿革 N〕`；**日期只许出现在沿革里**。完整版 `docs/comment-style.md`，守卫 `unit_comment_style`（欠账清单只许缩短） |
+| **注释体例** | 模块头五节（是什么／原则／取舍／遗留／**沿革**）；历史只进沿革、正文写 `〔沿革 N〕`；**日期只许出现在沿革里**。完整版 `docs/comment-style.md`。⚠️ **没有守卫** —— 注释的质量代码保证不了（正则会去判语义，那正是判据一治的东西），只能**周期性靠 LLM 审** |
 
 ## 干活前
 
 - 单元测试（不调 LLM，改完必跑）：`uv run python -m evals.unit_<名字>`
-  （16 个：`briefing` `receipt` `handoff` `handoff_matrix` `handoff_form` `ask_flow`
+  （15 个：`briefing` `receipt` `handoff` `handoff_matrix` `handoff_form` `ask_flow`
   `console` `decision` `feed_waiting` `stream_join` `artifact_race`
-  `frozen_paths` `registry` `stop_on_pending` `proto_cli` `comment_style`）
+  `frozen_paths` `registry` `stop_on_pending` `proto_cli`）
 - 跑真会话：`uv run python -m evals.chat`；跑批：`uv run python -m evals.run`
 - **结论必须实测**（`docs/principles.md` ③）：不说"我觉得应该没问题"；
   实测要写清"想验证什么、怎么验证、预期是什么"
