@@ -3,6 +3,8 @@
     MODEL_NAME      模型名，如 deepseek-chat / qwen-max / glm-4-plus / gpt-4o-mini
     MODEL_API_KEY   API Key
     MODEL_BASE_URL  兼容端点，如 https://api.deepseek.com/v1（官方 OpenAI 可不填）
+    MODEL_TIMEOUT_S 单次调用的**读超时**（秒，默认 300）—— 卡住时的闸门，
+                    见 `get_model` 里那段注释（它治的是"一次阻塞调用"，不是墙钟）
 
 ⚠️ **本原型只走真实 LLM 调用，没有 fake 开关。**
 
@@ -81,11 +83,22 @@ def get_model(temperature: float = 0.0):
             "  MODEL_BASE_URL  兼容端点（可选）\n"
             "\n（本原型没有 fake 模式 —— 见模块 docstring 的说明。）\n"
         )
+    # 🔴 **单次调用的读超时**（2026-11-06，外审 F9 的核实）：
+    #    原来不传 —— 于是吃 openai SDK 的默认值（**read=600s ＋ 内部重试 2 次**），
+    #    再叠上 `trace.stream_agent` 自己那一次重试：一次"卡住"最坏能拖**几十分钟**，
+    #    而报告写的"数分钟"是低估。**墙钟（在轮次之间查表）治不了它** ——
+    #    卡住的是**一次阻塞调用**，轮次边界根本走不到。真正的闸门在这儿。
+    #    ⚠️ 它是**读间隔**超时（httpx 的 read timeout 按"两次读到数据之间"算）——
+    #    所以**一直在吐字的流不会被误杀**，只有真卡住才触发 ✓。
+    #    ⚠️ 触发后走既有故障路：`APITimeoutError` 没有 `status_code` → `transient`
+    #    → 回执说"原样再派"（同 SX-07 那套分类，不新增分支）。
+    timeout_s = float(os.getenv("MODEL_TIMEOUT_S", "") or 300)
     return ChatOpenAI(
         model=name,
         api_key=key,  # type: ignore[arg-type]
         base_url=base or None,
         temperature=temperature,
+        timeout=timeout_s,  # type: ignore[arg-type]
     )
 
 
