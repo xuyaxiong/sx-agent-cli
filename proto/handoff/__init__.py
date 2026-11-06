@@ -220,6 +220,19 @@ OutcomeStatus = Literal["completed", "waiting_for_input", "incomplete"]
 #: 一个是"刚建、还没跑完"，一个是"同技能被重新委派、不用管了"。
 TaskStage = Literal["running", "completed", "waiting_for_input", "failed", "superseded"]
 
+#: **平台故障的"类"** —— `ExecOutcome.fault_kind` / `Task.fault_kind` 用它。
+#:
+#: 🔴 2026-11-06（外测 SX-07）：故障原来**一笼统**地处置（"基础设施抖动，原样再派"）——
+#: 而 **4xx（除 408/429）是上游对这份内容的确定性拒绝**：原样重发会**再被拒**，
+#: 该说的是"换措辞/改内容"。分类从异常上取（`status_code`，见 `trace.upstream_rejected`），
+#: 四处引导句（回执交付行 / 回执【平台故障】/ 台账标记 / 判定记录）按它渲染 ——
+#: **不许从 `fault` 文本反解析**（判据一）。
+#: - `"transient"`：基础设施抖动（网络 / 超时 / 限流 / 网关）—— 原样再派即可；
+#: - `"rejected"`：上游**确定性拒绝**（4xx，除 408/429）—— 换措辞 / 改内容再派；
+#: - `""`：没有故障（`fault` 为空）。
+#: 覆盖性由 `unit_handoff` ⑬ 的守卫盯着（`FaultKind` ↔ `FAULT_MARK` 键，刚好对上）。
+FaultKind = Literal["", "transient", "rejected"]
+
 
 # ──────────────────────────── 排版 ────────────────────────────
 
@@ -324,6 +337,12 @@ DELIVERY: dict[str, str] = {
     #: 而且主 agent 该做的事完全不同（原样重派 vs 换说法重派）。
     "fault": "⚠️ 没跑成 —— **平台故障**（重试过一次仍失败）",
 }
+
+#: 🔴 **故障那一档的第二种交付行**（2026-11-06，SX-07）：上游**确定性拒绝**（4xx）——
+#: 与 `DELIVERY["fault"]`（抖动，"原样再派"）**处置不同**：这份内容原样重发会再被拒。
+#: ⚠️ 它**不是 `DELIVERY` 的键**：`DELIVERY` 的键 == 出口分类（`Receipt.kind`），
+#: 而两类故障是**同一个出口**（`fault`）—— 加进去会破坏那条"键 == 分类"的对应。
+DELIVERY_FAULT_REJECTED = "⚠️ 没跑成 —— **上游拒绝了这次请求**（4xx，原样重发会再被拒）"
 
 #: ~~`delivery_key(head)`~~ —— **2026-11-03 删**。它按 `DELIVERY` 的固定前缀
 #: 从**渲染出来的那一行**反推出口种类，而**没有任何调用方**：

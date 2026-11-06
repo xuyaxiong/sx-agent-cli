@@ -50,6 +50,7 @@ from proto import artifacts as artifacts_mod
 from proto import trace
 from proto.handoff import (
     BODY,
+    FaultKind,
     OutcomeStatus,
     TaskStage,
     body_lines,
@@ -120,6 +121,10 @@ class Task(TypedDict, total=False):
     #: （那句话的意思是"**执行器**没干成"）。而主 agent 做下一轮决定时看的**是台账**。
     #: 现在**事实只有这一处定义**，回执的【平台故障】与台账的标记都是它的视图。
     fault: str
+    #: 🔴 **平台故障的"类"**（`FaultKind`：`transient` / `rejected` / `""`）—— 台账据此选
+    #: 引导句（"原样再委派" vs "换措辞/改内容"）。**结构，不许从 `fault` 文本反解析**。
+    #: ⚠️ 与 `fault` 同生共死：每次 `settle` 由 `absorb_outcome` **覆盖写**（正常跑完清空）。
+    fault_kind: FaultKind
     # ⚠️ 原来还有 `progress` / `missing`（**判定**吐的"已做到 / 还缺"）——
     #    2026-11-05 判定退休后**没有任何东西再写它们**，两个字段整条链一起摘掉。
     qa: list[QA]
@@ -401,6 +406,8 @@ def absorb_outcome(rec: dict, outcome: Any) -> None:
     # 平台故障**也落进 Task**（理由见 `Task.fault`）—— 与 `report` 一样**覆盖写**：
     # 正常跑完就清空，不留上一次的故障（不然一个瞬时的故障会在台账里阴魂不散）。
     rec["fault"] = outcome.fault
+    # 故障的"类"跟着一起落（台账据此选引导句，见 `Task.fault_kind`）—— 同样覆盖写。
+    rec["fault_kind"] = outcome.fault_kind
     if outcome.artifacts:
         rec["artifacts"] = list(outcome.artifacts)
 

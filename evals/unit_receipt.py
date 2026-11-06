@@ -31,7 +31,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 from proto.handoff import BODY, SECTION
 from proto.handoff.briefing import _flat
-from proto.handoff.receipt import build_receipt, render_receipt
+from proto.handoff.receipt import build_receipt, next_note, render_receipt
 from proto import artifacts
 from proto.artifacts import store_artifact
 from proto.executor import ExecOutcome
@@ -92,7 +92,7 @@ def main() -> None:
     #: 平台故障那一档（2026-11-04 复审 N2/R8）—— 也是**一个可达出口**，
     #: 所以「声明的段都用到了」那条守卫要把它算进来（否则 `fault` 看着像死段）。
     faulted = ExecOutcome(status="incomplete", artifacts=[], report="", rounds=1,
-                          fault="TimeoutError: 抖动")
+                          fault="TimeoutError: 抖动", fault_kind="transient")
 
     print("① 三态各有自己的回执，且**每个字段都渲染了**")
     for label, out in (("completed", completed), ("waiting_for_input", waiting), ("incomplete", failed)):
@@ -303,6 +303,26 @@ def main() -> None:
           "原样再 `delegate` 一次" in t and "换个说法" not in t)
     check("故障原因原样带出来（复盘要看）", "TimeoutError: 抖动" in t)
     check("**没有**冒出一个【执行器说】（它一个字都没说）", "【执行器说】" not in t)
+
+    # 🔴 **两类故障两种处置**（2026-11-06，外测 SX-07）：4xx（除 408/429）是上游对
+    #    **这份内容**的确定性拒绝 —— "原样再派"对它就是**错的话**（重发会再被拒）。
+    #    分类是**结构**（`fault_kind`，见 `handoff.FaultKind`），文案按它渲染；
+    #    **不许从 `fault` 文本反解析**（判据一）。
+    rejected = ExecOutcome(
+        status="incomplete", artifacts=[], report="", rounds=1,
+        fault="BadRequestError: Output data may contain inappropriate content.",
+        fault_kind="rejected")
+    rt = render_receipt(build_receipt(rejected, note=next_note("fault", fault_kind="rejected")))
+    check("rejected：交付行说**上游拒绝**（不是'平台故障…重试过仍失败'）",
+          "上游拒绝了这次请求" in rt and "重试过一次仍失败" not in rt,
+          repr(rt.splitlines()[:3]))
+    check("rejected：【下一步】说**换措辞**，且**没有**'原样再派'",
+          "换措辞" in rt and "原样再 `delegate`" not in rt, repr(rt))
+    # ⚠️ 断的是**那句假话本身**（"平台侧的基础设施抖动，重试过一次仍然失败"）——
+    #    裸词"基础设施抖动"在否定句里是**正当的**（"不是基础设施抖动"），别误伤。
+    check("rejected：【平台故障】段**没有**'平台侧的基础设施抖动…重试过'这句假话",
+          "平台侧的基础设施抖动" not in rt and "重试过一次" not in rt, repr(rt))
+    check("transient（对照，⑨ 那条）：仍是'原样再派'", "原样再 `delegate` 一次" in t)
 
     print("\n" + "═" * 78)
     print(f"{'全部通过' if not FAIL else '有失败'}：{len(PASS)}/{len(PASS) + len(FAIL)}")

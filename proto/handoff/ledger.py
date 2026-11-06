@@ -58,9 +58,17 @@ NEEDS_DETAIL = ("waiting_for_input", "failed")
 #: 而主 agent 做下一轮决定时看的**是台账**。
 #:
 #: **事实来源是 `Task.fault`**（`absorb_outcome` 写的，一处定义）—— 与回执的
-#: 【平台故障】（`DELIVERY["fault"]`）是**同一个事实的两个视图**（视图可以不一样，
-#: 事实只能有一处）。
-FAULT_MARK = "⚠️ 平台故障（这一轮**没跑成** —— 原样再委派一次即可）"
+#: 【平台故障】（`DELIVERY["fault"]` / `DELIVERY_FAULT_REJECTED`）是**同一个事实的
+#: 两个视图**（视图可以不一样，事实只能有一处）。
+#:
+#: 🔴 **两类故障两种标记**（2026-11-06，SX-07）：`rejected`（4xx）是上游对**这份内容**
+#: 的确定性拒绝 —— "原样再委派"对它就是**错的话**（重发会再被拒）。键 = `FaultKind`
+#: （`""` 除外）—— 覆盖性由 `unit_handoff` ⑬ 的守卫盯着；分类从哪来见 `FaultKind`。
+#: ⚠️ 取不到 / 不认识 kind（fixture、旧 Task）→ 回落 `transient`（**同旧行为**，保守）。
+FAULT_MARK: dict[str, str] = {
+    "transient": "⚠️ 平台故障（这一轮**没跑成** —— 原样再委派一次即可）",
+    "rejected": "⚠️ 上游**拒绝了这次请求**（原样重发会再被拒 —— **换措辞/改内容**再委派）",
+}
 
 
 #: 台账截断时"全文在哪"的两种答案 —— **由这一轮是谁起的决定**（`Task.run_by`）：
@@ -125,9 +133,11 @@ def render_ledger(tasks: list[dict]) -> str:
     body: list[str] = [f"你已委派出去的工作（共 {len(tasks)} 项）："]
     for t in tasks:
         # 🔴 **平台故障压过 stage 标记**（见 `FAULT_MARK`）：故障的 stage 也是 `failed`，
-        #    照 stage 说话就是假话。
+        #    照 stage 说话就是假话。标记**按故障的类选**（`rejected` 说"换措辞"，
+        #    不是"原样再派"）—— 取不到 kind 回落 `transient`（同旧行为，保守）。
         faulted = bool(t.get("fault"))
-        mark = (FAULT_MARK if faulted
+        mark = (FAULT_MARK.get(str(t.get("fault_kind") or ""), FAULT_MARK["transient"])
+                if faulted
                 else STAGE_MARK.get(t.get("stage", ""), t.get("stage", "?")))
         arts = f" → {', '.join(t['artifacts'])}" if t.get("artifacts") else ""
         body.append(f"- {t['id']}  「{t['skill']}」  {mark}{arts}")

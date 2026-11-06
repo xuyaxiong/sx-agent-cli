@@ -448,6 +448,8 @@ def delegate(
         # 平台故障的原因（空 = 没故障）—— 新建的 Task 当然还没故障；
         # 每次 `settle` 由 `absorb_outcome` **覆盖写**（见 `Task.fault`）。
         "fault": "",
+        # 故障的"类"（`FaultKind`）—— 与 `fault` 同生共死，同样覆盖写。
+        "fault_kind": "",
         # ⚠️ `artifacts` 是**产出**（产物 ID 列表），`refs` 是**输入引用** —— 两个方向，别混。
         # 待答投递（`graph._feed_waiting`）要按 refs 原样重建可读产物清单。
         "refs": refs,
@@ -557,9 +559,15 @@ def delegate(
     # 🔴 **平台故障 ≠ 执行器干不了**（2026-11-04 复审 N2/R8）：故障时那句"推了 N 轮"
     #    是假话（一轮都没跑完），而主 agent 该做的事也完全不同 —— 换说法重派 vs **原样重派**。
     if outcome.fault:
-        trace.note(f"delegate · {tid} **平台故障**（重试过仍失败）→ 没跑成",
-                   kind="delegate_failed")
-        return _out(rec, outcome, note=next_note("fault"))
+        # ⚠️ 两类故障两种处置（2026-11-06，SX-07）：`fault_kind` 一起带进【下一步】。
+        trace.note(
+            f"delegate · {tid} "
+            + ("**上游拒绝了这次请求**（4xx）→ 没跑成（原样重发会再被拒）"
+               if outcome.fault_kind == "rejected"
+               else "**平台故障**（重试过仍失败）→ 没跑成"),
+            kind="delegate_failed",
+        )
+        return _out(rec, outcome, note=next_note("fault", fault_kind=outcome.fault_kind))
     trace.note(f"delegate · {tid} status=incomplete（推了 {outcome.rounds} 轮）→ failed",
                kind="delegate_failed")
     return _out(rec, outcome, note=next_note("failed"))

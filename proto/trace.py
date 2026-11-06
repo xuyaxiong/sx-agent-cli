@@ -430,6 +430,24 @@ def stream_agent(graph, state, config, who: str, *, role: str):
     return _stream_with_retry(graph, state, config, who, _check_role(role, "stream_agent"))
 
 
+def upstream_rejected(e: BaseException) -> bool:
+    """这个异常是不是「上游**确定性拒绝**」—— 4xx（除 408/429）？
+
+    🔴 **为什么要有它**（2026-11-06，外测 SX-07）：故障原来**一笼统**地当"基础设施抖动"
+    处理 —— 重试一次、然后教主 agent"**原样再派**"。但 4xx（除 408/429）是上游对
+    **这份内容**的拒绝（如内容策略）：原样重发会**再被拒** —— 重试是白烧一次
+    （大生成很贵），"原样再派"是**错的话**（该说"换措辞/改内容"，见 `handoff.FaultKind`）。
+
+    ⚠️ **按 `status_code` 判、不用 provider 的类型**：trace 层不认识 openai（换一家 SDK
+    就失效）；`status_code` 是 HTTP 语义，鸭子类型就够。
+    ⚠️ **说不准就当抖动**（保守，同现状）：没有 `status_code` 的异常（网络/超时/网关）
+    照旧重试一次；**408（请求超时）/ 429（限流）是瞬时的**，也照旧重试
+    （而且 SDK 自己已内重试过一轮，我们这一轮是第二道）。
+    """
+    code = getattr(e, "status_code", None)
+    return isinstance(code, int) and 400 <= code < 500 and code not in (408, 429)
+
+
 def _stream_with_retry(graph, state, config, who: str, role: str):
     """跑 `_stream_agent`；基础设施抖动就重试一次（**边界见下**），仍失败才抛。
 
@@ -503,7 +521,11 @@ def _stream_with_retry(graph, state, config, who: str, role: str):
                 yield chunk
             return
         except Exception as e:  # noqa: BLE001 —— 抖动的种类不可穷举（网络/超时/限流/网关）
-            if attempt == 2 or chunks_seen >= 2:
+            # 🔴 **确定性拒绝不重试**（2026-11-06，SX-07）：4xx（除 408/429）是上游对
+            #    **这份内容**的拒绝 —— 原样重发会再被拒，重试只是白烧一次（大生成很贵）。
+            #    照实抛给调用方，由它按 `fault_kind="rejected"` 说人话
+            #    （见 `upstream_rejected` 与 `handoff.FaultKind`）。
+            if attempt == 2 or chunks_seen >= 2 or upstream_rejected(e):
                 raise
             _publish({
                 "type": "note", "kind": "retry", "ts": stamp(),

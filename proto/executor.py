@@ -29,7 +29,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from proto import trace
 from proto.config import get_model
-from proto.handoff import OutcomeStatus as _OutcomeStatus, render_hop
+from proto.handoff import FaultKind, OutcomeStatus as _OutcomeStatus, render_hop
 #                ↑ 状态词汇（唯一一份）· 段名/渲染（唯一一份）
 # ⚠️ 判定那套（`_Judgement` / 规则 / 材料 / 截断 / `build_prompt`）**整块退休**（2026-11-05）：
 #    "任务结没结束"不再由一次 LLM 调用判 —— 现在是三件**平台看得见的**结构事实
@@ -109,6 +109,12 @@ class ExecOutcome:
     #: ⚠️ 与 `status` 的关系：故障时 `status` 仍是 `incomplete`（三态是封闭的，没有第四种），
     #: **主 agent 该怎么做**由这个字段决定 —— 见回执的【平台故障】段。
     fault: str = ""
+    #: 🔴 **平台故障的"类"**（`FaultKind`：`transient` / `rejected` / `""`）—— 2026-11-06
+    #: （外测 SX-07）：4xx（除 408/429）是上游对**这份内容**的确定性拒绝 —— "原样再派"
+    #: 对它就是**错的话**（重发会再被拒，该说"换措辞/改内容"）。四处引导句按它渲染；
+    #: **不许从 `fault` 文本反解析**（判据一）。与 `fault` 同生共死：每次 `run_task`
+    #: 重新赋值、`settle` 覆盖写（正常跑完清空）。
+    fault_kind: FaultKind = ""
 
 
 def make_ask_user(asked: dict):
@@ -314,13 +320,25 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
             # `stream_agent` 内部已经重试过一次，**两次都失败才走到这** —— 那就认了：
             # 这一轮记成"**平台故障**"（不是执行器干不了），把决定权交回主 agent。
             # ⚠️ 不在这里重跑：`run_task` 一轮就是 60–120 秒，再重跑是拿用户的时间赌。
+            # 🔴 **故障分两类**（2026-11-06，SX-07）：4xx（除 408/429）是上游对**这份内容**
+            #    的确定性拒绝 —— 重试层已经不重试它了（`trace.upstream_rejected`），
+            #    这里把"类"记成结构（四处引导句据此说"换措辞"而不是"原样再派"）。
             outcome.fault = f"{type(e).__name__}: {e}"
+            outcome.fault_kind = "rejected" if trace.upstream_rejected(e) else "transient"
             outcome.rounds = round_i + 1
-            trace.note(
-                f"⚠️ {_at(run_id, round_i + 1)}**平台故障**（已重试过一次仍失败）："
-                f"{type(e).__name__}: {e} —— 这一轮没跑成，交回主 agent",
-                kind="run_fault",
-            )
+            if outcome.fault_kind == "rejected":
+                trace.note(
+                    f"⚠️ {_at(run_id, round_i + 1)}**上游拒绝了这次请求**（4xx，未重试 ——"
+                    f" 重发同一份内容会再被拒）：{type(e).__name__}: {e}"
+                    f" —— 这一轮没跑成，交回主 agent 换措辞/改内容",
+                    kind="run_fault",
+                )
+            else:
+                trace.note(
+                    f"⚠️ {_at(run_id, round_i + 1)}**平台故障**（已重试过一次仍失败）："
+                    f"{type(e).__name__}: {e} —— 这一轮没跑成，交回主 agent",
+                    kind="run_fault",
+                )
             break
         trace.dump_trace(_at(run_id, round_i + 1), resp["messages"],
                          role=trace.EXECUTOR)
@@ -398,7 +416,8 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
         f"（内部 {outcome.rounds} 轮，产物 {len(outcome.artifacts)} 个，"
         f"{time.time() - t0:.1f}s）"
         + ("｜它要的那句见上面 `ask_user`" if outcome.asked else "")
-        + (f"｜**平台故障**：{outcome.fault}" if outcome.fault else ""),
+        + (f"｜**{'上游拒绝了这次请求' if outcome.fault_kind == 'rejected' else '平台故障'}**："
+           f"{outcome.fault}" if outcome.fault else ""),
         kind="run_end",
     )
     return outcome
@@ -466,8 +485,16 @@ def _verdict(outcome: ExecOutcome, run_id: str) -> dict:
     if outcome.fault:
         # 🔴 故障时 `status` 仍是三态里的值（**三态封闭，没有第四种**），但**这一轮根本没跑成** ——
         #    与"执行器干不了"是两回事，所以依据和下一步都得说故障（回执那边同理，见 `receipt`）。
-        why = f"**平台故障**（{outcome.fault}）—— 这一轮**根本没跑成**，不是执行器干不了"
-        nxt = "**交回主 agent** —— 原样再 `delegate` 一次即可（不用改措辞、不用改参数、不用问用户）"
+        # 🔴 **两类故障两种处置**（2026-11-06，SX-07）：见 `handoff.FaultKind` ——
+        #    rejected（4xx）是上游对**这份内容**的拒绝，"原样再派"会再被拒。
+        if outcome.fault_kind == "rejected":
+            why = (f"**上游拒绝了这次请求**（4xx，不是抖动）：{outcome.fault}"
+                   f" —— 这一轮**根本没跑成**，不是执行器干不了")
+            nxt = ("**交回主 agent** —— **原样重发同一份内容会再被拒**："
+                   "换措辞/改内容再 `delegate` 一次；改不动就向用户说明这一段被拦了")
+        else:
+            why = f"**平台故障**（{outcome.fault}）—— 这一轮**根本没跑成**，不是执行器干不了"
+            nxt = "**交回主 agent** —— 原样再 `delegate` 一次即可（不用改措辞、不用改参数、不用问用户）"
     return {
         "who": f"任务完成没（平台按结构定）· {_at(run_id, outcome.rounds)}",
         # 🔴 **这一格的作者是平台**（不是 LLM）—— 它决定那格用【平台判定】（**不标来源**）

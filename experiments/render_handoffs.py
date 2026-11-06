@@ -66,7 +66,12 @@ def _fixtures() -> dict[str, object]:
         "incomplete": ExecOutcome(status="incomplete", artifacts=[], rounds=3,
                                   report="我尽力了，但没做完。"),
         "faulted": ExecOutcome(status="incomplete", artifacts=[], rounds=1, report="",
-                               fault="TimeoutError: 网关抖动"),
+                               fault="TimeoutError: 网关抖动", fault_kind="transient"),
+        # 🔴 两类故障两种处置（2026-11-06，SX-07）：4xx 是上游对**这份内容**的确定性拒绝。
+        "faulted_rejected": ExecOutcome(
+            status="incomplete", artifacts=[], rounds=1, report="",
+            fault="BadRequestError: Output data may contain inappropriate content.",
+            fault_kind="rejected"),
         "msgs": [HumanMessage("我现在想生成人教版小学语文荷花这一课的教案和导学单"),
                  AIMessage("好的！教案先行，导学单随后参考教案来生成。先来教案。")],
     }
@@ -119,10 +124,17 @@ def _samples(f: dict) -> list[tuple[str, str, str, str]]:
          "**由主 agent 看回执定**。",
          render_receipt(build_receipt(f["incomplete"], note=next_note("failed")))),
 
-        ("H10", "回执 · fault（**平台故障**）",
+        ("H10", "回执 · fault（**平台故障** · 抖动）",
          "⚠️ **独立出口**：这一轮**根本没跑成**，与「执行器干不了」是两回事 —— "
          "所以不借 failed 的文案（「推了 N 轮」对故障是假话），也不塞进【执行器说】。",
          render_receipt(build_receipt(f["faulted"], note=next_note("fault")))),
+
+        ("H10", "回执 · fault（**上游拒绝了请求** · 4xx）",
+         "⚠️ **两类故障两种处置**（2026-11-06，SX-07）：4xx（除 408/429）是上游对"
+         "**这份内容**的确定性拒绝 —— **原样重发会再被拒**，该做的是**换措辞/改内容**"
+         "（不是「原样再派」；也没重试过 —— 重试同一份内容没意义）。",
+         render_receipt(build_receipt(f["faulted_rejected"],
+                                      note=next_note("fault", fault_kind="rejected")))),
 
         ("H10", "回执 · rejected_skill（**派发被拒**）",
          "⚠️ 它**不建 Task** —— 主 agent 编了一个不存在的技能名，当场拒绝并列出真实清单。"

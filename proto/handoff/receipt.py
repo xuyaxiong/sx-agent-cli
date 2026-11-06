@@ -39,7 +39,7 @@ from proto import artifacts as artifacts_mod
 # ⚠️ **只 import 它真正用的**（2026-11-05 收敛渲染时清掉 `BODY` / `HOPS` /
 #    `body_lines` / `section_head`）—— 渲染那四样现在归 `render_hop` 管，
 #    这里再 import 一份就是"两处定义"的种子。
-from proto.handoff import DELIVERY, render_hop
+from proto.handoff import DELIVERY, DELIVERY_FAULT_REJECTED, render_hop
 
 # ──────────────────────────── schema：回执上有什么 ────────────────────────────
 
@@ -80,7 +80,7 @@ _NEXT: dict[str, str] = {
 }
 
 
-def next_note(kind: str, *, skill: str = "") -> str:
+def next_note(kind: str, *, skill: str = "", fault_kind: str = "") -> str:
     """出口 → 回执的【下一步】那段话（`kind` ∈ `Receipt.kind`）。
 
     🔴 **为什么它住在这里、不写在调用点**（2026-11-05）：`docs/handoff-samples.md`
@@ -91,6 +91,8 @@ def next_note(kind: str, *, skill: str = "") -> str:
     ⚠️ 不认识的 `kind` → **KeyError**（当场炸）—— 别静默给一句错的处置。
     ⚠️ `skill`：只有 `completed` 那档用得上（判据以**技能声明的交付标准**为准，
     所以要能点出技能名 —— 见下面那段注释）。
+    ⚠️ `fault_kind`：只有 `fault` 那档用得上 —— **两类故障两种处置**（2026-11-06，SX-07）：
+    `rejected`（4xx）是上游对**这份内容**的确定性拒绝，**原样重发会再被拒**。
     """
     if kind == "completed":
         # 🔴 **判据要说清**（2026-11-05 用户：*"产生结果依据又是啥啊 —— 这些都要能看到
@@ -107,6 +109,14 @@ def next_note(kind: str, *, skill: str = "") -> str:
             "要核对内容就用 `read_artifact('<产物 ID>')` 读全文 —— 正文不在你的上下文里。\n"
             "⚠️ 它说的话在上面【执行器说】里，**过一眼** —— 它可能在话里说了什么"
             "（这次它没调 `ask_user`，平台不替它转达）。"
+        )
+    if kind == "fault" and fault_kind == "rejected":
+        # 🔴 **4xx 拒绝 ≠ 抖动**（2026-11-06，SX-07）：原样重发**会再被拒** ——
+        #    该做的是换措辞/改内容（分类从哪来见 `handoff.FaultKind`）。
+        return (
+            "这次是**上游拒绝了请求**（4xx）—— **不是任务本身的问题，也不是抖动**："
+            "**原样重发同一份内容会再被拒**。\n"
+            "**换措辞 / 改内容**再 `delegate` 一次；改不动就向用户说明这一段被拦了。"
         )
     return _NEXT[kind]
 
@@ -136,7 +146,10 @@ def build_receipt(outcome: Any, *, agent_answer: str = "", note: str = "") -> Re
 
     # ① 交付结果：一行说清成没成、交付了几样
     if kind == "fault":
-        sections["deliver"] = DELIVERY["fault"]
+        # 🔴 **两类故障两种交付行**（2026-11-06，SX-07）：`rejected`（4xx）是上游对这份
+        #    内容的拒绝 —— 交付行就不能说"重试过一次仍失败"（根本没重试，见 `trace`）。
+        sections["deliver"] = (DELIVERY_FAULT_REJECTED
+                               if outcome.fault_kind == "rejected" else DELIVERY["fault"])
     elif kind == "completed":
         sections["deliver"] = DELIVERY["completed"].format(len(outcome.artifacts))
     elif kind == "waiting":
@@ -222,12 +235,22 @@ def build_receipt(outcome: Any, *, agent_answer: str = "", note: str = "") -> Re
     #    ⚠️ 单起一段，不塞进【执行器说】—— 那句话的来源标注是"**它说的**"，
     #    而这段是**平台说的**（这套代码一直在治"来源标注不能串"）。
     if outcome.fault:
-        sections["fault"] = (
-            f"这一轮**根本没跑成**：{outcome.fault}\n"
-            "平台侧的基础设施抖动，**重试过一次仍然失败** —— 不是任务本身的问题，"
-            "也不是执行器没干成。\n"
-            "**原样再 `delegate` 一次**即可（不用改措辞、不用改参数、不用问用户）。"
-        )
+        if outcome.fault_kind == "rejected":
+            # 🔴 **4xx 拒绝 ≠ 抖动**（2026-11-06，SX-07）：不是"重试过仍失败"（根本没重试），
+            #    也不是"原样再派"（重发同一份内容会再被拒）—— 说真话，给对的处置。
+            sections["fault"] = (
+                f"这一轮**根本没跑成**：{outcome.fault}\n"
+                "**上游拒绝了这次请求**（4xx）—— 不是基础设施抖动，也不是执行器没干成；"
+                "**原样重发同一份内容会再被拒**。\n"
+                "**换措辞 / 改内容**再 `delegate` 一次；改不动就向用户说明这一段被拦了。"
+            )
+        else:
+            sections["fault"] = (
+                f"这一轮**根本没跑成**：{outcome.fault}\n"
+                "平台侧的基础设施抖动，**重试过一次仍然失败** —— 不是任务本身的问题，"
+                "也不是执行器没干成。\n"
+                "**原样再 `delegate` 一次**即可（不用改措辞、不用改参数、不用问用户）。"
+            )
 
     return {"kind": kind, "sections": sections}
 

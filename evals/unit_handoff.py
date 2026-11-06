@@ -423,6 +423,30 @@ def main() -> None:
           _out2.status == "completed" and bool(_out2.artifacts)
           and _out2.artifacts[0] in _rd(_run_rec[0]),
           f"产物={_out2.artifacts}；记录={_rd(_run_rec[0]) if _run_rec else '（没发）'}")
+
+    # 🔴 **真跑一遍：上游 4xx 拒绝**（2026-11-06，外测 SX-07）—— 同"真跑"的路数：
+    #    不是"源码里写着 except"，是**真调一次 `run_task`**，看它把 400 接住、
+    #    落成 `fault_kind="rejected"`（四处引导句据此说"换措辞"而不是"原样再派"）。
+    class _Http400(Exception):
+        status_code = 400
+
+    class _RejectedAgent:
+        def stream(self, state, config, stream_mode):  # noqa: ANN001, ANN201
+            raise _Http400("Output data may contain inappropriate content.")
+            yield  # pragma: no cover —— 让它是生成器
+
+    _create3, _model3 = _ex.create_agent, _ex.get_model
+    _ex.get_model = lambda *a, **k: object()  # type: ignore[assignment]
+    _ex.create_agent = lambda model, tools=None, **k: _RejectedAgent()  # type: ignore[assignment]
+    try:
+        _out4 = _ex.run_task(
+            _Skill(name="quiz", description="随堂小测", instructions="出 3 道题"), "出 3 道题")
+    finally:
+        _ex.create_agent, _ex.get_model = _create3, _model3  # type: ignore[assignment]
+    check("400 拒绝：`run_task` **不抛**（会话不死），落成 fault",
+          bool(_out4.fault) and _out4.status == "incomplete", f"fault={_out4.fault!r}")
+    check("400 拒绝：分类是 `rejected`（不是笼统的'平台故障'）",
+          _out4.fault_kind == "rejected", repr(_out4.fault_kind))
     # ⚠️ **试答那条（LLM 的）照旧**：同一套记录形状，只有第三个格子换了段名和来源标注。
     _llm = _rd({"who": "试答（LLM）· 平台强制的一步", "given": "g", "q": "q",
                 "result": "can_answer = **False**", "next": "n"})
@@ -443,9 +467,9 @@ def main() -> None:
     print("\n⑬ 状态词汇只有一份：词汇表 ↔ 各处的键，刚好对上")
     from typing import get_args
 
-    from proto.handoff import OutcomeStatus, TaskStage
+    from proto.handoff import FaultKind, OutcomeStatus, TaskStage
     from proto.handoff.briefing import Task, _STATUS_TO_STAGE, settle
-    from proto.handoff.ledger import STAGE_MARK
+    from proto.handoff.ledger import FAULT_MARK, STAGE_MARK
 
     statuses, stages = set(get_args(OutcomeStatus)), set(get_args(TaskStage))
     check("三态 ↔ `_STATUS_TO_STAGE` 的键**刚好**相等",
@@ -456,6 +480,11 @@ def main() -> None:
           f"越界：{sorted(set(_STATUS_TO_STAGE.values()) - stages)}")
     check("五态 ↔ `STAGE_MARK` 的键**刚好**相等",
           set(STAGE_MARK) == stages, f"标记键={sorted(STAGE_MARK)}；五态={sorted(stages)}")
+    # 🔴 **故障两类 ↔ 台账标记**（2026-11-06，SX-07）：加一档（或改了 `FaultKind`）
+    #    忘了文案 → 这里红（同上面两条的规矩；`""` = 没有故障，不算一档）。
+    check("故障两类 ↔ `FAULT_MARK` 的键**刚好**相等",
+          set(FAULT_MARK) == set(get_args(FaultKind)) - {""},
+          f"标记键={sorted(FAULT_MARK)}；FaultKind={sorted(get_args(FaultKind))}")
     # ⚠️ TypedDict 的 `__annotations__` 在 3.12 下是 `ForwardRef`（字符串的壳）——
     #    要 `get_type_hints` 解开再比，不然比的是壳。
     from typing import get_type_hints

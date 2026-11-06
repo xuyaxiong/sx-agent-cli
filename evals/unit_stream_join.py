@@ -184,6 +184,34 @@ def main() -> None:
         raised = True
     check("两次都失败 → **原样抛出**（降级由调用方决定，这里不吞）", raised)
 
+    # 🔴 **确定性拒绝（4xx，除 408/429）不重试**（2026-11-06，外测 SX-07）：那是上游对
+    #    **这份内容**的拒绝 —— 重发同一份会再被拒（大生成很贵，白烧一次）。
+    #    分类见 `trace.upstream_rejected`；"换措辞而不是原样再派"的说法由
+    #    `fault_kind` 那条链管（`unit_receipt` / `unit_handoff`）。
+    #    ⚠️ 有效性自检：把 `_stream_with_retry` 里 `upstream_rejected(e)` 那个条件删掉，
+    #    下面「不重试」那条必须红。
+    class _Http400(Exception):
+        status_code = 400
+
+    class _Rejected:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def stream(self, state, config, stream_mode=None):  # noqa: ARG002
+            self.calls += 1
+            raise _Http400("Output data may contain inappropriate content.")
+            yield  # pragma: no cover —— 让它是生成器
+
+    g = _Rejected()
+    raised = False
+    try:
+        list(trace.stream_agent(g, {}, {}, "测试", role=trace.AGENT))
+    except _Http400:
+        raised = True
+    check("4xx 拒绝：**原样抛**（降级由调用方决定）", raised)
+    check("4xx 拒绝：**不重试**（`stream` 只被调 1 次 —— 重发同一份内容没意义）",
+          g.calls == 1, f"calls={g.calls}")
+
     print("\n⑤ 抖动发生在**吐过之后**：那半行必须留在日志里（不许静默丢）")
     # 🔴 2026-11-04 深度审计 §P1-4 实测：`buf` 是**生成器局部变量**，异常时不 flush →
     #    "被作废的那半行说了什么"在日志里**一个字都没有**，而 retry note 只说"那半段作废"。
