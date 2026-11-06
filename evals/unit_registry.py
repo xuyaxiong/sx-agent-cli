@@ -190,7 +190,7 @@ def main() -> None:
 
     # ── proto 运行时 import 图**无环**（2026-11-05，F3 的机制）──
     # 🔴 为什么是机制：`skills` ↔ `skill_pack` 那个环原来靠**函数内 lazy import** 掩盖 ——
-    #    探针实测（`tmp/probe_cycle_skills_pack.py`）：把它提到顶层**当场 ImportError**
+    #    实测：把它提到顶层**当场 ImportError**
     #    （"partially initialized module"）。两个读工具搬去 `skill_pack` 后环消了；
     #    这条盯着**任何**新环 —— **包括藏进函数里的**（藏起来正是它原来的形态）。
     # ⚠️ 口径 = **运行时真会执行的 import**：函数内的**算**；`if TYPE_CHECKING:` 里的

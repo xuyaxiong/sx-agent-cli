@@ -123,11 +123,11 @@
     形状同 `llm.safe_structured`（重试一次 → 仍失败才退化）—— **先例在，别另立一套**。
 21. **重试边界：只在"还没走完第一步"时重试**（2026-11-05 修）。原判定是布尔 `stepped`
     （"吐过东西"），被 `stream_mode="values"` 先吐的**输入 state chunk** 提前置真 ——
-    重试对"第一步抖动"**从未生效**（探针 `tmp/probe_retry_boundary.py`，守卫
-    `unit_stream_join` ④）。边界改成**数到第二个 values chunk**（第一个是输入 state；
+    重试对"第一步抖动"**从未生效**（守卫 `unit_stream_join` ④）。边界改成
+    **数到第二个 values chunk**（第一个是输入 state；
     之后只有**改了 state 的步**才吐，所以"数到 2"＝"至少一步动过 state" —— 两条前提由
     `unit_stream_join` ⑦ 拿真图钉住）。**为什么不能从头重跑**：`state` 干净、
-    **副作用不干净** —— 实测（`tmp/probe_retry_side_effects.py`）重试会把这一轮已经做过的
+    **副作用不干净** —— 实测：重试会把这一轮已经做过的
     工具调用再做一遍：`delegate` 重跑 = 执行器再跑 60–120 秒 ＋ **再写一份产物**，
     而模型在重试的 `state` 里**看不到自己刚派过**（`Command` 的 update 没提交），
     于是**很可能再派一次** —— 用户等的时间翻倍、账单翻倍，产物库里多一份**没人指向的**
@@ -624,11 +624,13 @@ def _stream_with_retry(graph, state, config, who: str, role: str):
             #    由它按 `fault_kind="rejected"` 说人话（见 `upstream_rejected`）。〔沿革 28〕
             if attempt == 2 or chunks_seen >= 2 or upstream_rejected(e):
                 raise
-            _publish({
-                "type": "note", "kind": "retry", "ts": stamp(),
-                "text": f"⚠️ {who} 这一轮**基础设施抖动**（{type(e).__name__}: {e}）"
-                        "—— 已重试一次（上面流出去的那半段作废）",
-            })
+            # ⚠️ **走 `note()` 不走 `_publish()`**（第三轮外审 P3-4）：这一处原来直调
+            #    `_publish` 并**写死** `kind="retry"` —— 一个**真 kind 值**却绕过了
+            #    `_check_kind`。改名 / 打错（`retrry`）时校验抓不到，只有展示层那道
+            #    运行时自检会警告。其余直调处写的都是 `kind=""`（纯记录，安全），
+            #    只有这一个是"真值走小路"。
+            note(f"⚠️ {who} 这一轮**基础设施抖动**（{type(e).__name__}: {e}）"
+                 "—— 已重试一次（上面流出去的那半段作废）", kind="retry")
 
 
 def _stream_agent(graph, state, config, who: str, role: str):

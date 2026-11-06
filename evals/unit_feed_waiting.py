@@ -492,7 +492,7 @@ def main() -> None:
           CHECKS["platform_fed_answer"](_run(fed), t1)[0] is True)
 
     print("\n⑪ 投递重跑完成 → 更早的同技能待答**显式取代**（哑待答，2026-11-06）")
-    # 🔴 实测 `logs/proto-20261105-174508.log`：用户没走 `↩` 答复通道、又发了新消息，
+    # 🔴 实测：用户没走 `↩` 答复通道、又发了新消息，
     #    新任务交付后旧待答永远挂着（每轮重摆、答它=重跑旧任务）。
     #    规则与边界见 `briefing.moot_older_waiting` —— 这里守的是**投递那条路的接线**：
     #    完成时它真的被调用、结果真的进了返回的 tasks（reducer 才合得上）。
@@ -556,7 +556,7 @@ def main() -> None:
           _moot_sites == {("proto/agent.py", "dispatch")}, repr(sorted(_moot_sites)))
 
     print("\n⑫ `node_feed` 必须**只有一条返回路径**，且它写回 `answer_to=''`（外审 N1）")
-    # 🔴 实测（2026-11-06，外审 N1；探针 `tmp/probe_n1_e2e.py`）：
+    # 🔴 实测（2026-11-06，外审 N1）：
     #    `State.answer_to` 的注释**声称**"每条返回路径都写回 ''"—— 而主返回路径（有 tasks
     #    那条）漏了。后果不是"少写一个键"：`answer_to` 跟着 checkpointer 活到下一轮，
     #    于是**在 `↩` 下答过一次之后**，用户回车跳过待答、回 `👤` 说的**任何新消息**

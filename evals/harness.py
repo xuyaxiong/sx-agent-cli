@@ -243,8 +243,8 @@ def install(case: dict) -> dict:
     proto.artifacts.store_artifact = rec_store
 
     # ③′ 执行器调用流水 —— 记「哪个线程在跑哪个 skill」，用来判产物归属
-    #     （`agent.py` / `graph.py` 现在都走**模块属性** `executor.run_task`（晚绑定），
-    #      所以改这一处就管两条路 —— 原来是值导入，得两处各改一次）
+    #     （**两条路都汇到 `agent.dispatch`**，那里走**模块属性** `executor.run_task`
+    #      （晚绑定）—— 所以改这一处就管两条路；原来是值导入，得两处各改一次）
     run_tasks: list[dict] = []
     orig_run_task = proto.executor.run_task
 

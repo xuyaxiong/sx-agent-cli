@@ -117,7 +117,7 @@
     所以故障走自己那条 `_note`，不借 `failed` 的文案。
 13. **`_StopWhenPending` 的由来**（2026-11-04 → 11-05，`discussion-log` F18 的收口）。
     **治的是什么**：用户看到的那个重复 —— 同一个问题在终端上出现两遍（主 agent 的回复里一遍、
-    平台透传一遍）。实测（`logs/proto-20261104-152230.log`）**4/4 次全部复述**。
+    平台透传一遍）。实测**4/4 次全部复述**。
     **本质**（用户 2026-11-05 澄清）：那一刻是个**决策点，不是对话轮次**（要决定的是「结果回给
     执行器，还是问用户」）。但 ReAct 循环有一条默认规则 —— "工具返回了 → 模型再生成一拍" ——
     它假设"工具返回之后就是该说话了"，于是把决策点当成了普通轮次，主 agent 就"发言"了，而它
@@ -187,8 +187,8 @@
 20. **派发编排收口成 `dispatch`**（2026-11-06，外审 F5 的账）。核心早就统一了
     （`try_answer_then_rerun` / `settle` / `moot_older_waiting` 三样共用），但**它们之间的顺序**
     原来是两条路各写一遍 —— 于是"重入前要先落账"这条**只在一条路上成立**（实测：
-    `tmp/probe_feed_rerun_briefing.py` —— 投递那条路的试答重跑拿到的是**上一轮**的 `report`，
-    而 `delegate` 那条是新的）。顺序这种东西，**写两遍就一定会漂**；收进一处，漂不动了。
+    投递那条路的试答重跑拿到的是**上一轮**的 `report`，而 `delegate` 那条是新的）。
+    顺序这种东西，**写两遍就一定会漂**；收进一处，漂不动了。
 """
 
 from __future__ import annotations
@@ -213,6 +213,8 @@ from proto.handoff.briefing import (  # 委托单
     settle,
 )
 from proto.handoff.receipt import (  # 回执
+    NOTE_BY_FAULT,
+    NOTE_FAULT_UNCLASSIFIED,
     build_receipt,
     build_rejection,
     next_note,
@@ -706,11 +708,11 @@ def delegate(
     if outcome.fault:
         # ⚠️ **三档故障三种说法**：`fault_kind` 一起带进【下一步】，措辞按它选 ——
         #    从对象取，不在这里现编。〔沿革 19〕
-        _note = {
-            "rejected": "**上游拒绝了这次请求**（4xx）→ 没跑成（原样重发会再被拒）",
-            "timeout": "**时间用完了**（整趟跑超墙钟）→ 没跑完（原样再委派可以；老超时就拆小）",
-        }.get(outcome.fault_kind, "**平台故障**（重试过仍失败）→ 没跑成")
-        trace.note(f"delegate · {tid} " + _note, kind="delegate_failed")
+        # 🔴 **表住 `handoff.receipt`，不在这儿**（第三轮外审 P2-1）：散在 `agent.py` 里
+        #    的话，覆盖守卫够不着它 —— 那正是"四处里只有一处有守卫"的成因。〔沿革 19〕
+        trace.note(f"delegate · {tid} "
+                   + NOTE_BY_FAULT.get(outcome.fault_kind, NOTE_FAULT_UNCLASSIFIED),
+                   kind="delegate_failed")
         return _out(rec, outcome, note=next_note("fault", fault_kind=outcome.fault_kind))
     trace.note(f"delegate · {tid} status=incomplete（推了 {outcome.rounds} 轮）→ failed",
                kind="delegate_failed")

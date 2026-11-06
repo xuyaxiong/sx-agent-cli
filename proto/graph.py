@@ -136,7 +136,7 @@
 16. **「问」改取 `Task.asked`**（2026-11-04 日志定位）。`report` 是执行器**最后说的那段话**
     （混着"好的，第一个问题已发出，等你的答复"这类过场），平台自己在 `agent._ask_main` 里
     都标着"可能只是过场" —— 拿它当「问」，配对就成了"一句没有指涉的话 ＋ 一个答复"。
-    实测（`logs/proto-20261104-152230.log`）：**同一句问题两副面孔** —— 透传给用户的是干净
+    实测：**同一句问题两副面孔** —— 透传给用户的是干净
     原话（`finalize` 走 `Task.asked`），回灌给执行器的却是那段过场。而 `asked` 就在手边：
     `settle` 要到下面那一行才覆盖它。⚠️ 取不到时**不静默降级**（fixture / 手写 state）：
     存空串，由 `briefing` 明说"这一条没留下问题原话"（同 `finalize._one` 的写法）——
@@ -152,7 +152,7 @@
 19. **`fed_asking` 两个 schema 都要声明**（2026-11-04 实测踩到）。少一个就**静默失效**：
     `State` 没声明的话 LangGraph 会把那个键**悄悄丢掉**（不报错、不警告）；`AgentState` 少了，
     子图里的 `_StopWhenPending` 读不到。只加了一边的那一跑：拦下的 2 次**全是「本批回执」
-    那条**，这一条一次没生效（`logs/proto-20261104-181250.log`）。守卫见 `unit_stop_on_pending` ⑦。
+    那条**，这一条一次没生效。守卫见 `unit_stop_on_pending` ⑦。
 20. **产物路径那条入口**（2026-11-04 日志定位）。`feed` 那条路**没有回执**（`Task.run_by`），
     所以投递重跑之后主 agent 拿到路径的**唯一入口**是 `list_artifacts` —— 那个入口当时
     **不给路径**，于是它报给用户的是**自己编的** `art_001.md`（真实文件叫
@@ -186,8 +186,8 @@
     case** 用的：多个技能并行派发时"第一个"取决于谁先回来（不确定 ✗），脚本写的答复得能点名。
 28. **编排收进 `dispatch` 一处**（外审 F5 的收口，2026-11-06）。这五步（run_task → 先落账 →
     `run_by` → 试答重跑 → `settle` → 取代哑待答）原来这条路上各写一遍、`delegate` 那条也
-    各写一遍 —— 于是顺序漂了（实测：这条路的试答重跑拿到的是**上一轮**的 report，见
-    `tmp/probe_feed_rerun_briefing.py`）。顺序写两遍就一定会漂。
+    各写一遍 —— 于是顺序漂了（实测：这条路的试答重跑拿到的是**上一轮**的 report）。
+    顺序写两遍就一定会漂。
 29. **投递与台账拆两个节点**（2026-11-06，外审 F4）。原来挤在一个 `prepare` 里，
     "先投递、后注入台账"（台账才反映投递后的新状态）只能靠注释提醒 —— 现在**顺序就是图的
     边**，改不动也藏不住。同一次把 `answer_to` / `fed_asking` 这两个本轮信号收进 `feed`：
@@ -197,9 +197,16 @@
 31. **`answer_to` 的"用后即清"曾经只是声称**（2026-11-06 外审 N1 实测）。拆之前主返回路径
     漏写过它（早返回写了）—— 于是"在 `↩` 下答过一次"之后的**每一轮**都带着残留的 `answer_to`：
     用户回车跳过待答、回 `👤` 说的**任何新消息**都会被 `_feed_waiting` 当成"在回答那条"投给
-    旧任务（每次白跑一趟执行器 ＋ 答非所问，**持续**如此）。实测：`tmp/probe_n1_e2e.py`
-    （真 checkpointer，三轮都误投）。现在由 `unit_feed_waiting` ⑫ 按 AST 盯着**每一条**
+    旧任务（每次白跑一趟执行器 ＋ 答非所问，**持续**如此）。实测（真 checkpointer）：
+    三轮都误投。现在由 `unit_feed_waiting` ⑫ 按 AST 盯着**每一条**
     `return`（"每条返回路径都要写"这类规矩**不能只写在注释里**）。
+32. **删掉一条死 import ＋ 两句跟着它过时的注释**（2026-11-06，Pylance 翻出来的）。
+    `from proto import executor` 是〔沿革 28〕把调用收进 `dispatch` 之后**留下的**：
+    执行器调用搬去了 `agent.py`，而**这个 import 和它的说明没跟着走**。于是两处注释都在
+    讲一件**这里已经不做的事**——"下面这行**必须**走属性访问"（下面那行根本没被用）、
+    "**属性访问**（`executor.run_task`）而不是 from-import"（这里没有属性访问）。
+    全文件 `grep executor` **只剩注释命中**。⇒ 删 import，两处注释改成**指向真正调它的地方**
+    （`agent.dispatch`）；`harness.install()` 那句"两个文件都走模块属性"也一起改准。
 """
 
 from __future__ import annotations
@@ -219,10 +226,11 @@ from proto.agent import dispatch  # 派发编排（两条路共用，F5 收口�
 from proto.handoff.briefing import asked_text
 from proto.handoff import render_hop  # 唯一那条渲染路（见 handoff/__init__）
 from proto.handoff.ledger import render_ledger
-# 🔴 **顶层 import，但用"模块 + 属性"形式**：`harness.install()` 的记录器靠改
-#    `proto.executor.run_task` 打桩，而 `from … import run_task` 会在 import 那一刻
-#    把函数**绑死**，桩就不生效了〔沿革 18〕。所以下面这行**必须**走属性访问。
-from proto import executor
+# ⚠️ **本模块不直接调执行器**（原来有 `from proto import executor`，是**死 import**）：
+#    投递那条路走 `agent.dispatch`，执行器调用在**那边**，走的是
+#    `executor.run_task` 的**属性访问**（晚绑定 —— `harness.install()` 的记录器靠改
+#    `proto.executor.run_task` 打桩，`from … import run_task` 会在 import 那一刻把函数
+#    **绑死**，桩就不生效了〔沿革 18〕）。〔沿革 32〕
 from proto.registry import registry  # 技能注册表（唯一持有者）
 
 
@@ -376,7 +384,8 @@ def _feed_waiting(state: State) -> tuple[list[dict], list[str]]:
                                  f"｜Task.qa 追加 1 对（累计 {len(rec['qa'])} 对）")
         # ⚠️ `refs` 要一起带上：不重建可读产物清单，执行器在续跑时就"看不见"前序产物了。
         # 用户原话也一起带上（快照在 Task 上，所以这条重入路径**自动**有它）。
-        # ⚠️ **属性访问**（`executor.run_task`）而不是 from-import —— 桩才生效〔沿革 18〕。
+        # ⚠️ 这里**不**直接调执行器 —— `dispatch` 内部走 `executor.run_task` 的**属性访问**
+        #    （晚绑定，桩才生效〔沿革 18〕）。
         # 🔴 **编排走两条路共用的那个函数**（`dispatch`）：run_task → **先落账**（重入前要
         #    `render_briefing`，见 `absorb_outcome`）→ `run_by` → 试答重跑 → `settle` →
         #    取代哑待答 —— 顺序写两遍就一定会漂，收进一处〔沿革 28〕。

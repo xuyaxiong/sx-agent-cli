@@ -76,7 +76,7 @@
    所以它自己一个 `kind`，不借 failed 的文案（"推了 N 轮"对故障是假话），
    也不塞进【执行器说】（那句的来源标注是"它说的"，而故障是**平台说的**）。
 7. **`asked` 进回执，是日志定位逼出来的**（2026-11-04）。主 agent 的回复**写在
-   `finalize` 注入问题之前** —— 实测同一轮（`logs/proto-20261104-152230.log`）：
+   `finalize` 注入问题之前** —— 实测同一轮的时间线：
    回执 15:23:14.770 → 它回复 15:23:19.193 → 平台注入问题 15:23:19.198。
    也就是说它写"派了什么、还差什么"时**根本不知道问的是什么**，只能编（实测编出
    "比如年级、课时、学情等"，而执行器问的是**课型**）。透传保证**用户**不丢，
@@ -109,6 +109,21 @@
     文案 —— "重试过一次仍失败"对后两档都是假话（根本没重试），"原样重发会再被拒"
     对超时也是假话（内容没问题）；分类从结构上取（见 `handoff.FaultKind`），
     **不许从 `fault` 文本反解析**。
+15. **故障渲染收成表 ＋ 兜底不再宣称事实**（2026-11-06，第三轮外审 P2-1）。沿革 14
+    说的是"不许借彼此的文案"，可**兜底那一支没跟着改**：交付行 / 故障段 / 下一步 /
+    `agent` 的 trace note **四处**的 `else` 都还兜到"重试过一次仍失败"。实测：
+    给一个词汇表外的档 `fault_kind="quota"`，
+    **一张回执里同一句假话出现两次**。⇒ ①三条 `if/elif/else` 收成
+    `_DELIVER_BY_FAULT` / `_NEXT_BY_FAULT` / `_FAULT_SECTION` **三张表**（键 =
+    `FaultKind`）；②第四处 `NOTE_BY_FAULT` 从 `agent.py` **搬进来** —— 散在业务侧的话
+    覆盖守卫够不着；③四处**各一条覆盖断言**（`unit_handoff` ⑬），加档忘了补 → 当场红；
+    ④兜底换成 `DELIVERY_FAULT_UNCLASSIFIED` 那套 —— **一个事实都不宣称**。
+16. **`wall_s` 的分钟数不许说"0 分钟"**（2026-11-06，第三轮外审 P3-1）。`:.0f` 在
+    `<60s` 时四舍五入到 **0** —— "跑到 **0 分钟**还没交"是句读不通的话（实测：
+    `wall_s=7.19` / `29.0` 都这么说）。改 `max(1, round(wall_s / 60))`。
+    ⚠️ 今天 `fault_kind="timeout"` 的唯一生产者是 `MAX_WALL_S=600` 的墙钟，所以
+    **当前不可达**；但把 `httpx.ReadTimeout` 归到 `timeout` 是很自然的下一步，
+    那一步一落地它就会露出来。
 """
 
 from __future__ import annotations
@@ -124,6 +139,7 @@ from proto.handoff import (
     DELIVERY,
     DELIVERY_FAULT_REJECTED,
     DELIVERY_FAULT_TIMEOUT,
+    DELIVERY_FAULT_UNCLASSIFIED,
     render_hop,
 )
 
@@ -165,6 +181,88 @@ _NEXT: dict[str, str] = {
     ),
 }
 
+#: 🔴 **【交付】那一行的三张脸** —— 一档一条，各说各的处置，**不许借彼此的文案**。
+#: ⚠️ `transient` 就是 `DELIVERY["fault"]`（那段话本来就是照着抖动写的）。
+#: ⚠️ `timeout` 那份带一个 `{}` = "跑了多久"（说不清时留空，**别编**）。
+#: ⚠️ **覆盖由 `unit_handoff` ⑬ 守着**。〔沿革 19〕
+_DELIVER_BY_FAULT: dict[str, str] = {
+    "transient": DELIVERY["fault"],
+    "rejected": DELIVERY_FAULT_REJECTED,
+    "timeout": DELIVERY_FAULT_TIMEOUT,
+}
+
+#: 🔴 **【下一步】里 `fault` 那档的三张脸** —— 一档一条，各说各的处置。
+#: ⚠️ **`transient` 就是 `_NEXT["fault"]`**：那段话本来就是照着抖动写的，不是另起一份
+#: （一套，别分叉）。
+#: ⚠️ **覆盖由 `unit_handoff` ⑬ 守着**（键 == `FaultKind` 去掉 `""`）：加第五档忘了补
+#: 这张表 → 当场红，而不是静默走兜底说假话。〔沿革 19〕
+_NEXT_BY_FAULT: dict[str, str] = {
+    "transient": _NEXT["fault"],
+    "rejected": (
+        "这次是**上游拒绝了请求**（4xx）—— **不是任务本身的问题，也不是抖动**："
+        "**原样重发同一份内容会再被拒**。\n"
+        "**换措辞 / 改内容**再 `delegate` 一次；改不动就向用户说明这一段被拦了。"
+    ),
+    "timeout": (
+        "这次是**时间用完了**（不是它干不了，也不是内容有问题）—— "
+        "**可以原样再 `delegate` 一次**。\n"
+        "⚠️ 要是**老是**超时，说明这件活对一轮来说太大：**把它拆小**"
+        "（分成两次委派）。"
+    ),
+}
+
+#: 🔴 **词汇表之外的故障档的【下一步】** —— 同 `DELIVERY_FAULT_UNCLASSIFIED` 的规矩：
+#: **一个事实都不宣称**（不知道是哪一档，就别替它说"原样再委派"还是"换措辞"）。
+#: ⚠️ 用词走体系：**「委派」**，不许单写"派"（守卫 `unit_handoff_form` ⑥ 会红）。
+_NEXT_FAULT_UNCLASSIFIED = (
+    "**平台侧没跑成**，而且这一档**平台没分类** —— 先看上面那段里的原始原因，"
+    "再决定是原样再委派一次还是换措辞。"
+)
+
+#: 🔴 **【平台故障】那一段的三张脸** —— `{detail}` 是原始原因（`outcome.fault`）。
+#: ⚠️ 头一句**按档不同**：抖动/被拒是"根本没**跑成**"，超时是"根本没**跑完**"
+#: （它一直在干活）—— 所以整段进表，不共用一个开头。
+#: ⚠️ **覆盖同样由 `unit_handoff` ⑬ 守着**。〔沿革 19〕
+_FAULT_SECTION: dict[str, str] = {
+    "transient": (
+        "这一轮**根本没跑成**：{detail}\n"
+        "平台侧的基础设施抖动，**重试过一次仍然失败** —— 不是任务本身的问题，"
+        "也不是执行器没干成。\n"
+        "**原样再 `delegate` 一次**即可（不用改措辞、不用改参数、不用问用户）。"
+    ),
+    "rejected": (
+        "这一轮**根本没跑成**：{detail}\n"
+        "**上游拒绝了这次请求**（4xx）—— 不是基础设施抖动，也不是执行器没干成；"
+        "**原样重发同一份内容会再被拒**。\n"
+        "**换措辞 / 改内容**再 `delegate` 一次；改不动就向用户说明这一段被拦了。"
+    ),
+    "timeout": (
+        "这一轮**根本没跑完**：{detail}\n"
+        "**时间用完了**（整趟跑超了平台的上限）—— 不是它干不了，也不是内容有问题；"
+        "它**一直在干活**，只是这一趟没干完。\n"
+        "**可以原样再 `delegate` 一次**；要是**老是**超时，说明活太大，拆小一点再委派。"
+    ),
+}
+
+#: 词汇表外的故障档的【平台故障】段 —— 把原始原因摆出来，**不替它编处置**。
+_FAULT_SECTION_UNCLASSIFIED = (
+    "这一轮**根本没跑成**：{detail}\n"
+    "**平台侧没跑成**，而且这一档**平台没分类** —— 上面那句就是原始原因；"
+    "**别按「重试过 / 没重试」去推断**，看它是什么再决定怎么重新委派。"
+)
+
+#: 🔴 **`delegate` 那条 trace note 的三张脸**（`agent._cmd` 用）。
+#: ⚠️ 它**也住在这里**：同一个词汇表的第四处渲染 —— 散在 `agent.py` 里的话，覆盖守卫
+#: 够不着它（第三轮外审 P2-1 点的就是这个：**四处里只有一处有守卫**）。〔沿革 19〕
+NOTE_BY_FAULT: dict[str, str] = {
+    "transient": "**平台故障**（重试过仍失败）→ 没跑成",
+    "rejected": "**上游拒绝了这次请求**（4xx）→ 没跑成（原样重发会再被拒）",
+    "timeout": "**时间用完了**（整趟超墙钟）→ 没跑完（原样再委派可以；老超时就拆小）",
+}
+
+#: 词汇表外的故障档的 note —— 同规矩，**不宣称事实**。
+NOTE_FAULT_UNCLASSIFIED = "**平台侧没跑成**（原因未分类）"
+
 
 def next_note(kind: str, *, skill: str = "", fault_kind: str = "") -> str:
     """出口 → 回执的【下一步】那段话（`kind` ∈ `Receipt.kind`）。
@@ -190,23 +288,11 @@ def next_note(kind: str, *, skill: str = "", fault_kind: str = "") -> str:
             "⚠️ 它说的话在上面【执行器说】里，**过一眼** —— 它可能在话里说了什么"
             "（这次它没调 `ask_user`，平台不替它转达）。"
         )
-    if kind == "fault" and fault_kind == "timeout":
-        # 🔴 **超时 ≠ 抖动**：它**一直在干活**，只是这一趟没干完 —— 原样再派是合理的；
-        #    但**每次都超时就不是运气问题，是活太大**。〔沿革 14〕
-        return (
-            "这次是**时间用完了**（不是它干不了，也不是内容有问题）—— "
-            "**可以原样再 `delegate` 一次**。\n"
-            "⚠️ 要是**老是**超时，说明这件活对一轮来说太大：**把它拆小**"
-            "（分成两次委派）。"
-        )
-    if kind == "fault" and fault_kind == "rejected":
-        # 🔴 **4xx 拒绝 ≠ 抖动**：原样重发**会再被拒** —— 该做的是换措辞 / 改内容
-        #    （分类从哪来见 `handoff.FaultKind`）。〔沿革 14〕
-        return (
-            "这次是**上游拒绝了请求**（4xx）—— **不是任务本身的问题，也不是抖动**："
-            "**原样重发同一份内容会再被拒**。\n"
-            "**换措辞 / 改内容**再 `delegate` 一次；改不动就向用户说明这一段被拦了。"
-        )
+    if kind == "fault":
+        # 🔴 **三档故障三种处置**（分类从结构上取，见 `handoff.FaultKind`）——
+        #    走表不走 if/elif：加第五档忘了补表，`unit_handoff` ⑬ 当场红，
+        #    而不是静默走兜底去说一句假话。〔沿革 14〕〔沿革 19〕
+        return _NEXT_BY_FAULT.get(fault_kind, _NEXT_FAULT_UNCLASSIFIED)
     return _NEXT[kind]
 
 
@@ -236,17 +322,17 @@ def build_receipt(outcome: Any, *, agent_answer: str = "", note: str = "") -> Re
     # ① 交付结果：一行说清成没成、交付了几样
     if kind == "fault":
         # 🔴 **三档故障三条交付行**：各有各的**处置**，不许借彼此的文案 ——
-        #    `rejected` 那档尤其不许说"重试过一次仍失败"（**根本没重试**，见 `trace`）。〔沿革 14〕
-        if outcome.fault_kind == "rejected":
-            sections["deliver"] = DELIVERY_FAULT_REJECTED
-        elif outcome.fault_kind == "timeout":
-            # ⚠️ 跑了多久**说不清就不说**（fixture / 手写 outcome 没有 `wall_s`）——
-            #    留空比编一个数强（同 `Task.asked` 取不到时的规矩）。
-            _mins = (f"（跑到 {outcome.wall_s / 60:.0f} 分钟还没交）"
-                     if getattr(outcome, "wall_s", 0) else "")
-            sections["deliver"] = DELIVERY_FAULT_TIMEOUT.format(_mins)
-        else:
-            sections["deliver"] = DELIVERY["fault"]
+        #    `rejected` 那档尤其不许说"重试过一次仍失败"（**根本没重试**，见 `trace`）。
+        #    ⚠️ 走表不走 if/elif：加档忘了补表 → `unit_handoff` ⑬ 当场红。〔沿革 14〕〔沿革 19〕
+        #    ⚠️ 跑了多久**说不清就不说**（fixture / 手写 outcome 没有 `wall_s`）——
+        #    留空比编一个数强（同 `Task.asked` 取不到时的规矩）。
+        #    ⚠️ `max(1, …)`：**别说出"跑到 0 分钟"**（<60s 时 `:.0f` 会四舍五入到 0，
+        #    而"跑了 0 分钟"是句读不通的话）。〔沿革 16〕
+        _mins = (f"（跑到 {max(1, round(outcome.wall_s / 60))} 分钟还没交）"
+                 if getattr(outcome, "wall_s", 0) else "")
+        _deliver = _DELIVER_BY_FAULT.get(outcome.fault_kind, DELIVERY_FAULT_UNCLASSIFIED)
+        # ⚠️ 三张模板**都不带别的占位符**（只有 timeout 那个 `{}`），所以统一 format 是安全的。
+        sections["deliver"] = _deliver.format(_mins)
     elif kind == "completed":
         sections["deliver"] = DELIVERY["completed"].format(len(outcome.artifacts))
     elif kind == "waiting":
@@ -316,31 +402,13 @@ def build_receipt(outcome: Any, *, agent_answer: str = "", note: str = "") -> Re
     #    ⚠️ 单起一段，不塞进【执行器说】—— 那句话的来源标注是"**它说的**"，
     #    而这段是**平台说的**（这套代码一直在治"来源标注不能串"）。〔沿革 6〕
     if outcome.fault:
-        if outcome.fault_kind == "rejected":
-            # 🔴 **4xx 拒绝 ≠ 抖动**：不是"重试过仍失败"（根本没重试），也不是
-            #    "原样再派"（重发同一份内容会再被拒）—— 说真话，给对的处置。〔沿革 14〕
-            sections["fault"] = (
-                f"这一轮**根本没跑成**：{outcome.fault}\n"
-                "**上游拒绝了这次请求**（4xx）—— 不是基础设施抖动，也不是执行器没干成；"
-                "**原样重发同一份内容会再被拒**。\n"
-                "**换措辞 / 改内容**再 `delegate` 一次；改不动就向用户说明这一段被拦了。"
-            )
-        elif outcome.fault_kind == "timeout":
-            # 🔴 **超时 ≠ 抖动**：**它一直在干活**，只是这一趟没干完 ——
-            #    "重试过一次仍然失败"对它就是**假话**（根本没重试，是平台按墙钟叫停的）。〔沿革 14〕
-            sections["fault"] = (
-                f"这一轮**根本没跑完**：{outcome.fault}\n"
-                "**时间用完了**（整趟跑超了平台的上限）—— 不是它干不了，也不是内容有问题；"
-                "它**一直在干活**，只是这一趟没干完。\n"
-                "**可以原样再 `delegate` 一次**；要是**老是**超时，说明活太大，拆小一点再委派。"
-            )
-        else:
-            sections["fault"] = (
-                f"这一轮**根本没跑成**：{outcome.fault}\n"
-                "平台侧的基础设施抖动，**重试过一次仍然失败** —— 不是任务本身的问题，"
-                "也不是执行器没干成。\n"
-                "**原样再 `delegate` 一次**即可（不用改措辞、不用改参数、不用问用户）。"
-            )
+        # 🔴 **三档故障三段话**：一档一条，**整段进表**（头一句就不一样：抖动/被拒是
+        #    "根本没**跑成**"，超时是"根本没**跑完**"—— 它一直在干活）。
+        #    ⚠️ 走表不走 if/elif：加档忘了补表 → `unit_handoff` ⑬ 当场红。
+        #    ⚠️ 兜底**一个事实都不宣称**（原来兜到"重试过一次仍然失败"，那对
+        #    `rejected`/`timeout` 都是假话）。〔沿革 14〕〔沿革 19〕
+        _section = _FAULT_SECTION.get(outcome.fault_kind, _FAULT_SECTION_UNCLASSIFIED)
+        sections["fault"] = _section.format(detail=outcome.fault)
 
     return {"kind": kind, "sections": sections}
 

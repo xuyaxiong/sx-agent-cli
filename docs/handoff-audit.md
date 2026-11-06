@@ -709,11 +709,11 @@ uv run python -m evals.unit_handoff_matrix
 
 ### 9.1 跑了什么
 
-| run | case | 内容 | 结果 | 原始记录 |
+| run | case | 内容 | 结果 | 复核方式 |
 |---|---|---|---|---|
-| `handoff-verify` | `x-handoff-e2e` | **用户指定的"同时备课+导学单"**，5 轮真实对话 | 502.9s｜18103 token｜31 次 LLM 调用｜4 个产物 | `logs/proto-20261103-090606-x-handoff-e2e-r1.log`（914 行） |
-| `handoff-verify-nudge` | `e11-fault-injection` | **压"推回去"**（故障注入让判定第一次必返 `incomplete`） | 74.9s｜9 次 LLM 调用｜3 个产物 | `logs/proto-20261103-090644-e11-fault-injection-r1.log` |
-| `handoff-verify-skillfile` | `x-handoff-skillfile` | **压"技能自带文件"**（`exec_path: delegate` 平台造路） | 836.9s｜14 次 LLM 调用｜1 个产物（**15679 字**）｜**推回去 2 次** | `logs/proto-20261103-090835-x-handoff-skillfile-r1.log` |
+| `handoff-verify` | `x-handoff-e2e` | **用户指定的"同时备课+导学单"**，5 轮真实对话 | 502.9s｜18103 token｜31 次 LLM 调用｜4 个产物 | 重跑该 case（日志不入库） |
+| `handoff-verify-nudge` | `e11-fault-injection` | **压"推回去"**（故障注入让判定第一次必返 `incomplete`） | 74.9s｜9 次 LLM 调用｜3 个产物 | 重跑该 case（日志不入库） |
+| `handoff-verify-skillfile` | `x-handoff-skillfile` | **压"技能自带文件"**（`exec_path: delegate` 平台造路） | 836.9s｜14 次 LLM 调用｜1 个产物（**15679 字**）｜**推回去 2 次** | 重跑该 case（日志不入库） |
 
 主 case 的实际路径（**比设计时预想的还全**）：
 
@@ -762,7 +762,8 @@ uv run python -m evals.unit_handoff_matrix
 
 ### 9.3 关键引文（可直接核对）
 
-**H4 交接书**（第 4 轮那次派发，`logs/…x-handoff-e2e-r1.log`）：
+**H4 交接书**（第 4 轮那次派发）：
+
 
 ```
 【用户原话】（**用户说的** —— 平台直接搬，未经转述）

@@ -72,8 +72,8 @@
    `from proto.agent import SKILLS`（领域层反向依赖编排层，就为了读到"评测替换过的那份表"）
    —— 技能表收进 `proto/registry.py` 之后，那个环和这条 lazy import 一起消失。
 7. **两个读工具搬进本模块**（2026-11-05，外审 F2/F3）：它们住在 `skills.py` 就得
-   **函数内 lazy import** 本模块（一提就成环 —— 探针 `tmp/probe_cycle_skills_pack.py`
-   实测：提到顶层当场 ImportError）。同一次把【技能自带文件】提示块抽成
+   **函数内 lazy import** 本模块（一提就成环 —— 实测：把那一行提到顶层**当场 ImportError**）。
+   同一次把【技能自带文件】提示块抽成
    `skill_file_prompt`：它原来在 `read_skill` 的工具返回与 `executor.run_task` 的任务书里
    **逐字重复**（实测 diff 只差变量名）。
 """

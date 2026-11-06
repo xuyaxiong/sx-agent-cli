@@ -520,11 +520,32 @@ def main() -> None:
           f"越界：{sorted(set(_STATUS_TO_STAGE.values()) - stages)}")
     check("五态 ↔ `STAGE_MARK` 的键**刚好**相等",
           set(STAGE_MARK) == stages, f"标记键={sorted(STAGE_MARK)}；五态={sorted(stages)}")
-    # 🔴 **故障两类 ↔ 台账标记**（2026-11-06，SX-07）：加一档（或改了 `FaultKind`）
-    #    忘了文案 → 这里红（同上面两条的规矩；`""` = 没有故障，不算一档）。
-    check("故障两类 ↔ `FAULT_MARK` 的键**刚好**相等",
-          set(FAULT_MARK) == set(get_args(FaultKind)) - {""},
-          f"标记键={sorted(FAULT_MARK)}；FaultKind={sorted(get_args(FaultKind))}")
+    # 🔴 **故障档 ↔ 四处渲染，每处都要"键刚好覆盖"**（2026-11-06，第三轮外审 P2-1）。
+    #    原来**只有 `FAULT_MARK` 一处有这条守卫**，另外三处（交付行 / 下一步 / 故障段）
+    #    兜到"**重试过一次仍失败**"—— 那句话对 `rejected`（根本没重试）和 `timeout`
+    #    （平台按墙钟叫停）**都是假话**。实测：词汇表外的 `fault_kind="quota"` 能让
+    #    **一张回执里同一句假话出现两次**。
+    #    ⚠️ **更坏的是部分覆盖的错觉**：加第五档时 `FAULT_MARK` 那条会红，**补完就绿** ——
+    #    而回执那三处仍是旧兜底。一次绿色让人以为"四处都铺满了"。
+    #    ⇒ 四处各一条 ＋ 第四处（`NOTE_BY_FAULT`，原来散在 `agent.py` 里）**搬进词汇表层**，
+    #    守卫才够得着它。
+    #    有效性自检：给 `FaultKind` 加一个值（不改任何表），下面**五条全红**。
+    from proto.handoff.receipt import (
+        NOTE_BY_FAULT,
+        _DELIVER_BY_FAULT,
+        _FAULT_SECTION,
+        _NEXT_BY_FAULT,
+    )
+
+    _faults = set(get_args(FaultKind)) - {""}   # `""` = 没有故障，不算一档
+    for _name, _tbl in (("`FAULT_MARK`（台账）", FAULT_MARK),
+                        ("`_DELIVER_BY_FAULT`（交付行）", _DELIVER_BY_FAULT),
+                        ("`_NEXT_BY_FAULT`（下一步）", _NEXT_BY_FAULT),
+                        ("`_FAULT_SECTION`（故障段）", _FAULT_SECTION),
+                        ("`NOTE_BY_FAULT`（trace note）", NOTE_BY_FAULT)):
+        check(f"故障档 ↔ {_name} 的键**刚好**相等",
+              set(_tbl) == _faults,
+              f"{_name} 键={sorted(_tbl)}；FaultKind={sorted(_faults)}")
     # ⚠️ TypedDict 的 `__annotations__` 在 3.12 下是 `ForwardRef`（字符串的壳）——
     #    要 `get_type_hints` 解开再比，不然比的是壳。
     from typing import get_type_hints
