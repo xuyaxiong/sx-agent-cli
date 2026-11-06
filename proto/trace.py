@@ -402,6 +402,8 @@ def stream_agent(graph, state, config, who: str, *, role: str):
     """跑一个 agent 图，**每一步 + 每个字**都录下来 —— 边跑边发 `stream` 事件。
 
     Yields：每个 super-step 的完整 state（`stream_mode="values"` 那一支）。
+    ⚠️ **第一个 chunk 是输入 state 本身**（先于任何 super-step；之后只有改了 state 的
+    步才吐）—— 消费方别把它当成"走了一步"（`_stream_with_retry` 的重试边界靠这条，见那里）。
 
     🔴 **为什么要有它**（2026-10-30）：`invoke` 会把整个 agent 循环跑完才返回，
     于是"模型→工具→模型→工具…"这一串**全程静默**。实测一次真实会话：
@@ -455,9 +457,16 @@ def _stream_with_retry(graph, state, config, who: str, role: str):
       **没人指向的**产物（而且第二次的 `task` 是模型重写的，两份内容可能不一样）。
 
     **所以：第一个 super-step 走完就不再重试** —— `_stream_agent` **只在每步结束时**
-    `yield`（流式的字是发 `stream` 事件，不走 yield），所以"吐过东西"＝"至少一步走完了"。
+    `yield`（流式的字是发 `stream` 事件，不走 yield）。⚠️ 但**"吐过东西"≠"走完了一步"**：
+    `stream_mode="values"` 在**任何 super-step 执行之前**先吐**输入 state 本身** ——
+    `node_agent` 那边早写着这条（"第一个 chunk 是输入 state 本身"），这里当初没跟上。
+    ⇒ 边界是**数到第二个 values chunk**（第一个是输入 state；之后只有**改了 state 的步**
+    才吐，所以"数到 2"＝"至少一步动过 state" —— 两条前提由 `unit_stream_join` ⑦
+    拿真图钉住）。
     抖在那之前 = 什么都还没干，重试是**白赚**；抖在那之后 = 已经动过手，
     **如实抛出去**比静默重做一遍强。
+    （2026-11-05 修：原判定"吐过东西"被输入 chunk 提前置真 —— 重试对"第一步抖动"
+      从未生效；探针 `tmp/probe_retry_boundary.py`，守卫 `unit_stream_join` ④。）
 
     ⚠️ **代价如实说**：落在"第二步之后"的抖动，这一轮就**真的失败了** —— 执行器那条有
       `run_task` 的 fault 出口接着（回执【平台故障】→ 主 agent 原样重派）；
@@ -481,15 +490,20 @@ def _stream_with_retry(graph, state, config, who: str, role: str):
     ⚠️ 已经流出去的字**不收回**（记录层是原始记录）—— 所以重试前先发一条 `retry` 事件，
       把"上面那半段作废、现在重来"说破；不然读日志的人会以为模型把话说重了。
     """
-    stepped = False   # 第一个 super-step 走完了没有 —— 它一旦为真，就**不许再重试**
+    #: 已经吐出去的 values chunk 数 —— ⚠️ **第一个是"输入 state 本身"**（真实图在任何
+    #: super-step 执行之前先吐它；之后**只有改了 state 的步才吐** —— 两条都由
+    #: `unit_stream_join` ⑦ 拿真图钉住）。所以"至少一步动过 state"＝数到 **2**。
+    #: 🔴 原来这里是布尔 `stepped`（"吐过东西"）—— 被那个输入 chunk 提前置真，
+    #: 重试对"第一步抖动"**从未生效**（2026-11-05 修；守卫 `unit_stream_join` ④）。
+    chunks_seen = 0
     for attempt in (1, 2):
         try:
             for chunk in _stream_agent(graph, state, config, who, role):
-                stepped = True
+                chunks_seen += 1
                 yield chunk
             return
         except Exception as e:  # noqa: BLE001 —— 抖动的种类不可穷举（网络/超时/限流/网关）
-            if attempt == 2 or stepped:
+            if attempt == 2 or chunks_seen >= 2:
                 raise
             _publish({
                 "type": "note", "kind": "retry", "ts": stamp(),
