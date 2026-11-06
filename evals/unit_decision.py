@@ -67,8 +67,11 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 
 def _capture(fn) -> str:
     """跑一段记录，把它**新写进日志的那几行**捞出来（不碰别的输出）。"""
-    before = trace.LOG_FILE.stat().st_size
+    before = trace.log_size()
     fn()
+    # ⚠️ **`fn()` 可能一个字都没写**（日志是惰性的：没写过就没有那个文件）
+    if not trace.LOG_FILE.exists():
+        return ""
     with io.open(trace.LOG_FILE, "rb") as f:
         f.seek(before)
         return f.read().decode("utf-8", "replace")
@@ -358,6 +361,22 @@ def main() -> None:
             _not_wired.append(f"{_f}（{_who}）")
     check("三个入口都开了会话（`session.use` / `session.session`）", not _not_wired,
           f"没开的：{_not_wired}")
+
+    print("\n⑭ `import proto.trace` **不在磁盘上建文件**（日志是惰性的）")
+    # 🔴 原来 `LOG_FILE.open("w")` 就跑在 **import 那一刻** —— "导入这个动作本身"
+    #    在磁盘上建文件，而大多数进程（单测、只用会话的宿主）**一个字都不写它**。
+    #    实测 `logs/` 里 **147 个空文件（6%）**，来源全是这条。
+    #    ⚠️ 惰性之后"这个进程还没写过日志"成了**正常状态** —— 所以读体积一律走
+    #    `trace.log_size()`（不存在 = 0），别直接 `LOG_FILE.stat()`。
+    #    有效性自检：把那行 `open()` 加回 `trace.py` 的模块级 → 这里必须红。
+    import subprocess
+
+    _before = {p.name for p in trace.LOG_DIR.glob("*.log")}
+    subprocess.run([sys.executable, "-c", "import proto.trace"],
+                   capture_output=True, timeout=120, check=False)
+    _after = {p.name for p in trace.LOG_DIR.glob("*.log")}
+    check("子进程 `import proto.trace` 之后**没多出文件**",
+          _before == _after, f"多出来的：{sorted(_after - _before)}")
 
     print("\n" + "═" * 78)
     print(f"{'全部通过' if not FAIL else '有失败'}：{len(PASS)}/{len(PASS) + len(FAIL)}")

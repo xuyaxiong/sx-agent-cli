@@ -303,7 +303,7 @@ def main() -> None:
     check("`see` **原样**接上（不再自作主张加「全文：」）",
           "｜判定看不到中间 1487 字" in shown9, repr(shown9[-60:]))
     # 记录层同一行也要一样 —— 两处渲染器是两份代码，别只对一半
-    before9 = trace.LOG_FILE.stat().st_size
+    before9 = trace.log_size()
     trace.cut(cut_ev["where"], cut_ev["kept"], cut_ev["total"], see=cut_ev["see"])
     with io.open(trace.LOG_FILE, "rb") as f:
         f.seek(before9)
@@ -377,7 +377,7 @@ def main() -> None:
               and "finalize:" not in shown, repr(shown[:70]))
     finally:
         restore12()
-    before = trace.LOG_FILE.stat().st_size
+    before = trace.log_size()
     trace.note(relay_text, kind="relay")
     with io.open(trace.LOG_FILE, "rb") as f:
         f.seek(before)

@@ -197,6 +197,19 @@
     ⚠️ 有效性自检：把 `_fh()` 改回模块级句柄 → `unit_decision` ⑫ 红（**而且第一版
     它是以 `FileNotFoundError` 崩的、不是红** —— 补了 `exists()` 才干净，同
     `unit_console` 那条"用 `find` 不用 `index`"的教训）。
+31. **默认会话的日志也改惰性**（2026-11-06，用户：*"建那么多空文件夹干啥"*）。
+    原来 `LOG_FILE.open("w")` 就跑在 **import 那一刻** —— **导入这个动作本身**在磁盘上
+    建文件，而大多数进程（单测、只用会话的宿主）**一个字都不写它**。实测 `logs/` 里
+    **2275 个文件、147 个是空的（6%）**，来源全是这条（`unit-handoff-form` 47、
+    `unit-receipt` 42、`unit-registry` 36…… 那些单测猴补丁了句柄，真实文件从没被写过，
+    **但建已经建了**）。
+    ⇒ `log_fh = None`（"还没建"），`_fh()` 第一次写时才开 —— 于是**两条路一致**了
+    （会话那条本来就是惰性的）。
+    ⚠️ **代价**：惰性之后"这个进程还没写过日志"成了**正常状态**，`LOG_FILE.stat()` 会
+    `FileNotFoundError` —— 加了 `trace.log_size()`（不存在 = 0），5 处读体积的地方
+    换过去，3 处 `_capture` 的 `open` 加了存在性兜底。
+    ⚠️ 有效性自检：把 `open()` 加回模块级 → `unit_decision` ⑭ 红（子进程 import 后
+    磁盘上多出一个文件）。⑭ 是**开子进程实测**的 —— 同进程里看不出 import 的副作用。
 """
 
 from __future__ import annotations
@@ -205,6 +218,7 @@ import os
 import re
 import time
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Callable
 
 from proto import session
@@ -226,9 +240,23 @@ _SUFFIX = f"-{_TAG}" if _TAG else ""
 #: ⚠️ 开了会话就**各有各的文件**（见 `log_file()`）。**日志格式一个字没改** ——
 #: 这是选"每会话一个文件"（而不是"一个文件加会话列"）的全部理由：`_recorder` 的
 #: "格式逐字节一致"那条约束**不用动**。〔沿革 30〕
+#: ⚠️ **它只是"文件会在哪儿"，不是"文件已经在了"** —— 真建出来是**第一次写日志**那一刻
+#: （`_fh()` 惰性开）。原来这里就 `open("w")`：**`import` 这个动作本身**在磁盘上建文件，
+#: 而大多数进程（单测、只用会话的宿主）一个字都不写它 —— 实测 `logs/` 里 **147 个空文件**。
+#: 惰性之后**两条路一致**了（会话那条本来就是惰性的）。〔沿革 31〕
 LOG_FILE = LOG_DIR / f"proto-{time.strftime('%Y%m%d-%H%M%S')}{_SUFFIX}.log"
 session.default().log_file = LOG_FILE
-session.default().log_fh = LOG_FILE.open("w", encoding="utf-8")
+# ⚠️ **别在这儿 open** —— `log_fh = None` 就是"还没建"，`_fh()` 会替我们开。
+
+
+def log_size() -> int:
+    """当前会话的日志**已经写了多少字节** —— **文件还没建 = 0**。
+
+    ⚠️ 为什么要它：惰性之后"这个进程还没写过日志"成了**正常状态**，
+    直接 `LOG_FILE.stat()` 会 `FileNotFoundError`。读体积的地方一律走这儿。
+    """
+    p = log_file()
+    return p.stat().st_size if p.exists() else 0
 
 
 def log_file() -> Path:
