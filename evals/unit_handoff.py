@@ -28,6 +28,16 @@ import io
 import re
 import sys
 from glob import glob
+import os
+
+# 🔴 **单测的日志打 tag**（2026-11-06）：`logs/` 里真会话与测试垃圾混在一起，复盘时
+#    grep 不动 —— 打上 tag 后文件名是 `proto-<ts>-unit-<名字>.log`，一眼可辨
+#    （清理：`rm logs/*-unit-*.log`）。复用跑批那个 `PROTO_LOG_TAG`（`evals/_child.py`）。
+# ⚠️ **必须排在所有非标准库 import 之前**：`proto.trace` 在 import 那一刻读 env 定文件名，
+#    而 `from evals import chat` 这种**间接** import 也会把它拉进来（实测踩过：
+#    第一版插在 `from evals import chat` 之后 → 日志照样没 tag）。
+#    守卫：`unit_feed_waiting` ⑮。
+os.environ["PROTO_LOG_TAG"] = "unit-handoff"
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -92,7 +102,12 @@ ALLOWED: dict[str, list[tuple[str, str]]] = {
         (r'lines\[i \+ 1 :\]|lines\[0\]', 'frontmatter 切分'),
     ],
     'proto/__main__.py': [
-        (r'\[seen\[0\] :\]|\[0\]', '增量打印的游标'),
+        # ⚠️ 原来这里是"增量打印的游标"（`seen[0]`）—— 2026-11-06 显示层改成**订阅事件**
+        # （外审 N2 的收尾），那个游标没了，豁免的正则再也匹配不到 → 本文件的 ALLOWED
+        # 自检当场报红（"代码改了就把这条豁免删掉，别留着烂"）。换成现在这条：
+        (r'lines\[:_BLOCK_MAX_LINES\]',
+         '**显式截断**：终端上把长块截行，并写明「还有 N 行，全文见日志文件」—— '
+         '它切的是**上屏**，交接内容本身在 state / 日志里一个字没少（判据②：切了必须标）'),
     ],
 }
 
