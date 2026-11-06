@@ -241,6 +241,41 @@ def main() -> None:
     check("**返回 `None` 也算失败** → 走默认值（不把 None 交给调用方）",
           got2 == "保守默认", repr(got2))
 
+    print("\n⑩ PROMPT 全文**默认不逐字记**（渐进式披露：清单常驻、正文按需）")
+    # 🔴 2026-11-06（用户定）：试答那一步**每轮把主 agent 的整个上下文抄一遍**进日志，
+    #    实测 4 次 621 → 1225 → 1846 → 2411 字，**无上界**（∝ 会话长度）。⇒ 默认不记，
+    #    要看置 `PROTO_LOG_PROMPT=1`。⚠️ **不记也必须说**（"切了要标"）—— 那条 note 在。
+    #    有效性自检：把 `llm.safe_structured` 里的 `log_prompt_verbatim()` 去掉（改回默认记），
+    #    第一条必须红；把那条 note 删掉，第二条必须红。
+
+    class _Ok:
+        def with_structured_output(self, schema):  # noqa: ANN001
+            return self
+
+        def invoke(self, prompt):  # noqa: ANN001
+            return "ok"
+
+    _假原话 = "【它要的信息】\n  （守卫用的假原话）"
+    _orig3 = llm_mod.get_model
+    try:
+        llm_mod.get_model = lambda: _Ok()  # type: ignore[assignment]
+        os.environ.pop("PROTO_LOG_PROMPT", None)
+        off = _capture(lambda: safe_structured(_Schema, _假原话, "d", tag="守卫",
+                                               log_prompt=True, log_response=False))
+        os.environ["PROTO_LOG_PROMPT"] = "1"
+        on = _capture(lambda: safe_structured(_Schema, _假原话, "d", tag="守卫",
+                                              log_prompt=True, log_response=False))
+    finally:
+        llm_mod.get_model = _orig3  # type: ignore[assignment]
+        os.environ.pop("PROTO_LOG_PROMPT", None)
+    check("默认：**不**逐字记 PROMPT 全文",
+          "PROMPT（发给 LLM 的全文）" not in off, off[:200])
+    check("默认：**但要说** —— 一条 note 报字数 ＋ 指明开关（「切了要标」）",
+          "未逐字记录" in off and f"共 {len(_假原话)} 字" in off
+          and "PROTO_LOG_PROMPT=1" in off, off[:300])
+    check("置 `PROTO_LOG_PROMPT=1`：**全量打出来**（含正文原话）",
+          "PROMPT（发给 LLM 的全文）" in on and "守卫用的假原话" in on, on[:200])
+
     print("\n" + "═" * 78)
     print(f"{'全部通过' if not FAIL else '有失败'}：{len(PASS)}/{len(PASS) + len(FAIL)}")
     for name in FAIL:

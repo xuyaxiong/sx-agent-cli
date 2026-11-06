@@ -345,8 +345,10 @@ def _ask_main(messages: list, skill_name: str, task: str, outcome: Any) -> str:
     msgs = messages or []
     prompt = ask_prompt(skill_name, task, outcome, msgs)
     # 交接关键日志：这一步把**主 agent 的全部上下文**又发了一遍（判据③：膨胀代价看得见）
+    # ⚠️ **这行就是清单**（多少字 ＋ 什么构成）—— 正文默认不逐字记（`PROTO_LOG_PROMPT`），
+    #    所以这里**不许再写"逐字见下"**：那是句会变成假话的文案（下面那条 note 说在哪取）。
     trace.handoff("试答", "平台", "主 agent", prompt,
-                  structured=f"ExecOutcome ＋ 全部 {len(msgs)} 条消息（逐字见下）")
+                  structured=f"ExecOutcome ＋ 全部 {len(msgs)} 条消息")
     # 调用失败时保守当作「答不上」—— 交给用户，而不是编一个答案
     r = safe_structured(
         _AgentAnswer, prompt, _AgentAnswer(can_answer=False),
@@ -371,7 +373,10 @@ def _ask_main(messages: list, skill_name: str, task: str, outcome: Any) -> str:
             f"**它要的那句**（执行器 → 平台，`ask_user` 原话，{len(outcome.asked)} 字）："
             f"{outcome.asked}",
             f"它最后说的那段（{len(outcome.report)} 字，可能有上下文、也可能只是过场）",
-            f"主 agent 的全部 {len(msgs)} 条消息 —— **全文、不截**，逐字见上面那条 PROMPT",
+            # ⚠️ 指向**清单 ＋ 开关**，不指"上面那条 PROMPT" —— 正文默认不逐字记，
+            #    那句会变成假话。逐条的内容各自在进上下文那一刻记过（见 `llm` 那条 note）。
+            f"主 agent 的全部 {len(msgs)} 条消息 —— **全文、不截**"
+            f"（逐条已各自记录；拼好的整份置 `PROTO_LOG_PROMPT=1` 可看）",
         ],
         result=[
             f"can_answer = **{r.can_answer}**",

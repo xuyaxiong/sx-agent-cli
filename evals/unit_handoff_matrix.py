@@ -101,8 +101,10 @@ def main() -> None:  # noqa: C901
     # ── ③ 台账 ──
     from proto.handoff.ledger import render_ledger
 
-    # ⚠️ **两条明细行都要覆盖**（2026-11-04）：待答那档打 `asked`（"它要的信息"），
-    #    失败那档打 `report`（"执行器说"）—— 两行都要能截、都要说清全文在哪。
+    # ⚠️ **2026-11-04 时两条明细行都要覆盖**（待答打 `asked`、失败打 `report`，都要能截）；
+    #    🔴 **2026-11-06 起只剩一条**：待答那档**不再重印问题**（`ledger`〔沿革 11〕，
+    #    全文出处是【待答】），所以**截断只有 `failed` 那档**（下面 t2）。
+    #    ⚠️ t1（待答）仍留在样本里 —— 它守的是"**不**重印" ＋ 标签还在。
     led = render_ledger([
         {"id": "t1", "skill": "quiz", "stage": "waiting_for_input", "artifacts": [],
          "asked": "用几个课时？" * 30, "report": "问课时" * 60},      # >150 字才触发台账截断

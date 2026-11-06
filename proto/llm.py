@@ -44,6 +44,17 @@
    `ans.can_answer`）直接 AttributeError，**整轮炸**；而这条路上 `safe_structured`
    的全部意义就是"别让一次抖动炸掉整轮"。⚠️ **没实测到过**（拿不到稳定复现）——
    代价 2 行，收益是堵死这条 AttributeError。
+5. **PROMPT 全文默认不逐字记**（2026-11-06，用户定）。`log_prompt` 原来只管"调用方
+   允不允许"，而**默认是记** —— 于是试答那一步**每轮把主 agent 的整个上下文抄一遍**进
+   日志。实测（`logs/proto-20261106-151407.log`）4 次试答 **621 → 1225 → 1846 → 2411 字**，
+   **无上界**（它 ∝ 会话长度）；同期交接书 289 → 824 字，**有界**（∝ 一个任务）。
+   用户原话：*"日志能少打印一些吗 因为会越来越长 而且上下文本来就存在 如果实在要看就
+   全量打出来 默认就不打印了 保持 decide 清晰 而且大小合适"*。
+   ⇒ 拆成两个问题：**谁决定**（`log_prompt`，调用方声明"允许"）vs **什么时候看**
+   （`config.log_prompt_verbatim`，默认不记）。
+   ⚠️ 顺带修掉一句**已经变成假话**的注释：原来这里写"生产代码里暂时没有这样的调用方"
+   —— 试答**就是**（它的 prompt 里嵌着主 agent 的全部上下文）。
+   ⚠️ **不记也要说**（"切了要标"）：关掉时留一条 note 报字数 ＋ 开关。
 """
 
 from __future__ import annotations
@@ -53,7 +64,7 @@ import warnings
 from typing import Any
 
 from proto import trace
-from proto.config import get_model
+from proto.config import get_model, log_prompt_verbatim
 
 # 🔴 **压掉一条已知的 pydantic 序列化警告** —— 它是 `stream_mode="messages"` 的副作用，
 #    **返回的结果是对的**（现象 / 根因 / 实测见〔沿革 1〕）。
@@ -88,19 +99,34 @@ def safe_structured(
         tag: 日志里显示的标题。
         kind: 这次调用的**语义标签**（目前只有 `ask_main`）—— 原样发给 section 事件；
             它的 PROMPT / RESPONSE 块一律带 `kind="llm_io"`，展示层据此归并成同一块。
-        log_prompt: 是否把提示词**逐字**写进日志。**prompt 里嵌了产物正文时**传 False
-            —— 产物本身已另存，由调用方先记一行"喂了什么"的结构化摘要即可；用户要求
-            "日志只告知生成了产物、给点产物信息，不必全文放在那里"〔沿革 2〕。
-            ⚠️ **判定退休后，生产代码里暂时没有这样的调用方**（参数留着：那条规矩还成立，
-            将来有嵌正文的 prompt 就传它）。
+        log_prompt: 这一步的 prompt **允不允许**逐字写进日志（调用方声明，默认允许）。
+            **prompt 里嵌了产物正文时**传 False —— 产物本身已另存，由调用方先记一行
+            "喂了什么"的结构化摘要即可；用户要求"日志只告知生成了产物、给点产物信息，
+            不必全文放在那里"〔沿革 2〕。
+            ⚠️ **它只管"允不允许"**；"这次运行要不要真记"是 `PROTO_LOG_PROMPT`（默认
+            **不记**）—— 两个问题分开：**谁决定**（调用方）vs **什么时候看**（开关）〔沿革 5〕。
+            ⚠️ 试答（`agent._ask_main`）就是"嵌了正文"的那个调用方：它的 prompt 里是
+            **主 agent 的全部上下文**，而那是**逐条已记过**的 —— 它走默认（不逐字记）。
         log_response: 是否把返回**原样**写进日志（`str(r)` ＝ pydantic repr）。
             ⚠️ 调用方**自己会渲染一条「决策记录」**时传 False —— 否则同一件事在日志里
             **两副面孔**（〔沿革 2〕）。用户定的规矩：**同一个东西不要搞两套** ——
             显示给人看的和留在日志里的必须是同一份。
     """
     trace.section(tag or f"结构化输出 · {getattr(schema, '__name__', schema)}", kind=kind)
-    if log_prompt:
+    # 🔴 **默认不逐字记**（渐进式披露：清单常驻、正文按需）—— 清单是调用方上面那条
+    #    `trace.handoff` 摘要（**多少字 ＋ 什么构成**），正文要看时置 `PROTO_LOG_PROMPT=1`。
+    #    为什么默认关、数据是多少，见 `config.log_prompt_verbatim` 的 docstring〔沿革 5〕。
+    # ⚠️ **不记也必须说**（"切了要标"）—— 下面两条 note 就是那个声明，缺了才是违反。
+    if log_prompt and log_prompt_verbatim():
         trace.block("PROMPT（发给 LLM 的全文）", prompt, kind="llm_io")
+    elif log_prompt:
+        # ⚠️ **别写"构成见上面那条交接摘要"**：`trace.handoff` 的行**只进日志、不上屏**
+        #    （`chat.py` 那条总注释）—— 那样终端上就指了一个**不存在的东西**。
+        #    "喂了什么"由调用方写在**两边都上屏**的地方（试答那步是【前提】那一格）。
+        trace.note(
+            f"PROMPT 未逐字记录（共 {len(prompt)} 字）—— 要看全量置 `PROTO_LOG_PROMPT=1`",
+            kind="llm_io" if kind else "",
+        )
     else:
         trace.note(
             f"PROMPT 未逐字记录（共 {len(prompt)} 字）—— 内含**产物正文**，产物另存；"

@@ -231,24 +231,49 @@ def main() -> None:
                    "qa": [], "user_turns": []}],
     }
     injected = node_prepare(st)["messages"][0].content
-    check("② 台账 · 长内容被截了（它是每轮重复注入的索引，允许短）", LONG not in injected)
-    check("② 台账 · **但截了必须说**：带了平台截断标记", "【平台截断" in injected)
+    # 🔴 **待答那档一个字都不重印**（2026-11-06，`ledger`〔沿革 11〕）：全文出处是【待答】
+    #    （`node_finalize` **无条件**注入、而且是全的）。实测每句 `Task.asked` 原来在主
+    #    agent 上下文里出现**两遍** —— **截断的那份就是台账这行**。
+    check("② 台账 · 待答那档**不重印问题**（全文在【待答】里，实测 100% 覆盖）",
+          LONG not in injected and "平台已原样转达" in injected)
+    check("② 台账 · 但**清单还在**：说清它有多少字", f"（{len(LONG)} 字" in injected)
+    check("② 台账 · 短的那档也不重印（不因为短就破例）",
+          "用几课时？" not in node_prepare(
+              {**st, "tasks": [{**st["tasks"][0], "asked": "用几课时？"}]}
+          )["messages"][0].content)
+    check("② 台账 · `asked` 缺失时**不许留空冒号**，要说清是「没有」",
+          "没留下问题原话" in node_prepare(
+              {**st, "tasks": [{**st["tasks"][0], "asked": ""}]}
+          )["messages"][0].content)
+
+    # ── ②′ 台账**截断**那一档：`failed` 的 `report`（"执行器说"）──
+    # ⚠️ 原来这一列测的是 waiting 的 `asked`；那行改成"不重印"之后，**截断只剩这一档**。
+    fail_st = {**st, "tasks": [{**st["tasks"][0], "stage": "failed"}]}
+    fail_led = node_prepare(fail_st)["messages"][0].content
+    check("②′ 台账 · 长内容被截了（它是每轮重复注入的索引，允许短）", LONG not in fail_led)
+    check("②′ 台账 · **但截了必须说**：带了平台截断标记", "【平台截断" in fail_led)
+    check("②′ 台账 · 说明了还差多少字", "还有" in fail_led and "字" in fail_led)
     # 🔴 **E2（2026-11-04 复审）："全文在哪"两条路不一样** —— `delegate` 那趟的全文在
     #    **回执**里（主 agent 自己的工具返回，就在它上下文里）；`feed`（用户答复后
     #    平台投递重跑）那趟**没有回执**，全文压根不在它上下文里。
     #    原来两条路都写"全文见那次的回执"—— 投递那条路指过去，只会翻到**上一轮**的回执
     #    （内容还是旧的），把旧的当成当前的：**指向"存在但内容不对"的出处比指不到更坏**。
-    check("② 台账 · 说明了还差多少字", "还有" in injected and "字" in injected)
-    check("② 台账 · `delegate` 那轮：指向回执",
-          "全文见那次的回执" in
-          node_prepare({**st, "tasks": [{**st["tasks"][0], "run_by": "delegate"}]})["messages"][0].content)
-    check("② 台账 · `feed`／没记 run_by 时：**不许**指向回执，要说清「你手上没有」",
-          "回执" not in injected and "不在你的上下文里" in injected)
-    # ⚠️ **两个字段都要缩短**：台账 waiting 那档打的是 `asked`（不是 `report`），
-    #    只缩 `report` 的话 `asked` 还是长的 → 照样被截 → 这条会假红（2026-11-04 踩过）。
+    check("②′ 台账 · `delegate` 那轮：指向回执",
+          "全文见那次的回执" in node_prepare(
+              {**fail_st, "tasks": [{**fail_st["tasks"][0], "run_by": "delegate"}]}
+          )["messages"][0].content)
+    _feed_led = node_prepare(
+        {**fail_st, "tasks": [{**fail_st["tasks"][0], "run_by": "feed"}]})["messages"][0].content
+    check("②′ 台账 · `feed` 那轮：**不许**指向回执，要说清「你手上没有」",
+          "全文见" not in _feed_led and "不在你的上下文里" in _feed_led)
+    check("②′ 台账 · 没记 `run_by` 时 fail-safe 到「没有全文」",
+          "不在你的上下文里" in fail_led)
+    # ⚠️ 短的**不该**被标截断 —— 这一档打的就是 `report`，只缩它就够。
     short_task = {**st["tasks"][0], "report": "很短", "asked": "用几课时？"}
-    check("② 台账 · 短内容**不该**被标截断",
-          "【平台截断" not in node_prepare({**st, "tasks": [short_task]})["messages"][0].content)
+    check("②′ 台账 · 短内容**不该**被标截断",
+          "【平台截断" not in node_prepare(
+              {**fail_st, "tasks": [{**fail_st["tasks"][0], "report": "很短"}]}
+          )["messages"][0].content)
 
     # ── ⑪ 透传（平台 → 用户）：**不再注入消息** —— 问题只住在通道里 ──
     # 🔴 **2026-11-04（F18）**：原来这里注入一条 `AIMessage`（内容＝执行器的原话），

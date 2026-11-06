@@ -5,6 +5,8 @@
     MODEL_BASE_URL  兼容端点，如 https://api.deepseek.com/v1（官方 OpenAI 可不填）
     MODEL_TIMEOUT_S 单次调用的**读超时**（秒，默认 300）—— 卡住时的闸门，
                     见 `get_model` 里那条注释〔沿革 3〕（它治的是"一次阻塞调用"，不是墙钟）
+    PROTO_LOG_PROMPT  PROMPT 全文是否**逐字**写进日志（默认**不写**）—— 渐进式披露：
+                    清单常驻、正文按需。见 `log_prompt_verbatim`〔沿革 4〕
 
 ## 这个文件是什么
 
@@ -48,6 +50,14 @@ chat model。**不碰任何业务**。
    算）—— 所以**一直在吐字的流不会被误杀**，只有真卡住才触发 ✓。
    ⚠️ 触发后走既有故障路：`APITimeoutError` 没有 `status_code` → `transient`
    → 回执说"原样再派"（同 SX-07 那套分类，不新增分支）。
+4. **`PROTO_LOG_PROMPT` —— PROMPT 全文默认不逐字记**（2026-11-06，用户定）。试答那一步
+   把**主 agent 的全部上下文**拼成 PROMPT 再喂回去，而那份内容**已经逐条记过**（每条消息
+   进上下文时各记一条）—— 再抄一遍是同一件事第二副面孔，而且**随会话无界增长**：实测
+   4 次试答 621 → 1225 → 1846 → 2411 字，同期交接书 289 → 824 字（**有界**）。
+   用户原话：*"日志能少打印一些吗 因为会越来越长 而且上下文本来就存在 如果实在要看就
+   全量打出来 默认就不打印了 保持 decide 清晰 而且大小合适"*。⇒ 清单（交接摘要：
+   多少字 ＋ 什么构成）常驻，正文按需（置 `PROTO_LOG_PROMPT=1`）。
+   ⚠️ **不写也必须说**（"切了要标"）—— `llm.safe_structured` 留一条 note 报字数 ＋ 开关。
 """
 
 from __future__ import annotations
@@ -125,3 +135,23 @@ def describe() -> str:
     name = os.getenv("MODEL_NAME", "?")
     base = os.getenv("MODEL_BASE_URL", "").strip() or "api.openai.com"
     return f"{name} @ {base}"
+
+
+def log_prompt_verbatim() -> bool:
+    """PROMPT 全文是否**逐字**写进日志 —— **默认不写**（置 `PROTO_LOG_PROMPT=1` 才写）。
+
+    🔴 这是「交接三问」③（渐进式披露）的落地：**清单常驻、正文按需**。清单是调用方自己
+    那条 `trace.handoff` 摘要（**多少字 ＋ 什么构成**），一直在；正文（拼好的整份 PROMPT）
+    默认不落 —— 它的**内容已经逐条记过**（每条消息进上下文时各记一条），再抄一遍是
+    同一件事第二副面孔，而且随会话**无界增长**（数据见〔沿革 4〕）。
+
+    ⚠️ **不写也必须说**（"切了要标"）—— `llm.safe_structured` 会留一条 note 报字数
+    并指明这个开关。**没有那条 note 才是违反。**
+
+    ⚠️ 开关放这儿、不写在 `llm.py` —— 本模块是"配置与运行环境的唯一出处"，
+    env 的名字只许有一处定义（一套，别分叉）。
+
+    ⚠️ **故意不缓存**（不加 `lru_cache`）：单测要能当场翻它（`unit_decision` ⑩ 就是
+    关了再开、开完再关地验）。
+    """
+    return os.getenv("PROTO_LOG_PROMPT", "").strip().lower() in {"1", "true", "yes", "on"}

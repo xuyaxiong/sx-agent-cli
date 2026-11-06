@@ -537,11 +537,17 @@ def _on_event(ev: dict) -> None:
     """事件总线的订阅入口 —— 展示层从这里拿**结构化**事实，自己排版上屏。"""
     global _PENDING
     t, k = ev.get("type"), ev.get("kind") or ""
-    # llm_io 的 PROMPT/RESPONSE 归并进挂着的试答块（同一次 LLM 调用 = 同一块）；
-    # 其余任何事件到来都先关块 —— 时序不许倒。
+    # llm_io 的 PROMPT / RESPONSE / **「未逐字记录」那条 note** 归并进挂着的试答块
+    # （同一次 LLM 调用 = 同一块）；其余任何事件到来都先关块 —— 时序不许倒。
     # ⚠️ `decision` 也**不关块**（2026-11-05）：它是这个块的**另一半**（结果），
     #    由下面那个分支接上去一起吐 —— 见 `k == "ask_main"` 那段的注释。
-    if not (t == "block" and k == "llm_io" and _PENDING is not None) and t != "decision":
+    # 🔴 **`note` 也必须算进来**（2026-11-06）：PROMPT 全文默认不逐字记 ⇒ 那次调用归并
+    #    进来的是 note、不是 block。漏了它，块会**先被关掉**，然后 note 和四段**各自再吐
+    #    一个 `🧭 DECIDE`** —— **一个块变三个**（实测：`unit_console` ⑬ 默认路那条当场红，
+    #    报"吐了 3 次"）。`_SPECIAL_KINDS` 里 `llm_io` 的表态本来就是
+    #    "那次 LLM 调用的 PROMPT/RESPONSE/**失败提示**"—— 三种载体都得走同一个块。
+    _merges_into_block = t in ("block", "note") and k == "llm_io" and _PENDING is not None
+    if not _merges_into_block and t != "decision":
         _close_pending()
 
     if t == "stream":
@@ -562,9 +568,13 @@ def _on_event(ev: dict) -> None:
             #
             # 🔴 **而且这两半要合成一块**（用户 2026-11-05 的判据：*"所谓交接，就是
             #    外部给 LLM 什么东西、LLM 吐出什么东西"*）：**PROMPT 是这次决策的前提**
-            #    （【前提】里就写着"逐字见上面那条 PROMPT"），**四段是它的结果**。
+            #    （【前提】里写的就是"主 agent 的全部 N 条消息"—— PROMPT 正是那 N 条拼的），
+            #    **四段是它的结果**。
             #    块在这儿开、PROMPT 由 `llm_io` 归并进来（**实时上屏，不黑屏**），
             #    四段在 `decision` 事件到达时**接到同一个块尾部**。
+            # ⚠️ PROMPT 全文**默认不逐字记**（`PROTO_LOG_PROMPT`，见 `config.log_prompt_verbatim`）
+            #    —— 那时归并进来的是**一条 note**（"未逐字记录（N 字）＋ 开关"），位置不变、
+            #    块照样只有一个。**那条 note 必须在**（"切了要标"），见下面 `note` 分支。
             _PENDING = ["decide", [str(ev["title"])], ev["ts"]]
         elif k in _ROLE_BY_KIND:
             _emit(_ROLE_BY_KIND[k], str(ev["title"]), stamp=ev["ts"], cap=True)
@@ -597,6 +607,17 @@ def _on_event(ev: dict) -> None:
                   + "\n（把上面那条**执行器的原话原样**转达 —— 代码保证不丢；主 agent 若也复述了一遍，"
                     "那是提示词层面的礼貌，不是平台重复）",
                   stamp=ev["ts"])
+        elif k == "llm_io":
+            # 🔴 **`llm_io` 的 note 必须看得见**：它是"这次调用的 PROMPT **没**逐字记"
+            #    那条声明 —— **"切了要标"**（交接三问②），静默丢掉就是违反。
+            #    落在**原来该有 PROMPT 的那个位置**（挂着的块里），所以块还是只有一个。
+            #    ⚠️ 它原来**确实被静默丢了**：`note` 这条分支只认 `_ROLE_BY_KIND`，而
+            #    `llm_io` 在 `_SPECIAL_KINDS` 里（那个集合只被 `block` 那条路用）；
+            #    下面那道收尾自检也拦不住 —— 它三个集合都进了，算"表过态"。
+            if _PENDING is not None:
+                _PENDING[1] += [str(ev["text"])]
+            else:
+                _emit("decide", str(ev["text"]), stamp=ev["ts"])
         elif k in _ROLE_BY_KIND:
             _emit(_ROLE_BY_KIND[k], str(ev["text"]), stamp=ev["ts"], cap=True)
     elif t == "cut":

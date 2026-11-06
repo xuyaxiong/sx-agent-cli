@@ -414,8 +414,31 @@ def main() -> None:
     #    `index` 会抛 ValueError —— 那就成了"脚本炸了"而不是"这条红了"，
     #    输出里**没有 ❌ 行**，看不出红的是哪一条。
     _i_p, _i_q = body.find("PROMPT（发给 LLM 的全文）"), body.find("【前提】")
-    check("PROMPT（输入）在四段（结果）**之前** —— 【前提】里写的就是「见上面那条 PROMPT」",
+    check("PROMPT（输入）在四段（结果）**之前** —— 【前提】里写的就是「全部 N 条消息」",
           -1 < _i_p < _i_q, f"PROMPT@{_i_p}，【前提】@{_i_q}")
+
+    # 🔴 **默认那条路**（2026-11-06）：PROMPT 全文**默认不逐字记** ⇒ 归并进来的是**一条
+    #    note**（"未逐字记录（N 字）＋ 开关"）。它**必须照样落在同一个块、同一个位置**
+    #    —— **"切了要标"**。原来它**确实被静默丢了**：`note` 那条分支只认
+    #    `_ROLE_BY_KIND`，而 `llm_io` 在 `_SPECIAL_KINDS` 里（那个集合只被 `block`
+    #    那条路用）；下面那道收尾自检也拦不住 —— 三个集合都进了，算"表过态"。
+    #    有效性自检：把 `chat._on_event` 里 `k == "llm_io"` 那条分支删掉，下面两条必须红。
+    seen14, restore14 = _reset_emit(chat)
+    try:
+        chat._on_event({"type": "section", "kind": "ask_main", "ts": "t", "title": _STEP})
+        chat._on_event({"type": "note", "kind": "llm_io", "ts": "t",
+                        "text": "PROMPT 未逐字记录（共 2411 字）—— 要看全量置 `PROTO_LOG_PROMPT=1`"})
+        chat._on_event({"type": "decision", "kind": "", "ts": "t", "who": _STEP,
+                        "given": "g", "q": "q", "result": "r", "next": "n"})
+    finally:
+        restore14()
+    _b14 = [r for r, _ in seen14 if r == "decide"]
+    _body14 = "\n".join(t for _, t in seen14)
+    check("默认路：note 和四段也在**同一个块**里（只吐一次 `decide`）",
+          _b14 == ["decide"], f"吐了 {len(_b14)} 次：{_b14}")
+    _i_n, _i_q14 = _body14.find("PROMPT 未逐字记录"), _body14.find("【前提】")
+    check("默认路：那条 note **没被静默丢**，且排在【前提】之前（切了要标）",
+          -1 < _i_n < _i_q14, f"note@{_i_n}，【前提】@{_i_q14}")
 
     print("\n⑬ 卡片输入：**空行不作数**；跳过要打出来（skip / 跳过）")
     # 🔴 2026-11-06（实测踩到，`logs/proto-20261105-174508.log`）：`↩ 答它` 和 `👤 说别的`
