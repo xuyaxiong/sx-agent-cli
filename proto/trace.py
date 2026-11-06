@@ -210,6 +210,17 @@
     换过去，3 处 `_capture` 的 `open` 加了存在性兜底。
     ⚠️ 有效性自检：把 `open()` 加回模块级 → `unit_decision` ⑭ 红（子进程 import 后
     磁盘上多出一个文件）。⑭ 是**开子进程实测**的 —— 同进程里看不出 import 的副作用。
+32. **日志目录可配：`logs/` 只留真会话**（2026-11-06，用户：*"为什么 logs 里面有这么多
+    文件啊 那些测试产生的你给放在项目 tmp/logs 下吧 原本那个 logs 我是要看 session 的
+    日志"*）。实测：`logs/` **2309 个文件里 826 个是噪音**（670 单测 ＋ 148 空 ＋ 8 探针），
+    把"翻真会话日志"这条路堵死了。⇒ 加 `PROTO_LOG_DIR` 开关，**由入口自己设**
+    （16 个单测 ＋ `evals/run.py` 起子进程时）—— 谁是噪音只有入口知道，`trace` 猜不出来。
+    ⚠️ **相对路径按"应用根"算，不按 cwd**（同 `config.app_root` 那条原则）。
+    ⚠️ 守卫 `unit_feed_waiting` ⑮ 从"只守 `PROTO_LOG_TAG`"扩成"两个都守"；
+    `unit_frozen_paths` **豁免**（它测的就是**默认路径**，设了就被顶掉 —— 而它写进
+    临时目录，本来就不污染 `logs/`）。
+    ⚠️ 顺带修了 `unit_comment_style` ④ 的一个**假红**：`PROTO_LOG_DIR = "tmp/logs"`
+    被当成"具体文件引用"，而它是**目录名** —— 判据收紧成"**有扩展名或有下一层**才算"。
 """
 
 from __future__ import annotations
@@ -225,11 +236,22 @@ from proto import session
 from proto.config import app_root
 from proto.handoff.decision import RESULT_BY, render_decision
 
-#: 日志落**应用根**下的 `logs/`（见 `proto.config.app_root`）——
+#: 日志落哪 —— 默认**应用根**下的 `logs/`（见 `proto.config.app_root`）：
 #: 开发时是 `langgraph-lab/logs/`，打包后是 **exe 旁边的 `logs/`**。
 #: ⚠️ 不能按 `__file__` 算：冻结后那是 `_internal/`，用户不该碰、重建还会被清掉。
-LOG_DIR = app_root() / "logs"
-LOG_DIR.mkdir(exist_ok=True)
+#:
+#: 🔴 **`logs/` 是给人看"真会话"的地方** —— 测试 / 跑批的日志是**噪音**，混进去会把
+#: 翻会话日志的路堵死（实测：2309 个文件里 **826 个是噪音**：670 单测 ＋ 148 空 ＋ 8 探针）。
+#: ⇒ 它们把 `PROTO_LOG_DIR` 指到 `tmp/logs/`（`tmp/` 本来就在 `.gitignore` 里）。
+#: ⚠️ **由入口自己设**（16 个单测 ＋ `evals/run.py` 起子进程时），`trace` 只读这个开关 ——
+#: 谁是噪音只有入口知道，这里猜不出来。〔沿革 32〕
+_log_dir = os.getenv("PROTO_LOG_DIR", "").strip()
+LOG_DIR = Path(_log_dir) if _log_dir else app_root() / "logs"
+# ⚠️ **相对路径相对"应用根"，不相对 cwd** —— 同 `config.app_root` 那条原则：
+#    "从哪双击都不该影响读不读得到配置"。这里同理：从哪跑测试都不该把日志扔到别处。
+if not LOG_DIR.is_absolute():
+    LOG_DIR = app_root() / LOG_DIR
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 #: 文件名后缀 —— 时间戳只到**秒**，跑批时多个子进程同秒启动会**撞同一个文件**。
 #: `evals/` 的子进程用 `PROTO_LOG_TAG=<case>-r<rep>` 区分；手工跑时不设，行为不变。

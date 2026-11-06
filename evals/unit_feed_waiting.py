@@ -37,6 +37,7 @@ import os
 #    第一版插在 `from evals import chat` 之后 → 日志照样没 tag）。
 #    守卫：`unit_feed_waiting` ⑮。
 os.environ["PROTO_LOG_TAG"] = "unit-feed-waiting"
+os.environ["PROTO_LOG_DIR"] = "tmp/logs"   # 🔴 测试日志是**噪音** —— 别混进给人看的 `logs/`
 
 from langchain_core.messages import HumanMessage
 
@@ -635,15 +636,21 @@ def main() -> None:
     check("`proto.agent.EXEC_PATH` 默认是 `auto`", proto.agent.EXEC_PATH == "auto",
           f"当前 = {proto.agent.EXEC_PATH!r}")
 
-    print("\n⑮ 每个单测模块都**打日志 tag**（`logs/` 里真会话与测试垃圾要分得开）")
-    # 外审 N4 那条的延伸：`trace` 在 **import 那一刻**就开日志文件 —— 于是每个单测进程
-    # 都往 `logs/` 扔一个文件（实测 2186 个里 658 个是 0 字节，真会话只有 43 个）。
-    # 打 tag 之后文件名是 `proto-<ts>-unit-<名字>.log`：**真会话一眼可辨**，
-    # 清理就是 `rm logs/*-unit-*.log`。
+    print("\n⑮ 每个单测模块都把日志**指向 `tmp/logs/`**（`logs/` 只留真会话）")
+    # 外审 N4 那条的延伸，＋ 2026-11-06 用户定的分工：
+    # **`logs/` 是给人看"真会话"的地方**，测试 / 跑批的日志是**噪音** ——
+    # 实测 `logs/` 2309 个文件里 **826 个是噪音**（670 单测 ＋ 148 空 ＋ 8 探针），
+    # 把翻会话日志的路堵死了。⇒ 单测设 `PROTO_LOG_DIR=tmp/logs`（`tmp/` 在 gitignore 里）。
+    # ⚠️ `PROTO_LOG_TAG` **仍然要设**：多个模块同秒同跑时，`tmp/logs/` 里也要分得开。
     # ⚠️ **必须是机制**：新加一个单测模块忘了设 → 它的日志就混进真会话里，
     #    而且**没有任何地方会红**（这次就是靠这条守卫把它钉住的）。
     import glob as _glob
     import re as _re
+
+    #: ⚠️ **豁免**：`unit_frozen_paths` 测的就是**默认路径**（冻结后落在 exe 旁边），
+    #:    设了 `PROTO_LOG_DIR` 就把它顶掉了 —— 而它自己写进 `fake/logs`（临时目录，
+    #:    随测试 `rmtree`），本来就不污染 `logs/`。
+    _no_dir_exempt = {"evals/unit_frozen_paths.py"}
 
     _untagged: list[str] = []
     for _f in sorted(_glob.glob("evals/unit_*.py")):
@@ -651,7 +658,12 @@ def main() -> None:
         # 设了 tag ＋ 文件名带 `unit-`（值写错成别的，等于没打）
         if 'os.environ["PROTO_LOG_TAG"] = "unit-' not in _src:
             _untagged.append(_f)
-    check("每个 `evals/unit_*.py` 都设了 `PROTO_LOG_TAG=\"unit-…\"`",
+        # ⚠️ `glob` 在 Windows 上给的是反斜杠 —— 比之前**归一化**，否则豁免形同虚设
+        #    （实测：`evals\unit_frozen_paths.py` 对不上 `evals/unit_frozen_paths.py`）。
+        if ('os.environ["PROTO_LOG_DIR"]' not in _src
+                and _f.replace(os.sep, "/") not in _no_dir_exempt):
+            _untagged.append(f"{_f}（没设 `PROTO_LOG_DIR`）")
+    check("每个 `evals/unit_*.py` 都设了 `PROTO_LOG_TAG=\"unit-…\"` ＋ `PROTO_LOG_DIR`",
           not _untagged, repr(_untagged))
     # ⚠️ 还有一半：**必须排在所有非标准库 import 之前**（`trace` 在 import 那一刻读 env
     #    定文件名）。⚠️ 只查"在 `import proto` 之前"**不够** —— 实测踩过：`unit_decision`
@@ -666,7 +678,8 @@ def main() -> None:
         _set_at = [n.lineno for n in ast.walk(_tree)
                    if isinstance(n, ast.Assign)
                    and any(isinstance(t, ast.Subscript) for t in n.targets)
-                   and "PROTO_LOG_TAG" in ast.dump(n)]
+                   and ("PROTO_LOG_TAG" in ast.dump(n)
+                        or "PROTO_LOG_DIR" in ast.dump(n))]
         _imp_at = []
         for _n in ast.walk(_tree):
             if isinstance(_n, ast.Import):

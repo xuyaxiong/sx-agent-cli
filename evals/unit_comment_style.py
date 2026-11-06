@@ -38,6 +38,7 @@ import os
 #    第一版插在 `from evals import chat` 之后 → 日志照样没 tag）。
 #    守卫：`unit_feed_waiting` ⑮。
 os.environ["PROTO_LOG_TAG"] = "unit-comment-style"
+os.environ["PROTO_LOG_DIR"] = "tmp/logs"   # 🔴 测试日志是**噪音** —— 别混进给人看的 `logs/`
 
 import ast
 import glob
@@ -107,13 +108,18 @@ def evidence_refs(path: str) -> list[str]:
     out: list[str] = []
     for i, line in enumerate(src.splitlines(), 1):
         for m in _EVIDENCE.finditer(line):
-            tail = m.group(1).split("/", 1)[1]
+            tail = m.group(1).split("/", 1)[1].rstrip("/")
             # ⚠️ **紧跟占位符 = 在说命名规则，不是在指文件**：`logs/proto-<时间戳>.log`
             #    的尾巴止于 `proto-`，而下一个字符就是 `<`。这一条不能少 —— 少了它，
-            #    全仓那 33 处通配引用会全部假红。
+            #    全仓那些通配引用会全部假红。
             nxt = line[m.end():m.end() + 1]
             if not tail or any(c in tail for c in ("*", "<", "{", "$")) \
                     or nxt in ("*", "<", "{", "…"):
+                continue
+            # ⚠️ **裸目录名不是证据引用**：`tmp/logs` 这种**没扩展名、也没下一层**的，
+            #    是在说"放哪儿"，不是在指某个文件（实测踩过：`PROTO_LOG_DIR = "tmp/logs"`
+            #    被当成引用，**假红**）。**有 `.`（扩展名）或有 `/`（下一层）才算。**
+            if "." not in tail and "/" not in tail:
                 continue
             out.append(f"{path}:{i}  {m.group(1)}")
     return out

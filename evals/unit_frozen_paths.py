@@ -36,6 +36,9 @@ import os
 #    第一版插在 `from evals import chat` 之后 → 日志照样没 tag）。
 #    守卫：`unit_feed_waiting` ⑮。
 os.environ["PROTO_LOG_TAG"] = "unit-frozen-paths"
+# ⚠️ **故意不设 `PROTO_LOG_DIR`** —— 这个模块测的就是**默认路径**（冻结后落在 exe 旁边），
+#    设了就被顶掉了。它自己写进 `fake/logs`（临时目录，随测试删），不污染 `logs/`。
+#    守卫 `unit_feed_waiting` ⑮ 对它**豁免**（见那边的 `_NO_LOG_DIR_EXEMPT`）。
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")

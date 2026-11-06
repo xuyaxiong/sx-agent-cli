@@ -54,6 +54,9 @@ def run_one(case_path: Path, case: dict, rep: int, tag: str, timeout: int) -> di
         "PYTHONUTF8": "1",  # Windows：不设中文输出会撞 GBK
         # 时间戳只到秒，并发子进程会撞同一个日志文件 —— 用 tag 区分
         "PROTO_LOG_TAG": f"{case['id']}-r{rep}",
+        # 🔴 **跑批的日志是噪音** —— 别混进给人看"真会话"的 `logs/`（实测：那里 2309 个
+        #    文件里 826 个是噪音）。`tmp/` 本来就在 `.gitignore` 里。〔`trace` 沿革 32〕
+        "PROTO_LOG_DIR": "tmp/logs",
     }
     t0 = time.time()
     try:

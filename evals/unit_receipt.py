@@ -39,6 +39,7 @@ import os
 #    第一版插在 `from evals import chat` 之后 → 日志照样没 tag）。
 #    守卫：`unit_feed_waiting` ⑮。
 os.environ["PROTO_LOG_TAG"] = "unit-receipt"
+os.environ["PROTO_LOG_DIR"] = "tmp/logs"   # 🔴 测试日志是**噪音** —— 别混进给人看的 `logs/`
 
 from proto.handoff import BODY, SECTION
 from proto.handoff.briefing import _flat
