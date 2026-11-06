@@ -72,14 +72,7 @@ PENDING = {
     "proto/registry.py",
     "proto/skill_pack.py",
     "proto/skills.py",
-    "proto/trace.py",
     "proto/__main__.py",
-    "proto/handoff/ask.py",
-    "proto/handoff/briefing.py",
-    "proto/handoff/decision.py",
-    "proto/handoff/ledger.py",
-    "proto/handoff/nudge.py",
-    "proto/handoff/receipt.py",
 }
 
 #: 一行 docstring 的包标记 —— 没有正文可分段（不是欠账）
