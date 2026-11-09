@@ -46,7 +46,7 @@ os.environ["PROTO_LOG_DIR"] = "tmp/logs"   # 🔴 测试日志是**噪音** —�
 from langchain_core.messages import AIMessageChunk
 from langgraph.graph import END, START, StateGraph
 
-from proto import session, trace
+from proto import recorder, session, trace  # noqa: F401 —— recorder 装上记录器（不然日志一行都不落）
 
 PASS: list[str] = []
 FAIL: list[str] = []

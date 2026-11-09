@@ -95,7 +95,7 @@
 13. **`_verdict`：判定记录留下来**（2026-11-05）。用户原话：*"我得搞清楚对于完成没，
     **给它的上下文是啥、结果又是啥、产生结果依据又是啥** —— 这些都要能看到才能审计，
     不然我咋知道怎么调优。"* 判定那次 **LLM 调用**退休了，但**这个判断还在** ——
-    走 `trace.decision` **同一个记录形状**：它**不是"交接"**（判据是"关键在于 LLM
+    走 `emit_decision` **同一个记录形状**：它**不是"交接"**（判据是"关键在于 LLM
     参与了"），但四格问的是同一件事（谁基于什么、得出了什么、接下来干什么），
     另起一套形状只会分叉。
 14. **`_last_ai_text` 不参与任何判断**（2026-11-05）。平台只看结构（产物账 /
@@ -131,6 +131,7 @@ from proto import trace
 from proto.config import get_model
 from proto.handoff import FaultKind, OutcomeStatus as _OutcomeStatus, render_hop
 #                ↑ 状态词汇（唯一一份）· 段名/渲染（唯一一份）
+from proto.handoff.decision import emit_decision  # 决策事件的发射器（归领域包）
 from proto.handoff.nudge import nudge_text  # 推回去的模板
 from proto.artifacts import (
     read_artifact,
@@ -493,7 +494,7 @@ async def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | No
 
     # 🔴 **「任务完成没」的判定记录** —— 判定那次 **LLM 调用**退休了，但**这个判断还在**，
     #    而且它正是用户要审计的那一处（为什么记、记什么，见 `_verdict` 的 docstring）。〔沿革 13〕
-    trace.decision(**_verdict(outcome, run_id))
+    emit_decision(**_verdict(outcome, run_id))
 
     # 🔴 **这行是「这次 run 的账」，不是复述**〔沿革 11〕——
     #    ① 两个编号各自带名字（`_at`）；② **不再重贴那句问题**：它上面已经有该有的

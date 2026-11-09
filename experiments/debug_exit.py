@@ -24,7 +24,7 @@ import sys
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from proto import trace
+from proto import recorder, trace
 from proto.config import describe
 from proto.executor import MAX_REACT_ROUNDS, run_task
 from proto.skills import Skill
@@ -62,7 +62,7 @@ def show(label: str, outcome) -> None:
 
 if __name__ == "__main__":
     print(f"模型：{describe()}")
-    print(f"日志：{trace.LOG_FILE}")
+    print(f"日志：{recorder.LOG_FILE}")
 
     print(f"\n{'═' * 72}")
     print("A · 干不成的任务**绝不能**被当成完成")
@@ -98,5 +98,5 @@ if __name__ == "__main__":
     print(f"A 没误判完成：{'✅' if a_ok else '❌'}    B 最终交付：{'✅' if b_ok else '❌'}    "
           f"C 不误推：{'✅' if c_ok else '❌'}")
     print(f"{'═' * 72}")
-    print(f"日志：{trace.LOG_FILE}")
-    trace.close()
+    print(f"日志：{recorder.LOG_FILE}")
+    recorder.close()

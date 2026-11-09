@@ -40,7 +40,8 @@ os.environ["PROTO_LOG_DIR"] = "tmp/logs"   # 🔴 测试日志是**噪音** —�
 
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
-from proto import trace
+from proto import recorder, trace
+from proto.handoff.decision import emit_decision
 from proto.__main__ import _on_event
 
 PASS: list[str] = []
@@ -77,7 +78,7 @@ def main() -> None:
         #    （它已由 `stream` 实时播过 —— 同 `chat._on_dump` 的契约，见 ③）
         trace.dump_trace("主 agent 第 1 步", [ToolMessage("技能正文……", tool_call_id="call_x")],
                          role=trace.AGENT),
-        trace.decision("主 agent", q="够不够？", given=["产物 1 个"], result=["completed"],
+        emit_decision("主 agent", q="够不够？", given=["产物 1 个"], result=["completed"],
                        nxt="交付", result_by="platform"),
         trace.cut("台账", kept=100, total=500, see="全文见日志"),
         trace.handoff("回执", "执行器", "主 agent", "回执正文"),

@@ -234,7 +234,7 @@
     `Event loop is closed`（跑批实测踩到）。四个调用方（三个入口 ＋ `judge`）都走
     `aio.run`。
     ⚠️ **"零同步"指的是节点与工具**：同步**文件** IO 还在事件循环里
-    （`trace._write` 每行 write+flush、`skill_pack` 的 `read_text`…）—— 见 `trace.py`
+    （`recorder.write` 每行 write+flush、`skill_pack` 的 `read_text`…）—— 见 `proto/recorder.py`
     的遗留问题。
 """
 
@@ -581,7 +581,7 @@ async def node_finalize(state: State) -> dict:
 
     block = render_relay(waiting)
     # ⚠️ **只发内容**：`finalize: ` 那个前缀是**日志文件格式**的一部分，归记录器
-    #    （`trace._NOTE_HEAD`）〔沿革 12〕。
+    #    （`recorder._NOTE_HEAD`）〔沿革 12〕。
     # ⚠️ **这行不写「谁 → 谁」** —— 展示层上屏和记录层文件里都已经写着，**再说一遍就是
     #    第三处** ✗（实测：终端上会印成 `平台 → 用户：**平台 → 用户**：透传…`）〔沿革 13〕。
     trace.note(f"透传 {len(waiting)} 条待答（平台直接贴，不判断主 agent 问没问）",

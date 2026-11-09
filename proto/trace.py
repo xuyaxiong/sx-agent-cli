@@ -1,24 +1,20 @@
-"""**日志 / 事件总线** —— 把原型跑的每一步写成权威记录，同时把结构化事件发给展示层。
-
-日志落在**应用根**下的 `logs/proto-<时间戳>.log`（开发时是 `langgraph-lab/logs/`，
-打包后是 exe 旁边的 `logs/`），同时打到控制台（简洁版）。
-每次进程启动开一个新文件，不覆盖历史。
+"""**事件总线** —— 业务代码只调这一层；事件是记录层与展示层之间的**唯一契约**。
 
 ## 这个文件是什么
 
-本模块同时是两样东西，中间隔着一层**事件总线**：
-
-- **记录层** —— `logs/proto-*.log` 的唯一落盘者（`_recorder` / `_write`）。
-  日志是**原始记录**，供人与 `_run.md` 附录消费。
-- **事件源** —— 业务代码只调这一层的公开函数（`section` / `note` / `block` / `handoff` /
-  `decision` / `cut` / `dump_trace` / `stream_agent`），它们**只发结构化事件**、不写文件。
+- **事件总线** —— 发射器（`section` / `note` / `block` / `kv` / `handoff` / `cut` /
+  `dump_trace`）只发**结构化事件**、不写文件；`_publish` 把它们送给**记录器**（落日志）
+  与**当前会话的订阅者**（展示层）。
+- **传输** —— `stream_agent` / `_stream_with_retry` / `upstream_rejected`：跑 agent 图、
+  每一步每个字录下来、基础设施抖动重试一次。⚠️ 它**不是**总线的事（见「遗留问题」）。
 
 ```
-业务代码 ──trace.*()──▶ 事件总线 _publish() ──┬──▶ 记录器 _recorder：落日志文件（权威记录）
+业务代码 ──trace.*()──▶ 事件总线 _publish() ──┬──▶ 记录器（proto/recorder.py）：落日志文件
                                             └──▶ 展示层（evals.chat 订阅）：自己排版上屏
 ```
 
-**事件 = 记录层与展示层之间的唯一契约**；展示层不读日志文件。〔沿革 7〕
+⚠️ **落盘的那一半住在 `proto/recorder.py`**（2026-11-09 拆出去）—— 本模块从此
+**不认识任何领域词汇**，只依赖 `session`。〔沿革 33〕
 
 ## 设计原则（不变量）
 
@@ -27,11 +23,14 @@
    - `type`：事件的**形状**（八种之一，见 `_EVENT_TYPES`）—— 决定它带哪些字段；
    - `kind`：业务**语义**（`dispatch` / `run_begin` / `relay` …，见 `KINDS`）——
      展示层据此决定归到哪个角色，**不再靠子串匹配认行**（措辞一改就静默失配的根）。
-2. **记录器不是"订阅者"** —— `_publish` 先调它、再送订阅者：展示层坏了最多是"看不见"，
+2. **总线认识形状，不认识词表** —— `_EVENT_TYPES` 里列着 `decision` 这个**形状**，
+   但"`result_by` 能取哪些值"是**领域词汇**，归 `handoff.decision`（**发射器也在那儿**）。
+   ⇒ 本模块**不许 import `proto.handoff.*`**。〔沿革 33〕
+3. **记录器不是"订阅者"** —— `_publish` 先调它、再送订阅者：展示层坏了最多是"看不见"，
    而记录层丢一条 = **权威记录破了个洞**，所以它单独兜、兜住后**把洞标出来**。〔沿革 11〕
-3. **日志是原始记录** —— 记录层不截断、不收回已经流出去的字；要少看噪音就在**播报层**砍。
-4. **落盘格式不是跨层契约** —— `_STREAM_MARK` / `_DECISION_HEAD` / `_NOTE_HEAD` 只是
-   记录器自己的格式（而且名字私有）；展示层订阅事件、不读日志文件。
+   ⚠️ 记录器是**槽位**（`install_recorder`），由装配处装 —— 本模块**不 import 它**
+   （否则又回到"基础能力传递依赖领域词表"）。
+4. **日志是原始记录** —— 记录层不截断、不收回已经流出去的字；要少看噪音就在**播报层**砍。
 5. **`dump` 事件里带的是消息对象本身** —— `tool_call_id` 就在里面，工具配对、来源标注
    全部走结构，**不从渲染文本里反推结构**。
 
@@ -50,14 +49,12 @@
 
 ## 遗留问题
 
+- **传输还住在这儿**（`stream_agent` 那 5 个函数，162 行）—— 它不是总线的事。
+  拆它的理由**不是**"记录层不该管传输"（那条边在本模块**已经不存在了**：本模块从
+  `config` 只拿 `app_root` 算日志目录，**没有**模型配置），而是"一个模块一个职责"。
+  ⚠️ **2026-11-09 那一轮没动它**：它不造成任何层次错误，动它是口味、不是修错。〔沿革 33〕
 - 落在"第二步之后"的抖动，这一轮**真的失败**了 —— 更彻底的"从最后一个走完的
   super-step 接着跑"还没做（〔沿革 23〕）。
-- **同步文件 IO 还在事件循环里**（第四轮外审 §5.3）：`_write()` 每行 `write + flush`、
-  没有锁；`skill_pack` 的 `read_text`（3 处）、`artifacts.write_text` 同理。
-  ⚠️ 异步迁移（`graph.py` 沿革 33）把节点与工具都改成 `async def`，**顺带取消了
-  "同步阻塞只影响一个会话"那个前提** —— 现在它们卡的是**整个事件循环**。
-  ⚠️ **量级没实测**：单会话交互式下 flush 是微秒级、无感；多会话高频流式下是不是真成
-  瓶颈**不知道** —— 要实测再定级，别照抄外审给的 P2。
 
 ## 沿革（改过什么、为什么改）
 
@@ -225,87 +222,49 @@
     ⚠️ 守卫 `unit_feed_waiting` ⑮ 从"只守 `PROTO_LOG_TAG`"扩成"两个都守"；
     `unit_frozen_paths` **豁免**（它测的就是**默认路径**，设了就被顶掉 —— 而它写进
     临时目录，本来就不污染 `logs/`）。
+33. **拆出记录器：本模块只剩总线（＋传输）**（2026-11-09）。起因是量了一次依赖分层 ——
+    本模块落在 **L2**（比 `llm` 和整个 `handoff/*` 都高），唯一原因是一条边
+    `trace → handoff.decision`（记录器要渲染决策块）。而记录器**是个视图**，
+    视图依赖领域词汇表**是对的** —— 错的是它和**总线**住在一个文件里，于是
+    `llm → trace → handoff.decision`：**基础能力传递依赖领域词表**，而 `handoff`
+    也就永远抽不出去（它自己的 `briefing` / `ledger` 又依赖总线）。
+    ⇒ 拆成三份：**总线**（留这儿，只依赖 `session`）／**记录器**
+    （`proto/recorder.py` —— 视图，依赖 `handoff.decision`）／**`decision()` 发射器**
+    （归 `handoff.decision`：**领域事件的形状归领域包**）。
+    🔴 **`_publish` 对记录器的处置一个字没改**（还是单独 try/except ＋ `_mark_hole`）——
+    变的只是"谁把它接上去"：从**硬接**改成**槽位 ＋ 装配处安装**（`install_recorder`）。
+    ⚠️ 代价如实说：**忘了 import `proto.recorder` = 日志静默没有** —— 所以配了守卫
+    （`unit_decision` ⑮ 盯三个入口），**接线靠守卫，不靠记性**。
+    ⚠️ 沿革 1 / 17 / 19 / 30 / 31 / 32 讲的东西**现在住 `proto/recorder.py`**
+    （编号**不动** —— 那是引用锚，别处还按号指过来）。
+    ⚠️ **传输没动**（`stream_agent` 那 5 个）：它不造成层次错误，本轮不碰（见「遗留问题」）。
 """
 
 from __future__ import annotations
 
-import os
-import re
-import time
 from datetime import datetime
-from pathlib import Path
 from typing import Any, Callable
 
 from proto import session
-from proto.config import app_root
-from proto.handoff.decision import RESULT_BY, render_decision
 
-#: 日志落哪 —— 默认**应用根**下的 `logs/`（见 `proto.config.app_root`）：
-#: 开发时是 `langgraph-lab/logs/`，打包后是 **exe 旁边的 `logs/`**。
-#: ⚠️ 不能按 `__file__` 算：冻结后那是 `_internal/`，用户不该碰、重建还会被清掉。
-#:
-#: 🔴 **`logs/` 是给人看"真会话"的地方** —— 测试 / 跑批的日志是**噪音**，混进去会把
-#: 翻会话日志的路堵死（实测：2309 个文件里 **826 个是噪音**：670 单测 ＋ 148 空 ＋ 8 探针）。
-#: ⇒ 它们把 `PROTO_LOG_DIR` 指到 `tmp/logs/`（`tmp/` 本来就在 `.gitignore` 里）。
-#: ⚠️ **由入口自己设**（16 个单测 ＋ `evals/run.py` 起子进程时），`trace` 只读这个开关 ——
-#: 谁是噪音只有入口知道，这里猜不出来。〔沿革 32〕
-_log_dir = os.getenv("PROTO_LOG_DIR", "").strip()
-LOG_DIR = Path(_log_dir) if _log_dir else app_root() / "logs"
-# ⚠️ **相对路径相对"应用根"，不相对 cwd** —— 同 `config.app_root` 那条原则：
-#    "从哪双击都不该影响读不读得到配置"。这里同理：从哪跑测试都不该把日志扔到别处。
-if not LOG_DIR.is_absolute():
-    LOG_DIR = app_root() / LOG_DIR
-LOG_DIR.mkdir(parents=True, exist_ok=True)
-
-#: 文件名后缀 —— 时间戳只到**秒**，跑批时多个子进程同秒启动会**撞同一个文件**。
-#: `evals/` 的子进程用 `PROTO_LOG_TAG=<case>-r<rep>` 区分；手工跑时不设，行为不变。
-_TAG = os.getenv("PROTO_LOG_TAG", "").strip()
-_SUFFIX = f"-{_TAG}" if _TAG else ""
-
-#: **默认会话**的日志文件 —— CLI / 跑批 / 单测都不开 `session()`，它们用的就是它。
-#: ⚠️ 开了会话就**各有各的文件**（见 `log_file()`）。**日志格式一个字没改** ——
-#: 这是选"每会话一个文件"（而不是"一个文件加会话列"）的全部理由：`_recorder` 的
-#: "格式逐字节一致"那条约束**不用动**。〔沿革 30〕
-#: ⚠️ **它只是"文件会在哪儿"，不是"文件已经在了"** —— 真建出来是**第一次写日志**那一刻
-#: （`_fh()` 惰性开）。原来这里就 `open("w")`：**`import` 这个动作本身**在磁盘上建文件，
-#: 而大多数进程（单测、只用会话的宿主）一个字都不写它 —— 实测 `logs/` 里 **147 个空文件**。
-#: 惰性之后**两条路一致**了（会话那条本来就是惰性的）。〔沿革 31〕
-LOG_FILE = LOG_DIR / f"proto-{time.strftime('%Y%m%d-%H%M%S')}{_SUFFIX}.log"
-session.default().log_file = LOG_FILE
-# ⚠️ **别在这儿 open** —— `log_fh = None` 就是"还没建"，`_fh()` 会替我们开。
+#: **记录器槽** —— 由装配处装（`proto/recorder.py` 在 import 时自注册）。
+#: ⚠️ **默认空**：库用户 / 不落盘的宿主不装，行为就是"没有日志文件"（原则 3、取舍 ①）。
+_sink_record: Callable[[dict], None] | None = None
+_sink_write: Callable[[str], None] | None = None
 
 
-def log_size() -> int:
-    """当前会话的日志**已经写了多少字节** —— **文件还没建 = 0**。
+def install_recorder(*, record: Callable[[dict], None], write: Callable[[str], None]) -> None:
+    """**装上记录器** —— 总线不认识它，只认这两个函数。
 
-    ⚠️ 为什么要它：惰性之后"这个进程还没写过日志"成了**正常状态**，
-    直接 `LOG_FILE.stat()` 会 `FileNotFoundError`。读体积的地方一律走这儿。
+    - `record(ev)`：把一条事件渲染成日志行（**权威记录**，出错会被 `_mark_hole` 标出来）；
+    - `write(line)`：写一行原文（**标洞**和"订阅者出错"用 —— 它们不走渲染）。
+
+    🔴 **为什么是槽位而不是 import**：import 它 = 总线认识领域词汇表，于是
+    `llm → trace → handoff.decision`（基础能力传递依赖领域词表）。〔沿革 33〕
+    ⚠️ 调用方是 `proto/recorder.py` 自己（模块末尾一行）—— **别处不要调**。
     """
-    p = log_file()
-    return p.stat().st_size if p.exists() else 0
-
-
-def log_file() -> Path:
-    """**当前会话**的日志文件 —— 第一次写日志时才建（没写过日志的会话**不产生文件**）。
-
-    ⚠️ 文件名里会话那一段**要消毒**：`thread_id` 由**宿主**给（web 那边可能就是用户 ID），
-    直接拼进路径会被 `/`、`..` 带出去。非 `[A-Za-z0-9_-]` 一律换 `_`，再截断。
-    """
-    s = session.current()
-    if s.log_file is None:
-        safe = re.sub(r"[^A-Za-z0-9_-]", "_", s.thread_id)[:40] or "session"
-        s.log_file = LOG_DIR / f"proto-{time.strftime('%Y%m%d-%H%M%S')}-{safe}{_SUFFIX}.log"
-    return s.log_file
-
-
-def _fh() -> Any:
-    """当前会话**打开着的**日志句柄 —— 没开就开（跟着 `log_file()` 一起惰性建）。"""
-    s = session.current()
-    if s.log_fh is None:
-        s.log_fh = log_file().open("w", encoding="utf-8")
-    return s.log_fh
-
-BAR = "═" * 78
+    global _sink_record, _sink_write
+    _sink_record, _sink_write = record, write
 
 
 def stamp() -> str:
@@ -317,7 +276,7 @@ def stamp() -> str:
 
 # ──────────────────────────── 事件总线 ────────────────────────────
 
-#: 事件的八种**形状**。每种带什么字段，见各 emitter 与 `_recorder`。
+#: 事件的八种**形状**。每种带什么字段，见各 emitter 与 `proto/recorder.py`。
 _EVENT_TYPES = (
     "section", "note", "block", "stream", "dump", "decision", "handoff", "cut",
 )
@@ -374,20 +333,24 @@ def _publish(ev: dict) -> None:
     # 🔴 **会话标识**（多会话共享进程时，这是"这条事件属于谁"的唯一来源）。
     #    ⚠️ 默认会话的 `thread_id` 是空串 —— 单会话宿主（CLI / 跑批）行为不变。
     ev["thread_id"] = session.current().thread_id
-    try:
-        _recorder(ev)
-    except Exception as e:  # noqa: BLE001 —— 不炸业务，但**必须把洞标出来**（见 _mark_hole）
-        _mark_hole(ev, e)
+    # 🔴 **记录器是槽位**（不是 import、不是订阅者）—— 没装就什么都不写（那是库的用法）。
+    #    ⚠️ 装了之后**处置一个字没改**：单独兜，兜住走 `_mark_hole` 把洞标出来。〔沿革 33〕
+    if _sink_record is not None:
+        try:
+            _sink_record(ev)
+        except Exception as e:  # noqa: BLE001 —— 不炸业务，但**必须把洞标出来**（见 _mark_hole）
+            _mark_hole(ev, e)
     for slot in list(session.current().subs):
         fn = slot[0]
         try:
             fn(ev)
         except Exception as e:  # noqa: BLE001 —— 见 subscribe 的 docstring
-            _fh().write(
-                f"[{stamp()}] ⚠️ 事件订阅者出错"
-                f"（{getattr(fn, '__qualname__', fn)}）：{type(e).__name__}: {e}\n"
-            )
-            _fh().flush()
+            # ⚠️ **没装记录器时这一行没地方写** —— 那也不能炸业务（同记录器那条的取舍）。
+            if _sink_write is not None:
+                _sink_write(
+                    f"[{stamp()}] ⚠️ 事件订阅者出错"
+                    f"（{getattr(fn, '__qualname__', fn)}）：{type(e).__name__}: {e}"
+                )
 
 
 def _mark_hole(ev: dict, e: Exception) -> None:
@@ -396,23 +359,16 @@ def _mark_hole(ev: dict, e: Exception) -> None:
     ⚠️ 标洞本身也兜住（比如文件已关）—— 但**不许静默**：正常路径下这行会写进日志，
     读的人一眼知道**丢的是哪一条**，而不是"日志里怎么少了这一段"。
     """
+    if _sink_write is None:  # 没装记录器 —— 连"洞"都无处可标（库的用法）
+        return
     try:
-        _write(
+        _sink_write(
             f"[{stamp()}] ⚠️ **这一条没有落进日志**（记录器渲染失败）："
             f"type={ev.get('type')!r} kind={ev.get('kind')!r}"
             f" —— {type(e).__name__}: {e}"
         )
     except Exception:  # noqa: BLE001 —— 连标洞都写不进去，只能放弃；仍不炸业务
         pass
-
-
-def _write(line: str = "") -> None:
-    """写一行到日志文件（不自动换行缩进，原样写）。**只属于记录器**，不发事件。
-
-    ⚠️ 私有：别处直接调它就绕过了事件总线 —— 展示层看不见那一行，而且是**静默**的。
-    """
-    _fh().write(line + "\n")
-    _fh().flush()
 
 
 # ──────────────────────────── 事件发射器（业务代码只调这一层） ────────────────────────────
@@ -535,44 +491,17 @@ def handoff(
               "text": text, "structured": structured, "full": full, "ts": stamp()})
 
 
-def decision(
-    who: str,
-    *,
-    q: str = "",
-    given: Any = (),
-    result: Any = (),
-    nxt: str = "",
-    result_by: str = "llm",
-) -> None:
-    """记一次**判断**：前提 → 问题 → 结果 → 下一步（段名与顺序见 `handoff.decision`）。
+def emit(ev: dict) -> None:
+    """发一个**已经是最终形状**的事件 —— 给**领域包自己的发射器**用。
 
-    🔴 **两种判断共用这一条记录形状**（一套，别分叉）—— 它们问的是同一件事
-    （**谁基于什么、得出了什么、接下来干什么**），只是"填它的人"不同：
+    🔴 **为什么要有它**：`decision` 这个形状的发射器住在 `handoff.decision`
+    （它要校验 `result_by` ∈ `RESULT_BY` —— 那是**领域词汇**，不是总线该认识的东西）。
+    领域包发事件走这一条，总线就不必 import 领域包。〔沿革 33〕
 
-      - **LLM 决策**（`agent._ask_main` 的试答）—— 它是**交接**（两端都是）；
-      - **平台的结构判定**（`executor._verdict` 的「任务完成没」）—— **不是交接**
-        （没有 LLM 参与 —— 用户判据："关键在于 LLM 参与了"），但四格一样成立：
-        前提 = 平台看得见的结构事实、结果 = 三态 ＋ **依据**。〔沿革 25〕
-
-    🔴 发的是**结构化事件**（字段原样在 `ev` 里），渲染成什么样是**记录器与展示层各自的事**
-    —— 展示层不再从渲染文本里反解析。
-
-    `given` / `result` 传**列表**（逐项一行）→ 渲染成 `- ` 列表；传字符串 → 一行。
-    ⚠️ 列表化不是装饰：判定那段原来直接把 `j.missing` 打出来，人看到的是
-    **Python repr** `['尚未收到…', '教案文本文件产物为空…']` —— 括号引号全是噪音。
-
-    `result_by`：**【结果】那一格是谁写的** —— `"llm"`（试答，要标来源）／
-    `"platform"`（「任务完成没」按结构定，平台自己的结论，不标）。它决定那格用哪个段名，
-    见 `handoff.decision.RESULT_BY`（段名要回答"这是谁的话"，借错了就是假话）。
+    ⚠️ **校验一样跑**：`type` / `kind` 都在 `_publish` 里查，走这条**不会**绕过它。
+    ⚠️ 别处不要用它"绕过"现成的发射器 —— 那些发射器存在的理由是**形状只有一处定义**。
     """
-    if result_by not in RESULT_BY:
-        # 打错一个字母就**静默**把平台的结论标成"它说的" —— 宁可当场炸（同 role / kind 那两条）。
-        raise ValueError(
-            f"decision 的 result_by={result_by!r} 不在 {sorted(RESULT_BY)} 里（见 handoff.decision.RESULT_BY）"
-        )
-    _publish({"type": "decision", "kind": "", "who": who, "q": q,
-              "given": given, "result": result, "next": nxt,
-              "result_by": result_by, "ts": stamp()})
+    _publish(ev)
 
 
 def cut(where: str, kept: int, total: int, *, see: str = "") -> None:
@@ -605,7 +534,12 @@ def dump_trace(tag: str, messages: list, *, role: str) -> None:
               "messages": list(messages), "ts": stamp()})
 
 
-# ──────────────────────────── 消息渲染（记录器专用） ────────────────────────────
+# ──────────────── 消息渲染（**各视图共用**：记录器 / 终端 / 台账 / 跑批记录） ────────────────
+#
+# ⚠️ 原来这儿写着"记录器专用" —— **不是事实**：`evals/chat.py`（终端）、`proto/graph.py`
+#    （待答透传）、`evals/harness.py`（`_run.md`）都在用。它们是**通用的**
+#    "LangChain 消息对象 → 一行文本"，**不认识任何领域词汇** —— 所以留在总线这边，
+#    而不是搬去 `proto/recorder.py`：那样**展示层就得反过来依赖记录器**（方向反了）。
 
 #: **正文类参数**：只留字数。
 #:
@@ -835,94 +769,3 @@ def _chunk_text(chunk) -> str:
             str(p.get("text") or "") if isinstance(p, dict) else str(p) for p in content
         )
     return ""
-
-
-def close() -> None:
-    """关掉**当前会话**的日志句柄（没开过就什么都不做）。"""
-    s = session.current()
-    if s.log_fh is not None:
-        s.log_fh.close()
-        s.log_fh = None
-
-
-# ──────────────────────────── 记录器：唯一的文件落盘者 ────────────────────────────
-
-#: 流式行在**日志文件**里的前缀 —— ⚠️ 只是记录器自己的落盘格式，**不是跨层契约**
-#: （展示层订阅事件，不再读日志文件）。
-#:
-#: 🔴 **名字也私有**：公开名本身就是"可以被 import"的邀请 —— 下一个消费者写
-#: `from proto.trace import STREAM_MARK` 照样跑得通，"展示层认记录层的文本"那类事故
-#: 就会原样复发。私有名一写出来，就是**伸手进记录层**的信号（白盒测试除外，
-#: 它们本来就该盯文件格式）。〔沿革 19〕
-_STREAM_MARK = "⟨生成·"
-
-#: 决策块的**首行前缀**（文件格式用）。同上：私有。
-_DECISION_HEAD = "🧭 决策"
-
-#: 某些 `kind` 的 note 在**文件里**的前缀 —— 文件格式的一部分，归记录器。
-#:
-#: 🔴 前缀原来是**业务侧**写进正文的（`f"finalize: 透传 …"`），展示层于是按**位置**
-#: 切回来（`[len("finalize: "):]`）—— 只改文案措辞，上屏就被**静默吃掉 10 个字**（实测）。
-#: 现在业务侧只发内容，前缀归记录层。〔沿革 10〕
-_NOTE_HEAD = {"relay": "finalize: "}
-
-#: **一次 LLM 决策，人要看的四样** —— 顺序就是**复现这个决策**的顺序：
-#:     前提（它看到了什么）→ 问题（它要回答什么）→ 结果（它答了什么）→ 下一步（平台据此干什么）
-#:
-#: ⚠️ **段名只有这一份**：记录器与展示层**都从这里取**（各自排版）—— 两边各抄一份的
-#: 后果实测过：给这张表加一段，记录层整块决策从日志里**消失**、展示层**静默**少一段。〔沿革 15〕
-#: ⚠️ ~~`DECISION`~~ 已删 —— 它是**第二份段名表** ✗（`前提` / `问题` / `结果` / `下一步`，
-#: **不带 `【】`**、缩进另算 4 格），把"段名一律 `【…】` 形式、独占行首"那条硬规矩
-#: **开了第二个口子**。现在段名在 `SECTION`（`dec_given` / `dec_q` / `dec_result` /
-#: 共用的 `next`），顺序在 `HOPS["decision"]`，渲染在 `handoff.decision.render_decision`。〔沿革 26〕
-
-#: 决策块的缩进 —— **记录层自己的排版**，与任何别层无关。
-#: ⚠️ 它曾是 4，理由是"展示层要剥 2 格"—— 展示层改为订阅事件、自己排版后，这条跨层
-#: 耦合**作废**；文件里留 4 格只是日志可读性的选择。〔沿革 16〕
-_DEC = "    "
-
-
-def _recorder(ev: dict) -> None:
-    """把事件渲染成**日志文件的一行（或一块）**—— 文件格式的唯一出处。
-
-    🔴 格式与事件源重构前**逐字节一致**（`unit_decision` / `unit_stream_join` 守着）：
-    日志是权威记录，老日志、`_run.md` 附录、人的翻阅习惯都不断。〔沿革 17〕
-    """
-    ts = ev["ts"]
-    t = ev["type"]
-    if t == "section":
-        _write()
-        _write(f"{BAR}\n[{ts}] {ev['title']}\n{BAR}")
-    elif t == "note":
-        _write(f"[{ts}] {_NOTE_HEAD.get(ev.get('kind') or '', '')}{ev['text']}")
-    elif t == "block":
-        _write(f"[{ts}] {ev['label']}:")
-        for line in str(ev["text"]).splitlines() or [""]:
-            _write(f"{ev['indent']}{line}")
-    elif t == "stream":
-        _write(f"[{ts}] {_STREAM_MARK}{ev['who']}⟩ {ev['text']}")
-    elif t == "handoff":
-        _write(f"[{ts}] 📤 交接 · {ev['hop']}（{ev['frm']} → {ev['to']}）：{len(ev['text'])} 字"
-               f"｜结构化：{ev['structured'] or '（纯文本）'}")
-        if ev["full"]:
-            _recorder({"type": "block", "label": f"交接全文 · {ev['hop']}",
-                       "text": ev["text"], "indent": "  ", "ts": ts})
-    elif t == "cut":
-        _write(f"[{ts}] ✂️ 截断 · {ev['where']}：保留 {ev['kept']} 字 / 原文 {ev['total']} 字"
-               + (f"｜{ev['see']}" if ev.get("see") else ""))
-    elif t == "dump":
-        messages = ev["messages"]
-        _write(f"[{ts}] {ev['tag']} 消息轨迹（{len(messages)} 条）:")
-        for i, m in enumerate(messages):
-            _write(f"  [{i}] {render_message(m)}")
-    elif t == "decision":
-        # 🔴 **走唯一那条渲染路**：这里原来**自己排一遍**（缩进 4 格），而终端那边
-        #    （`chat._render_decision`）**又排一遍**（0/2 格）—— 同一件事两处定义，
-        #    形状必然漂。现在两边都调 `render_decision()`，**这里只加"文件格式"的东西**
-        #    （时间戳前缀 + 段头）。〔沿革 27〕
-        body = "\n".join(f"{_DEC}{ln}" for ln in render_decision(ev).splitlines())
-        _write(f"[{ts}] {_DECISION_HEAD} · {ev['who']}\n{body}")
-
-
-# ⚠️ 记录器**不订阅**：`_publish` 直接先调它（顺序：记录器 → 订阅者）——
-# 这样它出错能走 `_mark_hole`（把洞标出来），而不是混进"订阅者出错"里。〔沿革 11〕

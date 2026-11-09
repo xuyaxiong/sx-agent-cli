@@ -43,6 +43,7 @@ os.environ["PROTO_LOG_TAG"] = "unit-handoff"
 os.environ["PROTO_LOG_DIR"] = "tmp/logs"   # 🔴 测试日志是**噪音** —— 别混进给人看的 `logs/`
 
 from proto import graph as _graph
+from proto.handoff.decision import emit_decision
 
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -109,6 +110,10 @@ ALLOWED: dict[str, list[tuple[str, str]]] = {
     ],
     'proto/trace.py': [
         (r'%f"\)\[:-3\]', '时间戳砍到毫秒'),
+    ],
+    # ⚠️ 2026-11-09：日志那一套（含下面这条豁免守的消毒截断）搬去了
+    # `proto/recorder.py` —— **豁免跟着代码走**，别留在这儿烂（它匹配不到了）。
+    'proto/recorder.py': [
         (r'\)\[:40\]',
          '**日志文件名**的消毒截断：`thread_id` 由**宿主**给（web 那边可能就是用户 ID），'
          '可能很长 —— 截的是**文件名**，不是任何交接内容'),
@@ -418,8 +423,8 @@ def main() -> None:
     trace.subscribe(_verdict_evs.append)
 
     def _rec(o: object) -> str:  # noqa: ANN202
-        """走**真路**：`_verdict` → `trace.decision` → 事件 → `render_decision`（两层共用那一处）。"""
-        trace.decision(**_vd(o, "R01"))  # type: ignore[arg-type]
+        """走**真路**：`_verdict` → `emit_decision` → 事件 → `render_decision`（两层共用那一处）。"""
+        emit_decision(**_vd(o, "R01"))  # type: ignore[arg-type]
         return _rd(_verdict_evs[-1])
 
     _done = _rec(_EO(status="completed", artifacts=["art_001"]))
@@ -513,7 +518,7 @@ def main() -> None:
     check("**试答**那条不受影响：第三个格子仍是【结果】＋「**它说的**」",
           "【结果】" in _llm and "**它说的**" in _llm, _llm)
     try:
-        trace.decision("x", q="q", result_by="platfrom")   # 故意的错拼
+        emit_decision("x", q="q", result_by="platfrom")   # 故意的错拼
         _blew = False
     except ValueError:
         _blew = True

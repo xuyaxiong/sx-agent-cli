@@ -12,10 +12,10 @@
 ⚠️ **这个测试管不了"模型读懂没有"** —— 那要真跑（`uv run python -m evals.chat`）。
 它管的是**机制**，就两件事：
 
-**① 记录层**：`trace.decision` 渲出来的四段**齐全、顺序对、值一个字不丢**，
+**① 记录层**：`emit_decision` 渲出来的四段**齐全、顺序对、值一个字不丢**，
    而且列表**不是 Python repr**（原来是 `['…', '…']`，括号引号全是噪音）。
 
-**② 记录层 ↔ 展示层不许失配**：`evals/chat.py` 认决策块走**结构化事件**（`trace.decision`
+**② 记录层 ↔ 展示层不许失配**：`evals/chat.py` 认决策块走**结构化事件**（`emit_decision`
    发的 `{"type": "decision", …}`，四段在字段里）—— 展示层**不再解析渲染文本**。
    旧契约（从 `trace.DECISION_HEAD` 前缀认块）是**文本契约**：措辞一改就**静默失配**，
    块认不出来 → 整块当噪音丢掉 —— 而丢的正是"平台为什么这么决定"。
@@ -25,9 +25,9 @@
 **⑤ 段名只有一份**：`trace.DECISION` 加一段 → 记录层与展示层**都得跟着走**
    （两边各抄一份的后果实测过：记录层整块决策从日志里消失、展示层静默少一段）。
 
-**⑥ 发射器不漏键**：`trace.decision` 发的事件必须覆盖 `DECISION` 的每一个键。
+**⑥ 发射器不漏键**：`emit_decision` 发的事件必须覆盖 `DECISION` 的每一个键。
 
-> 有效性自检：把 `trace.decision` 改回只发渲染文本（不发字段），③ 必须红。
+> 有效性自检：把 `emit_decision` 改回只发渲染文本（不发字段），③ 必须红。
 > ⑤ 把 `chat._render_decision` 改回写死那四段（或 `_recorder` 的 `vals` 写死四键），⑤ 必须红。
 """
 
@@ -56,7 +56,8 @@ os.environ["PROTO_LOG_DIR"] = "tmp/logs"   # 🔴 测试日志是**噪音** —�
 
 from evals import chat
 
-from proto import trace
+from proto import recorder, trace
+from proto.handoff.decision import emit_decision
 
 PASS: list[str] = []
 FAIL: list[str] = []
@@ -69,19 +70,19 @@ def check(name: str, ok: bool, detail: str = "") -> None:
 
 def _capture(fn) -> str:
     """跑一段记录，把它**新写进日志的那几行**捞出来（不碰别的输出）。"""
-    before = trace.log_size()
+    before = recorder.log_size()
     fn()
     # ⚠️ **`fn()` 可能一个字都没写**（日志是惰性的：没写过就没有那个文件）
-    if not trace.LOG_FILE.exists():
+    if not recorder.LOG_FILE.exists():
         return ""
-    with io.open(trace.LOG_FILE, "rb") as f:
+    with io.open(recorder.LOG_FILE, "rb") as f:
         f.seek(before)
         return f.read().decode("utf-8", "replace")
 
 
 #: 一段**真实形状**的判定结果（含多行值、含列表）—— 空值测不出"漏渲染"。
 def _sample() -> None:
-    trace.decision(
+    emit_decision(
         "判定（LLM）· R02 第 1 轮",
         q="这个任务完成了没？",
         given=[
@@ -102,7 +103,7 @@ def main() -> None:
     print("① 四段齐全、顺序 = 用户定的那个顺序（前提 → 问题 → 结果 → 下一步）")
     from proto.handoff import HOPS, SECTION
     _secs = [SECTION[k] for k in HOPS["decision"]]
-    heads = [f"{trace._DECISION_HEAD} · ", *[f"    {v}" for v in _secs]]
+    heads = [f"{recorder._DECISION_HEAD} · ", *[f"    {v}" for v in _secs]]
     for h in heads:
         check(f"`{h.strip()}` 在", h in got, repr(got[:120]))
     pos = [got.find(f"    {v}") for v in _secs]
@@ -135,10 +136,12 @@ def main() -> None:
     #    渲染成同一副面孔），公开是对的 —— 名单只收"记录层自己的格式"。
     for gone in ("_DECISION_HEAD", "_STREAM_MARK", "render_message"):
         check(f"`chat.py` 的**代码**里不出现记录层的 `{gone}`", gone not in code)
-    check("`trace.decision` 发的是结构化决策事件（字段原样在 ev 里）",
-          '"type": "decision"' in io.open("proto/trace.py", encoding="utf-8").read())
+    check("`emit_decision` 发的是结构化决策事件（字段原样在 ev 里）",
+          # ⚠️ 2026-11-09 起发射器住在 `handoff/decision.py`（领域事件的形状归领域包）——
+          #    总线只认识**形状名**（`_EVENT_TYPES` 里有 "decision"），不认识词表。
+          '"type": "decision"' in io.open("proto/handoff/decision.py", encoding="utf-8").read())
 
-    print("\n④ 判断都走 `trace.decision`（不再是散装 note）")
+    print("\n④ 判断都走 `emit_decision`（不再是散装 note）")
     # ⚠️ 2026-11-05 判定退休：**判定那次 LLM 调用整个没了**（三态改由平台按结构定）。
     #    现在系统里有两处判断，**都走这一条记录形状**：
     #      ① **试答**（LLM，`agent.py`）—— 它是交接；
@@ -146,12 +149,12 @@ def main() -> None:
     #         但用户点名要审计它（*"给它的上下文是啥、结果又是啥、产生结果依据又是啥"*）——
     #         记录形状照旧，另起一套 = 同一个问题两副面孔。
     s = io.open("proto/agent.py", encoding="utf-8").read()
-    check("`agent.py` 调了 `trace.decision(`（试答）", "trace.decision(" in s)
+    check("`agent.py` 调了 `emit_decision(`（试答）", "emit_decision(" in s)
     ex = io.open("proto/executor.py", encoding="utf-8").read()
     check("`executor.py` 里**没有 LLM 判定**（判定退休）—— 没有 `safe_structured(`",
           "safe_structured(" not in ex)
     check("`executor.py` 的「任务完成没」**有记录**（走同一条路，不是散装 note）",
-          "trace.decision(**_verdict(" in ex,
+          "emit_decision(**_verdict(" in ex,
           "少了它 → 「完成没」这个判断在日志里又没有上下文/依据了")
 
     print("\n⑤ 段名**只有一份**：给 `_DECISION_KEYS` 加一段，两层都得跟着走")
@@ -196,7 +199,7 @@ def main() -> None:
     print("\n⑥ 发射器把 `DECISION` 的**每一个键**都放进事件（漏一个 = 静默丢一段）")
     evs: list[dict] = []
     trace.subscribe(evs.append)
-    trace.decision("发射器检查", q="q", given="g", result="r", nxt="n")
+    emit_decision("发射器检查", q="q", given="g", result="r", nxt="n")
     _fields = set(_DECISION_KEYS)
     check("事件里的键**覆盖** `_DECISION_KEYS`", bool(evs) and _fields <= set(evs[-1]),
           f"事件键={sorted(evs[-1]) if evs else '（没发）'}，需要={sorted(_fields)}")
@@ -320,10 +323,10 @@ def main() -> None:
     _a_log = _b_log = None
     with session_mod.session(thread_id="user-A"):
         trace.note("A 会话的日志")
-        _a_log = trace.log_file()
+        _a_log = recorder.log_file()
     with session_mod.session(thread_id="user-B"):
         trace.note("B 会话的日志")
-        _b_log = trace.log_file()
+        _b_log = recorder.log_file()
 
     # ⚠️ **文件可能压根没建出来**（回归时正是如此：句柄退回进程级 → 谁也没开这个文件）
     #    —— 所以先 `exists()` 再读。少了这一步，自检会以 **`FileNotFoundError` 崩掉**、
@@ -369,16 +372,47 @@ def main() -> None:
     #    在磁盘上建文件，而大多数进程（单测、只用会话的宿主）**一个字都不写它**。
     #    实测 `logs/` 里 **147 个空文件（6%）**，来源全是这条。
     #    ⚠️ 惰性之后"这个进程还没写过日志"成了**正常状态** —— 所以读体积一律走
-    #    `trace.log_size()`（不存在 = 0），别直接 `LOG_FILE.stat()`。
+    #    `recorder.log_size()`（不存在 = 0），别直接 `LOG_FILE.stat()`。
     #    有效性自检：把那行 `open()` 加回 `trace.py` 的模块级 → 这里必须红。
     import subprocess
 
-    _before = {p.name for p in trace.LOG_DIR.glob("*.log")}
+    _before = {p.name for p in recorder.LOG_DIR.glob("*.log")}
     subprocess.run([sys.executable, "-c", "import proto.trace"],
                    capture_output=True, timeout=120, check=False)
-    _after = {p.name for p in trace.LOG_DIR.glob("*.log")}
+    _after = {p.name for p in recorder.LOG_DIR.glob("*.log")}
     check("子进程 `import proto.trace` 之后**没多出文件**",
           _before == _after, f"多出来的：{sorted(_after - _before)}")
+
+    print("\n⑮ 三个入口都**装了记录器**（不装 = 日志静默没有）")
+    # 🔴 记录器从总线拆出去之后（2026-11-09），总线只留一个**槽** ——
+    #    谁 import `proto.recorder` 谁就把它装上。**忘了 import = 日志一个字都不落**，
+    #    而且**没有任何报错**（那是库的合法用法：宿主不想要日志就不 import）。
+    #    ⇒ 产品侧那三个入口必须装 —— **这是接线，不是机制**，所以盯着。
+    #    ⚠️ **盯的是行为，不是源码文本**（子进程真 import 一次，看槽位空不空）：
+    #    源码子串检查骗得过去（写在注释里、写在 `if False:` 里都算"有"），
+    #    而这里问的是**跑起来到底装没装**。同 ⑭ 一个形状（也是开子进程实测）。
+    #    有效性自检：把任意一个入口里的 `from proto import recorder` 删掉，这里必须红。
+    _no_rec = []
+    for _f, _who in _entries.items():
+        _mod = _f[:-3].replace("/", ".").replace(".__init__", "")
+        _r = subprocess.run(
+            [sys.executable, "-c",
+             f"import importlib; importlib.import_module({_mod!r});"
+             " import proto.trace as t; raise SystemExit(0 if t._sink_record else 1)"],
+            capture_output=True, timeout=180, check=False)
+        if _r.returncode != 0:
+            _no_rec.append(f"{_f}（{_who}）")
+    check("三个入口 import 之后**记录器槽位非空**", not _no_rec, f"没装的：{_no_rec}")
+    # ⚠️ 顺带钉住另一半：**总线自己不许认识领域词汇表 / 不许 import 记录器**
+    #    （那就回到拆分前了 —— `llm → trace → handoff.decision`）。
+    #    ⚠️ `unit_registry` ① 守的是"**无环**"，挡不住这一条：它本来就不成环
+    #    （`handoff.decision → trace` 是单向的），所以必须单独守。
+    #    有效性自检：在 `trace.py` 顶上加回 `from proto.handoff.decision import ...` → 这里红。
+    _bus_src = io.open("proto/trace.py", encoding="utf-8").read()
+    _bus_code = "\n".join(ln for ln in _bus_src.splitlines() if not ln.strip().startswith("#"))
+    check("总线**不 import** `proto.handoff.*` / `proto.recorder`",
+          "from proto.handoff" not in _bus_code and "from proto import recorder" not in _bus_code,
+          "总线又认识领域词汇表了 —— 层次错误会原样复发")
 
     print("\n" + "═" * 78)
     print(f"{'全部通过' if not FAIL else '有失败'}：{len(PASS)}/{len(PASS) + len(FAIL)}")

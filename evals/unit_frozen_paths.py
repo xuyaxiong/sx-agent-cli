@@ -71,6 +71,7 @@ def main() -> None:
 
     # ⚠️ 必须在设完标记**之后**导入 —— 这些模块在 import 时就把路径算好了
     import proto.config as cfg
+    import proto.recorder as recorder
     import proto.trace as trace
     from evals import harness, report, run
 
@@ -81,7 +82,7 @@ def main() -> None:
     check("harness.ROOT", _same(harness.ROOT, fake))
     check("技能目录", _same(harness.DEFAULT_SKILLS_DIR, fake / "skills"))
     check("运行记录", _same(harness.RUNS_DIR, fake / "runs"))
-    check("trace 日志", _same(trace.LOG_DIR, fake / "logs"))
+    check("recorder 日志", _same(recorder.LOG_DIR, fake / "logs"))
     # 🔴 这两个曾经自己算 `HERE / "runs"` —— 冻结后指到 `_internal/` 里去
     check("run.RUNS_DIR 走同一来源", _same(run.RUNS_DIR, fake / "runs"))
     check("report.RUNS_DIR 走同一来源", _same(report.RUNS_DIR, fake / "runs"))

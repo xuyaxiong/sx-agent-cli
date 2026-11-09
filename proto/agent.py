@@ -161,7 +161,7 @@
     | 在哪 | 写的是 | 毛病 |
     |---|---|---|
     | `safe_structured(tag=…)` → `section` 标题 | `delegate → 平台强制让主 agent 试答` | **假话** —— 投递重跑那条路也走这一步 |
-    | `trace.decision(who=…)` | `试答（LLM）· 平台强制的一步` | —— |
+    | `emit_decision(who=…)` | `试答（LLM）· 平台强制的一步` | —— |
     | `evals/chat.py` 上屏的块标题 | `【试答 · LLM 决策】平台强制的一步` | 展示层**自己编的**，还用了 `【】`（段名专用符号） |
 
     ⇒ 屏幕上于是出现**两个 `🧭 DECIDE` 块、两个标题**（PROMPT 块 ＋ 记录块），读的人以为是
@@ -206,6 +206,7 @@ from proto import trace
 from proto.config import get_model
 from proto import executor  # ⚠️ 走模块属性，见 delegate 的注释
 from proto.handoff.ask import build_prompt as ask_prompt  # 试答
+from proto.handoff.decision import emit_decision  # 决策事件的发射器（归领域包）
 from proto.handoff.briefing import (  # 委托单
     Task,
     absorb_outcome,
@@ -365,7 +366,7 @@ async def _ask_main(messages: list, skill_name: str, task: str, outcome: Any) ->
     # 前提的**全文**就是上面那条 PROMPT（主 agent 的整个上下文，不截）——
     # 这里只说清"它看的是什么"，不重复贴一遍。
     ans = r.answer.strip()
-    trace.decision(
+    emit_decision(
         _ASK_STEP,
         q="**主 agent 的上下文里**，有没有执行器要的那个信息？（有就不打扰用户）",
         given=[

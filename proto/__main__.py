@@ -10,7 +10,7 @@
 
 `python -m proto` 的**入口 ＋ 显示层**：跑一轮（`turn`）→ 印回合读数（`_dump`）→
 接着问下一句。显示层**订阅 `trace` 的事件总线**（`_on_event`），自己排版上屏；
-日志落在 `trace.LOG_FILE`。
+日志落在 `recorder.LOG_FILE`。
 
 ## 设计原则（不变量）
 
@@ -65,7 +65,7 @@ if hasattr(sys.stdout, "reconfigure"):
 from langchain_core.messages import HumanMessage
 
 from proto import aio
-from proto import session, trace
+from proto import recorder, session, trace
 from proto.config import describe
 from proto.graph import build, next_pending
 from proto.handoff.briefing import asked_text
@@ -218,7 +218,7 @@ def main() -> None:
 
     print(BAR)
     print(f"主 agent = 完整 agent（自己决定：直接答 / 自己干 / 委派） · 模型={describe()}")
-    print(f"日志：{trace.log_file()}")
+    print(f"日志：{recorder.log_file()}")
     print(BAR)
 
     def turn(text: str, answer_to: str = "") -> dict | None:
@@ -266,11 +266,11 @@ def main() -> None:
         print(f"\n👤 {args.say}")
         result = turn(args.say)
         if result is None:
-            trace.close()
+            recorder.close()
             return
         _dump(result)
         print(BAR)
-        trace.close()
+        recorder.close()
         return
 
     print("输入你的请求（空行退出）。试试这些：\n")
@@ -310,8 +310,8 @@ def main() -> None:
             _dump(result)
             print(BAR)
 
-    trace.close()
-    print(f"完整日志：{trace.log_file()}")
+    recorder.close()
+    print(f"完整日志：{recorder.log_file()}")
 
 
 if __name__ == "__main__":

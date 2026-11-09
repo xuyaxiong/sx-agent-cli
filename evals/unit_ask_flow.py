@@ -61,7 +61,7 @@ os.environ["PROTO_LOG_DIR"] = "tmp/logs"   # 🔴 测试日志是**噪音** —�
 
 from proto import graph as _graph
 
-from proto import trace
+from proto import recorder, trace
 
 def _prepare(state):
     """`node_prepare` 现在是**协程** —— 测试里的同步收口。"""
@@ -145,16 +145,16 @@ def drive(on_phase: Callable[[str, list[dict], str], None] | None = None) \
 
     def _phase(title: str, start: int, n_ev: int) -> int:
         """收这一阶段：新落盘的那几行 ＋ 新发的那些事件。"""
-        # ⚠️ **文件可能还没建**（日志是惰性的：没写过就没有）—— 见 `trace.log_size`
+        # ⚠️ **文件可能还没建**（日志是惰性的：没写过就没有）—— 见 `recorder.log_size`
         lines = ""
-        if trace.LOG_FILE.exists():
-            with open(trace.LOG_FILE, "rb") as f:
+        if recorder.LOG_FILE.exists():
+            with open(recorder.LOG_FILE, "rb") as f:
                 f.seek(start)
                 lines = f.read().decode("utf-8", "replace")
         out.append((title, events[n_ev:], lines))
         if on_phase is not None:
             on_phase(title, events[n_ev:], lines)
-        return trace.log_size()
+        return recorder.log_size()
 
     # ── ① 执行器那一侧：`run_task` 真跑，只把模型和图打桩 ──────────────────────
     box: dict = {}
@@ -179,7 +179,7 @@ def drive(on_phase: Callable[[str, list[dict], str], None] | None = None) \
                                                        "args": {"question": Q}}]),
                             ToolMessage(ret, tool_call_id="call_ask")]}
 
-    at, n = trace.log_size(), len(events)
+    at, n = recorder.log_size(), len(events)
     ex.get_model = lambda **_k: object()  # type: ignore[assignment]
     ex.create_agent = _fake_agent  # type: ignore[assignment]
     trace.stream_agent = _fake_stream  # type: ignore[assignment]

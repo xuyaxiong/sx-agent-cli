@@ -46,7 +46,7 @@ from evals.harness import (  # noqa: E402
     snapshot,
 )
 from proto import aio
-from proto import session, trace  # noqa: E402
+from proto import recorder, session, trace  # noqa: E402
 from proto.graph import build, next_pending  # noqa: E402
 from proto.handoff.briefing import asked_text  # noqa: E402
 from proto import artifacts as artifacts_mod  # noqa: E402 —— 全仓只留**一个**别名
@@ -603,7 +603,7 @@ def _on_event(ev: dict) -> None:
             _emit("decide", "分支：主 agent 答不上 → " + str(ev["text"]), stamp=ev["ts"])
         elif k == "relay":
             # 🔴 **原样上屏**：`finalize: ` 那个前缀是**日志文件格式**，归记录层
-            # （`trace._NOTE_HEAD`）—— 这里曾经按**位置**切它（`[len("finalize: "):]`），
+            # （`recorder._NOTE_HEAD`）—— 这里曾经按**位置**切它（`[len("finalize: "):]`），
             # 文案措辞一改就静默吃掉 10 个字（2026-11-03 审核 F1 实测）。
             _emit("ask", "平台 → 用户：" + str(ev["text"])
                   + "\n（把上面那条**执行器的原话原样**转达 —— 代码保证不丢；主 agent 若也复述了一遍，"
@@ -784,7 +784,7 @@ def main() -> None:
     print("技能清单")
     _print_skills(skills, indent="   ")
     print(BAR)
-    print(f"日志   {trace.log_file()}")
+    print(f"日志   {recorder.log_file()}")
     print(f"记录   {out_dir}")
     print(BAR)
     print("直接说你要什么。退出：Ctrl-C 或 exit。\n")
@@ -923,7 +923,7 @@ def main() -> None:
         "fault": inst["fault"],
         "error": error,
         "wall_s": round(time.time() - t0, 1),
-        "trace_log": str(trace.log_file()),
+        "trace_log": str(recorder.log_file()),
         "skills_dir": str(args.skills),
     }
     dump_artifacts(out_dir, tag, 1, result)
@@ -937,7 +937,7 @@ def main() -> None:
     (out_dir / "results.json").write_text(
         json.dumps([result], ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    trace.close()
+    recorder.close()
     # 收尾**也只有一套**（用户 2026-11-02：*"结尾也统一起来 这个以打包为主"*）——
     # 留打包那版：**说清记录在哪 + 请对方发回来**。收尾才说路径不唐突
     # （刚做完事，这时候说"把它发我"才自然）；开场就说才叫噪音。
