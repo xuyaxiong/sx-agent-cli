@@ -39,6 +39,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 from typing import Callable
 
@@ -150,8 +151,11 @@ def drive(on_phase: Callable[[str, list[dict], str], None] | None = None) \
         box["tools"] = tools
         return object()
 
-    def _fake_stream(_agent, state, _config, _who, *, role):  # noqa: ANN001
-        """执行器那一轮：**真调一次 `ask_user`**（就是它会做的那件事），然后这一轮结束。"""
+    async def _fake_stream(_agent, state, _config, _who, *, role):  # noqa: ANN001
+        """执行器那一轮：**真调一次 `ask_user`**（就是它会做的那件事），然后这一轮结束。
+
+        ⚠️ 得是 **async** 生成器 —— `stream_agent` 现在是异步的（asyncio 迁移第 2 步）。
+        """
         ask = next(t for t in box["tools"] if t.name == "ask_user")
         ret = ask.invoke({"question": Q})
         yield {"messages": [*state["messages"],
@@ -164,7 +168,7 @@ def drive(on_phase: Callable[[str, list[dict], str], None] | None = None) \
     ex.create_agent = _fake_agent  # type: ignore[assignment]
     trace.stream_agent = _fake_stream  # type: ignore[assignment]
     try:
-        outcome = ex.run_task(registry.get("lesson-prep"), "（交接书正文……）")
+        outcome = asyncio.run(ex.run_task(registry.get("lesson-prep"), "（交接书正文……）"))
     finally:
         ex.get_model, ex.create_agent, trace.stream_agent = real  # type: ignore[assignment]
     at = _phase("① 执行器 → 平台：它要什么（`ask_user`）", at, n)
@@ -207,16 +211,18 @@ def drive(on_phase: Callable[[str, list[dict], str], None] | None = None) \
     real_model, real_run = llm_mod.get_model, ex.run_task
     n = len(events)
     llm_mod.get_model = lambda: _Structured()  # type: ignore[assignment]
-    ex.run_task = lambda *_a, **_k: outcome  # type: ignore[assignment]
+    async def _stub_outcome(*_a, **_k):  # noqa: ANN002, ANN003, ANN202
+        return outcome
+    ex.run_task = _stub_outcome  # type: ignore[assignment]
     try:
-        ag.delegate.func("lesson-prep", TASK, _Runtime(messages=[
+        asyncio.run(ag.delegate.coroutine("lesson-prep", TASK, _Runtime(messages=[
             HumanMessage("我现在想生成人教版小学语文荷花这一课的教案和导学单，"
                          "注意导学单内容得参考教案内容"),
             AIMessage("好的，我先来生成教案。"),
             ToolMessage(prev_receipt, tool_call_id="call_prev"),
             SystemMessage(ledger),
             HumanMessage("探究发现型"),
-        ], tasks=[]))
+        ], tasks=[])))
     finally:
         llm_mod.get_model, ex.run_task = real_model, real_run  # type: ignore[assignment]
     at = _phase("② 平台 → 主 agent：你知道它要的那句吗（试答）；答不上 → 登记待答", at, n)
@@ -230,11 +236,14 @@ def drive(on_phase: Callable[[str, list[dict], str], None] | None = None) \
 
     # ── ④ 用户 → 执行器：答复投递（`_feed_waiting` 真跑）──────────────────────
     n = len(events)
-    ex.run_task = lambda *_a, **_k: ex.ExecOutcome(  # type: ignore[assignment]
-        status="completed", artifacts=["art_001"], rounds=2, report="教案已生成并交付。")
+    async def _stub_completed(*_a, **_k):  # noqa: ANN002, ANN003, ANN202
+        return ex.ExecOutcome(
+            status="completed", artifacts=["art_001"], rounds=2,
+            report="教案已生成并交付。")
     try:
-        _feed_waiting({"tasks": [sample_task()], "messages": [HumanMessage("探究发现型")],
-                       "answer_to": TID})
+        asyncio.run(_feed_waiting(
+            {"tasks": [sample_task()], "messages": [HumanMessage("探究发现型")],
+             "answer_to": TID}))
     finally:
         ex.run_task = real_run  # type: ignore[assignment]
     _phase("④ 用户 → 执行器：答复的是**它问的那句**（投递重跑）", at, n)

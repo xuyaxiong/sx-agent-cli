@@ -24,6 +24,7 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import io
 import re
 import sys
@@ -360,8 +361,9 @@ def main() -> None:
     try:
         from proto.skills import Skill as _Skill
 
-        out = _ex.run_task(_Skill(name="quiz", description="随堂小测", instructions="出 3 道题"),
-                           "给三年级出 3 道随堂小测")
+        out = asyncio.run(_ex.run_task(
+            _Skill(name="quiz", description="随堂小测", instructions="出 3 道题"),
+            "给三年级出 3 道随堂小测"))
     finally:
         _ex.get_model, _ex.create_agent = _get_model, _create_agent  # type: ignore[assignment]
         trace.stream_agent = _stream  # type: ignore[assignment]
@@ -442,7 +444,7 @@ def main() -> None:
         def __init__(self, tools: list) -> None:
             self._tools = {t.name: t for t in tools}
 
-        def stream(self, state, config, stream_mode):  # noqa: ANN001, ANN201
+        async def astream(self, state, config, stream_mode):  # noqa: ANN001, ANN201
             self._tools["write_artifact"].invoke({
                 "title": "《荷花》教案", "summary": "三年级下册完整教案",
                 "file_type": "md", "content": "正文" * 40})
@@ -453,8 +455,9 @@ def main() -> None:
     _ex.create_agent = lambda model, tools=None, **k: _FakeAgent(tools or [])  # type: ignore[assignment]
     _n_before = len(_verdict_evs)
     try:
-        _out2 = _ex.run_task(_Skill(name="lesson-prep", description="备课", instructions="写教案"),
-                             "生成《荷花》教案")
+        _out2 = asyncio.run(_ex.run_task(
+            _Skill(name="lesson-prep", description="备课", instructions="写教案"),
+            "生成《荷花》教案"))
     finally:
         _ex.create_agent, _ex.get_model = _create, _model  # type: ignore[assignment]
     _run_rec = [e for e in _verdict_evs[_n_before:] if e["type"] == "decision"]
@@ -475,7 +478,7 @@ def main() -> None:
         status_code = 400
 
     class _RejectedAgent:
-        def stream(self, state, config, stream_mode):  # noqa: ANN001, ANN201
+        async def astream(self, state, config, stream_mode):  # noqa: ANN001, ANN201
             raise _Http400("Output data may contain inappropriate content.")
             yield  # pragma: no cover —— 让它是生成器
 
@@ -483,8 +486,8 @@ def main() -> None:
     _ex.get_model = lambda *a, **k: object()  # type: ignore[assignment]
     _ex.create_agent = lambda model, tools=None, **k: _RejectedAgent()  # type: ignore[assignment]
     try:
-        _out4 = _ex.run_task(
-            _Skill(name="quiz", description="随堂小测", instructions="出 3 道题"), "出 3 道题")
+        _out4 = asyncio.run(_ex.run_task(
+            _Skill(name="quiz", description="随堂小测", instructions="出 3 道题"), "出 3 道题"))
     finally:
         _ex.create_agent, _ex.get_model = _create3, _model3  # type: ignore[assignment]
     check("400 拒绝：`run_task` **不抛**（会话不死），落成 fault",

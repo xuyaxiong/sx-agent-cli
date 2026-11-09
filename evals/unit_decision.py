@@ -35,6 +35,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import sys
 
@@ -219,7 +220,7 @@ def main() -> None:
         def with_structured_output(self, schema):  # noqa: ANN001
             return self
 
-        def invoke(self, prompt):  # noqa: ANN001
+        async def ainvoke(self, prompt):  # noqa: ANN001
             _Boom.calls += 1
             raise TimeoutError("（模拟）grammar 编译超时")
 
@@ -227,17 +228,17 @@ def main() -> None:
         def with_structured_output(self, schema):  # noqa: ANN001
             return self
 
-        def invoke(self, prompt):  # noqa: ANN001
+        async def ainvoke(self, prompt):  # noqa: ANN001
             return None                     # 模型吐了空（不抛）
 
     _orig = llm_mod.get_model
     try:
         llm_mod.get_model = lambda: _Boom()          # type: ignore[assignment]
-        got = safe_structured(_Schema, "p", "保守默认", tag="测试",
-                              log_prompt=False, log_response=False)
+        got = asyncio.run(safe_structured(_Schema, "p", "保守默认", tag="测试",
+                                          log_prompt=False, log_response=False))
         llm_mod.get_model = lambda: _Empty()         # type: ignore[assignment]
-        got2 = safe_structured(_Schema, "p", "保守默认", tag="测试",
-                               log_prompt=False, log_response=False)
+        got2 = asyncio.run(safe_structured(_Schema, "p", "保守默认", tag="测试",
+                                           log_prompt=False, log_response=False))
     finally:
         llm_mod.get_model = _orig                    # type: ignore[assignment]
     check("两次都失败 → 返回**保守默认值**（不抛、不炸整轮）", got == "保守默认", repr(got))
@@ -256,7 +257,7 @@ def main() -> None:
         def with_structured_output(self, schema):  # noqa: ANN001
             return self
 
-        def invoke(self, prompt):  # noqa: ANN001
+        async def ainvoke(self, prompt):  # noqa: ANN001
             return "ok"
 
     _假原话 = "【它要的信息】\n  （守卫用的假原话）"
@@ -264,11 +265,11 @@ def main() -> None:
     try:
         llm_mod.get_model = lambda: _Ok()  # type: ignore[assignment]
         os.environ.pop("PROTO_LOG_PROMPT", None)
-        off = _capture(lambda: safe_structured(_Schema, _假原话, "d", tag="守卫",
-                                               log_prompt=True, log_response=False))
+        off = _capture(lambda: asyncio.run(safe_structured(
+            _Schema, _假原话, "d", tag="守卫", log_prompt=True, log_response=False)))
         os.environ["PROTO_LOG_PROMPT"] = "1"
-        on = _capture(lambda: safe_structured(_Schema, _假原话, "d", tag="守卫",
-                                              log_prompt=True, log_response=False))
+        on = _capture(lambda: asyncio.run(safe_structured(
+            _Schema, _假原话, "d", tag="守卫", log_prompt=True, log_response=False)))
     finally:
         llm_mod.get_model = _orig3  # type: ignore[assignment]
         os.environ.pop("PROTO_LOG_PROMPT", None)

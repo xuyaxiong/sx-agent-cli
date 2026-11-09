@@ -199,7 +199,7 @@ def main() -> None:  # noqa: C901
                     # 🔴 **`@tool` 的 docstring 不算"解释"**（2026-11-06 补缝）：它是**工具
                     #    schema**，模型**真的看得见** —— 段名规矩与用词体系对它一样管。
                     #    实测这条缝漏过两处：`write_artifact` 里的「成品」、`delegate` 里的「摘要」。
-                    if isinstance(n, ast.FunctionDef) and any(
+                    if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(
                             (isinstance(d, ast.Name) and d.id == "tool")
                             or (isinstance(d, ast.Attribute) and d.attr == "tool")
                             for d in n.decorator_list):
@@ -276,7 +276,7 @@ def main() -> None:  # noqa: C901
                     # 🔴 **`@tool` 的 docstring 不算"解释"**（2026-11-06 补缝）：它是**工具
                     #    schema**，模型**真的看得见** —— 段名规矩与用词体系对它一样管。
                     #    实测这条缝漏过两处：`write_artifact` 里的「成品」、`delegate` 里的「摘要」。
-                    if isinstance(n, ast.FunctionDef) and any(
+                    if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)) and any(
                             (isinstance(d, ast.Name) and d.id == "tool")
                             or (isinstance(d, ast.Attribute) and d.attr == "tool")
                             for d in n.decorator_list):

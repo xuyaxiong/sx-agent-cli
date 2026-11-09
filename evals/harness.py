@@ -248,14 +248,14 @@ def install(case: dict) -> dict:
     run_tasks: list[dict] = []
     orig_run_task = proto.executor.run_task
 
-    def rec_run_task(skill, briefing: str = "", user_turns=None):
+    async def rec_run_task(skill, briefing: str = "", user_turns=None):
         # 本次 run **前后**产物库的差集 = 这次真写出来的。
         # ⚠️ 不能按线程归属：产物写入发生在 langgraph 的工具线程里，和 run_task 的线程
         #    对不上（实测 threads 完全不重合），按线程判会**永远不报**。
         # ⚠️ 签名要跟着 `proto.executor.run_task` 走：它变过两次（`given`→`briefing`、
         #    去掉 `artifacts` 参数），**每次都漏改这里、每次都整轮崩** —— 改签名时记得搜一遍。
         before = set(proto.artifacts.ids())
-        out = orig_run_task(skill, briefing, user_turns)
+        out = await orig_run_task(skill, briefing, user_turns)
         run_tasks.append(
             {
                 "thread": threading.get_ident(),

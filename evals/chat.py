@@ -712,6 +712,18 @@ def _read_card_answer(color: str) -> str | None:
             hinted = True
 
 
+#: 🔴 **一个进程一个事件循环**（不是"一轮一个"）。`get_model()` 是 `lru_cache` 的，
+#: 里面那个 **async** httpx 客户端**绑在创建它的那个循环上** —— 每轮 `asyncio.run` 开新循环，
+#: 第二轮就撞 `RuntimeError: Event loop is closed`（实测：真会话 R01 报过，靠重试蒙过去）。
+#: ⚠️ 别改回 `asyncio.run` —— 那是"跑完就关循环"，正是这条的病因。
+_LOOP = asyncio.new_event_loop()
+
+
+def _run(coro):
+    """在**进程级**那个循环上跑一个协程（见 `_LOOP` 的注释）。"""
+    return _LOOP.run_until_complete(coro)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="交互式跑原型（你当用户；技能从文件夹加载）")
     ap.add_argument(
@@ -840,7 +852,7 @@ def main() -> None:
             # 用户白等一场、还得重新起进程。现在按**轮**兜：这一轮没跑成，说清原因，
             # 提示符接着来 —— 把刚才那句再说一遍就行。
             try:
-                state = asyncio.run(graph.ainvoke(
+                state = _run(graph.ainvoke(
                     {"messages": [HumanMessage(text)], "log": []}, config))   # 异步驱动
             except Exception as e:  # noqa: BLE001
                 import traceback
@@ -876,7 +888,7 @@ def main() -> None:
                     break
                 t2 = time.time()
                 try:
-                    state = asyncio.run(graph.ainvoke(
+                    state = _run(graph.ainvoke(
                         {"messages": [HumanMessage(ans)], "log": [], "answer_to": p["id"]},
                         config,
                     ))

@@ -706,7 +706,7 @@ def upstream_rejected(e: BaseException) -> bool:
     return isinstance(code, int) and 400 <= code < 500 and code not in (408, 429)
 
 
-def _stream_with_retry(graph, state, config, who: str, role: str):
+async def _stream_with_retry(graph, state, config, who: str, role: str):
     """跑 `_stream_agent`；基础设施抖动就重试一次（**边界见下**），仍失败才抛。
 
     🔴 **为什么兜在这一层**：这是**两条链唯一共用的缝** —— 主 agent 的循环、执行器的
@@ -748,7 +748,7 @@ def _stream_with_retry(graph, state, config, who: str, role: str):
     chunks_seen = 0
     for attempt in (1, 2):
         try:
-            for chunk in _stream_agent(graph, state, config, who, role):
+            async for chunk in _stream_agent(graph, state, config, who, role):
                 chunks_seen += 1
                 yield chunk
             return
@@ -767,7 +767,7 @@ def _stream_with_retry(graph, state, config, who: str, role: str):
                  "—— 已重试一次（上面流出去的那半段作废）", kind="retry")
 
 
-def _stream_agent(graph, state, config, who: str, role: str):
+async def _stream_agent(graph, state, config, who: str, role: str):
     buf = ""
     cur_id: str | None = None      # 当前这条 AI 消息的 id —— 换了消息就把 buf 落盘
 
@@ -782,7 +782,7 @@ def _stream_agent(graph, state, config, who: str, role: str):
     #    ⚠️ 重试**不收回**已经发出去的 `stream` 事件（记录层是原始记录）——
     #    所以那半行会留在日志里，紧跟着一条 `retry` note 说它作废。
     try:
-        for mode, payload in graph.stream(state, config, stream_mode=["values", "messages"]):
+        async for mode, payload in graph.astream(state, config, stream_mode=["values", "messages"]):
             if mode == "messages":
                 chunk, meta = payload
                 # 🔴 **只发 agent 自己说的话**（`node='model'`）。

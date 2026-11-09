@@ -338,7 +338,7 @@ def _last_human(state: State) -> str:
 
 
 
-def _feed_waiting(state: State) -> tuple[list[dict], list[str]]:
+async def _feed_waiting(state: State) -> tuple[list[dict], list[str]]:
     """把用户这条消息**原话**投给**它标明的那一个**待答任务（`answer_to`）。
 
     🔴 **不做任何判断** —— 不判断"用户是不是在回答""答的是哪一条"。原话投过去，执行器
@@ -409,7 +409,7 @@ def _feed_waiting(state: State) -> tuple[list[dict], list[str]]:
         #    那句 ✓）—— `dispatch` 里的落账不碰它（`rec` 与 `t` 是两份）。
         #    ⚠️ `trigger="feed"` = **这轮是平台起的**（不是主 agent 派发的）：台账据此说清
         #    "全文在哪" —— 这一趟**没有回执**，全文不在主 agent 上下文里〔沿革 17〕。
-        outcome, answer, mooted = dispatch(
+        outcome, answer, mooted = await dispatch(
             skill, rec, state.get("tasks") or [],
             trigger="feed", messages=state.get("messages") or [],
         )
@@ -435,7 +435,7 @@ def _feed_waiting(state: State) -> tuple[list[dict], list[str]]:
     return out, logs
 
 
-def node_feed(state: State) -> dict:
+async def node_feed(state: State) -> dict:
     """① 把用户原话投给**它标明的那一个**待答任务（见 `_feed_waiting`）。
 
     🔴 **为什么单起一个节点**：这一步里**同步跑执行器**（60–120 秒），而原来的节点名
@@ -447,7 +447,7 @@ def node_feed(state: State) -> dict:
     漏写一条返回路径它们就会残留到下一轮。**一条路 = 没有第二条可漏**〔沿革 31〕。
     守卫见 `unit_feed_waiting` ⑫（AST 盯 `return` 的键）。
     """
-    updated, logs = _feed_waiting(state)
+    updated, logs = await _feed_waiting(state)
 
     # 🔴 **这一轮投递之后，执行器又问了一个吗** —— 判据是**结构事实**：`settle()` 把投递过的
     #    那条落成了 `waiting_for_input`（投递后完成了就是 `completed`，不会误判）。
@@ -634,7 +634,7 @@ def build():
     g.add_node("prepare", node_prepare)
     main_agent = build_agent(AgentState)  # 主 agent：完整的 agent（工具 + 循环）
 
-    def node_agent(state: State, config: RunnableConfig) -> dict:
+    async def node_agent(state: State, config: RunnableConfig) -> dict:
         """跑主 agent 子图，**每走一步就把它露出来**。
 
         🔴 **为什么必须在这里记**：主 agent 的消息**不进** `run_task` 的轨迹 dump（那是
@@ -655,8 +655,8 @@ def build():
         step = 0
         # `stream_agent` 顺带把**每个字**也写进日志（攒到换行写一行）——
         # 一次 LLM 调用那几十秒不再是黑屏。
-        for chunk in trace.stream_agent(main_agent, state, config, "主 agent",
-                                        role=trace.AGENT):
+        async for chunk in trace.stream_agent(main_agent, state, config, "主 agent",
+                                              role=trace.AGENT):
             out = chunk
             msgs = chunk.get("messages") or []
             new = msgs[prev_n:]
@@ -680,7 +680,7 @@ def build():
                 "跑完才回来。正常不该发生 —— 见到这条要查 `stream` 为什么是空的。",
                 kind="stream_empty",
             )
-            return main_agent.invoke(state, config)
+            return await main_agent.ainvoke(state, config)
         return {**out, "log": logs} if logs else out
 
     g.add_node("agent", node_agent)

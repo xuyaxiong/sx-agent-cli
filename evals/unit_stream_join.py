@@ -23,6 +23,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import sys
 from typing import TypedDict
@@ -68,10 +69,28 @@ class _FakeGraph:
     def __init__(self, script: list[tuple[str, str]]) -> None:
         self.script = script
 
-    def stream(self, state, config, stream_mode=None):  # noqa: ARG002
+    async def astream(self, state, config, stream_mode=None):  # noqa: ARG002
         for text, mid in self.script:
             yield "messages", (_chunk(text, mid), {"langgraph_node": "model"})
         yield "values", {"messages": []}
+
+
+
+def _drive(agen, into: list | None = None) -> list:
+    """把**异步**生成器跑完 —— 测试本身是同步的，这里开一个事件循环收。
+
+    ⚠️ 测试直接调 `trace.stream_agent`（它现在是**异步**生成器），所以得有个同步收口。
+
+    🔴 **结果要能"边跑边攒"**：生成器**中途抛**时，已经吐出来的 chunk 必须留在
+    `into` 里 —— 不然"第一步的产出照常交出去"那条断言**永远看到空列表** ✗
+    （第一版用列表推导攒在函数内部，异常一抛就丢了 —— 实测踩到）。
+    """
+    out = into if into is not None else []
+    async def _collect() -> None:
+        async for c in agen:
+            out.append(c)
+    asyncio.run(_collect())
+    return out
 
 
 def _run(script: list[tuple[str, str]]) -> str:
@@ -81,8 +100,7 @@ def _run(script: list[tuple[str, str]]) -> str:
     old_fh = _s.log_fh
     _s.log_fh = buf
     try:
-        for _ in trace.stream_agent(_FakeGraph(script), {}, {}, "测试", role=trace.AGENT):
-            pass
+        _drive(trace.stream_agent(_FakeGraph(script), {}, {}, "测试", role=trace.AGENT))
     finally:
         _s.log_fh = old_fh
     return buf.getvalue()
@@ -134,7 +152,7 @@ def main() -> None:
         def __init__(self) -> None:
             self.calls = 0
 
-        def stream(self, state, config, stream_mode=None):  # noqa: ARG002
+        async def astream(self, state, config, stream_mode=None):  # noqa: ARG002
             self.calls += 1
             yield "values", state                      # 真实图开跑先吐这个（什么都没干）
             if self.calls == 1:
@@ -147,8 +165,7 @@ def main() -> None:
     g = _FlakyFirstStep()
     raised, got = False, []
     try:
-        for _c in trace.stream_agent(g, {"messages": []}, {}, "测试", role=trace.AGENT):
-            got.append(_c)
+        _drive(trace.stream_agent(g, {"messages": []}, {}, "测试", role=trace.AGENT), got)
     except TimeoutError:
         raised = True
     finally:
@@ -167,7 +184,7 @@ def main() -> None:
         def __init__(self) -> None:
             self.calls = 0
 
-        def stream(self, state, config, stream_mode=None):  # noqa: ARG002
+        async def astream(self, state, config, stream_mode=None):  # noqa: ARG002
             self.calls += 1
             if self.calls == 1:
                 raise TimeoutError("（模拟）sandbox grammar compile timed out")
@@ -179,7 +196,7 @@ def main() -> None:
     old_fh, _s.log_fh = _s.log_fh, buf
     g = _FlakyAtStart()
     try:
-        got = list(trace.stream_agent(g, {}, {}, "测试", role=trace.AGENT))
+        got = _drive(trace.stream_agent(g, {}, {}, "测试", role=trace.AGENT))
     finally:
         _s.log_fh = old_fh
     log = buf.getvalue()
@@ -188,13 +205,13 @@ def main() -> None:
     check("重试后的话照常流出去", "重试之后说的话" in log, repr(log[-200:]))
 
     class _AlwaysFlaky:
-        def stream(self, state, config, stream_mode=None):  # noqa: ARG002
+        async def astream(self, state, config, stream_mode=None):  # noqa: ARG002
             raise TimeoutError("（模拟）一直抖动")
             yield  # pragma: no cover —— 让它是生成器
 
     raised = False
     try:
-        list(trace.stream_agent(_AlwaysFlaky(), {}, {}, "测试", role=trace.AGENT))
+        _drive(trace.stream_agent(_AlwaysFlaky(), {}, {}, "测试", role=trace.AGENT))
     except TimeoutError:
         raised = True
     check("两次都失败 → **原样抛出**（降级由调用方决定，这里不吞）", raised)
@@ -212,7 +229,7 @@ def main() -> None:
         def __init__(self) -> None:
             self.calls = 0
 
-        def stream(self, state, config, stream_mode=None):  # noqa: ARG002
+        async def astream(self, state, config, stream_mode=None):  # noqa: ARG002
             self.calls += 1
             raise _Http400("Output data may contain inappropriate content.")
             yield  # pragma: no cover —— 让它是生成器
@@ -220,7 +237,7 @@ def main() -> None:
     g = _Rejected()
     raised = False
     try:
-        list(trace.stream_agent(g, {}, {}, "测试", role=trace.AGENT))
+        _drive(trace.stream_agent(g, {}, {}, "测试", role=trace.AGENT))
     except _Http400:
         raised = True
     check("4xx 拒绝：**原样抛**（降级由调用方决定）", raised)
@@ -239,7 +256,7 @@ def main() -> None:
         def __init__(self) -> None:
             self.calls = 0
 
-        def stream(self, state, config, stream_mode=None):  # noqa: ARG002
+        async def astream(self, state, config, stream_mode=None):  # noqa: ARG002
             self.calls += 1
             yield "messages", (_chunk(f"这半行来自第{self.calls}次尝试", "m1"),
                                {"langgraph_node": "model"})
@@ -251,7 +268,7 @@ def main() -> None:
     _s = session.default()
     old_fh, _s.log_fh = _s.log_fh, buf
     try:
-        list(trace.stream_agent(_FlakyAfterText(), {}, {}, "测试", role=trace.AGENT))
+        _drive(trace.stream_agent(_FlakyAfterText(), {}, {}, "测试", role=trace.AGENT))
     finally:
         _s.log_fh = old_fh
     log = buf.getvalue()
@@ -274,7 +291,7 @@ def main() -> None:
         def __init__(self) -> None:
             self.calls = 0
 
-        def stream(self, state, config, stream_mode=None):  # noqa: ARG002
+        async def astream(self, state, config, stream_mode=None):  # noqa: ARG002
             self.calls += 1
             yield "values", state
             yield "values", {"messages": ["第一步走完了（比如 delegate 已经跑过）"]}
@@ -283,8 +300,7 @@ def main() -> None:
     g = _FlakyAfterStep()
     raised, got = False, []
     try:
-        for _c in trace.stream_agent(g, {"messages": []}, {}, "测试", role=trace.AGENT):
-            got.append(_c)
+        _drive(trace.stream_agent(g, {"messages": []}, {}, "测试", role=trace.AGENT), got)
     except TimeoutError:
         raised = True
     check("第一步走完后再抖 → **原样抛**（不静默重做一遍）", raised, f"calls={g.calls}")

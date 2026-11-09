@@ -76,7 +76,7 @@ warnings.filterwarnings(
 )
 
 
-def safe_structured(
+async def safe_structured(
     schema: type,
     prompt: str,
     default: Any,
@@ -139,7 +139,7 @@ def safe_structured(
         #    显示的是**两次累计**的秒数 —— 日志里那个数字会骗人〔沿革 3〕。
         t0 = time.time()
         try:
-            r = get_model().with_structured_output(schema).invoke(prompt)
+            r = await get_model().with_structured_output(schema).ainvoke(prompt)
             # 🔴 **`None` 也算失败**：`with_structured_output` 在模型吐了空的时候可能
             #    **返回 `None` 而不抛** —— 那样调用方下一行（`j.status` /
             #    `ans.can_answer`）直接 AttributeError，**整轮炸**；而这条路上

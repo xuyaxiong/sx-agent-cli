@@ -198,6 +198,18 @@ def _dump(result: dict) -> None:
         print(f"   │ ★ 隔离效果：产物正文是主上下文的 {body / ctx:.1f} 倍，全在产物库里")
 
 
+#: 🔴 **一个进程一个事件循环**（不是"一轮一个"）。`get_model()` 是 `lru_cache` 的，
+#: 里面那个 **async** httpx 客户端**绑在创建它的那个循环上** —— 每轮 `asyncio.run` 开新循环，
+#: 第二轮就撞 `RuntimeError: Event loop is closed`（实测：真会话 R01 报过，靠重试蒙过去）。
+#: ⚠️ 别改回 `asyncio.run` —— 那是"跑完就关循环"，正是这条的病因。
+_LOOP = asyncio.new_event_loop()
+
+
+def _run(coro):
+    """在**进程级**那个循环上跑一个协程（见 `_LOOP` 的注释）。"""
+    return _LOOP.run_until_complete(coro)
+
+
 def main() -> None:
     ap = argparse.ArgumentParser(description="主 agent（完整 agent）＋ 技能 / Task / 执行器")
     ap.add_argument("--thread", default="proto-1")
@@ -236,7 +248,7 @@ def main() -> None:
             #    provided`）。之后才能一个一个把节点改成 `async def`。
             #    ⚠️ `session.current()` 在那种线程里**认得出会话** —— langchain 的
             #    `run_in_executor` 会 `copy_context()`（实测过）。
-            result = asyncio.run(graph.ainvoke(init, config))
+            result = _run(graph.ainvoke(init, config))
         except Exception as e:  # noqa: BLE001
             print(f"\n⚠️ **这一轮没跑成**（平台故障）：{type(e).__name__}: {e}")
             print("   会话还在 —— 把刚才那句**再说一遍**就行。\n")

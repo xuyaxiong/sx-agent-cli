@@ -329,7 +329,7 @@ class _AgentAnswer(BaseModel):
     answer: str = Field(default="", description="can_answer=true 时给出补充内容，原话照搬不要改写")
 
 
-def _ask_main(messages: list, skill_name: str, task: str, outcome: Any) -> str:
+async def _ask_main(messages: list, skill_name: str, task: str, outcome: Any) -> str:
     """**平台强制的一步**：让主 agent 用自己的上下文试着补上缺的信息。
 
     ⚠️ **必须把"它要什么"给全**（信息交接原则）：那是**执行器自己申报的原话**
@@ -352,7 +352,7 @@ def _ask_main(messages: list, skill_name: str, task: str, outcome: Any) -> str:
     trace.handoff("试答", "平台", "主 agent", prompt,
                   structured=f"ExecOutcome ＋ 全部 {len(msgs)} 条消息")
     # 调用失败时保守当作「答不上」—— 交给用户，而不是编一个答案
-    r = safe_structured(
+    r = await safe_structured(
         _AgentAnswer, prompt, _AgentAnswer(can_answer=False),
         tag=_ASK_STEP,
         kind="ask_main",
@@ -397,7 +397,7 @@ def _ask_main(messages: list, skill_name: str, task: str, outcome: Any) -> str:
     return ans if r.can_answer else ""
 
 
-def try_answer_then_rerun(
+async def try_answer_then_rerun(
     rec: dict, skill: Any, outcome: Any, *, messages: list
 ) -> tuple[Any, str]:
     """执行器说「缺信息」→ **平台强制主 agent 先用自己上下文试答** → 答得上就重跑一遍。
@@ -412,7 +412,7 @@ def try_answer_then_rerun(
     ⚠️ **只做这一步，不决定出口** —— completed / 仍待答 / failed 由调用方按最终 outcome
     分派（三个出口的措辞各不相同，混进来就又长出一个上帝函数）。
     """
-    answer = _ask_main(messages, skill.name, rec.get("task") or "", outcome)
+    answer = await _ask_main(messages, skill.name, rec.get("task") or "", outcome)
     if not answer:
         return outcome, ""
     rec["agent_tried"] = True
@@ -423,12 +423,12 @@ def try_answer_then_rerun(
     rec["qa"] = [*(rec.get("qa") or []),
                  {"by": "主 agent", "q": outcome.asked, "a": answer}]
     # 试答后重跑也是**重入**：走同一份交接书（带上刚才那一轮的进度 / 它问过什么）
-    o2 = executor.run_task(skill, render_briefing(rec), rec.get("user_turns"))
+    o2 = await executor.run_task(skill, render_briefing(rec), rec.get("user_turns"))
     return o2, answer
 
 
-def dispatch(skill: Any, rec: dict, tasks: list[dict], *, trigger: str,
-             messages: list) -> tuple[Any, str, list[dict]]:
+async def dispatch(skill: Any, rec: dict, tasks: list[dict], *, trigger: str,
+                   messages: list) -> tuple[Any, str, list[dict]]:
     """**派发编排** —— 两条路（`delegate` / `graph._feed_waiting`）共用的那一段。
 
     🔴 **为什么抽出来**：核心早就统一了（`try_answer_then_rerun` / `settle` /
@@ -449,12 +449,12 @@ def dispatch(skill: Any, rec: dict, tasks: list[dict], *, trigger: str,
     各渲染各的（"视图可以有很多个，事实源只能有一个"）；这里返回**事实**：
     `(最终 outcome, 主 agent 的试答, 被取代的 Task)`。
     """
-    outcome = executor.run_task(skill, render_briefing(rec), rec.get("user_turns"))
+    outcome = await executor.run_task(skill, render_briefing(rec), rec.get("user_turns"))
     absorb_outcome(rec, outcome)
     rec["run_by"] = trigger
     answer = ""
     if outcome.status == "waiting_for_input":
-        outcome, answer = try_answer_then_rerun(rec, skill, outcome, messages=messages)
+        outcome, answer = await try_answer_then_rerun(rec, skill, outcome, messages=messages)
     settle(rec, outcome)
     mooted = moot_older_waiting(rec, tasks) if outcome.status == "completed" else []
     return outcome, answer, mooted
@@ -558,7 +558,7 @@ def _user_turns(messages: list) -> list[dict]:
 
 
 @tool
-def delegate(
+async def delegate(
     skill_name: str,
     task: str,
     runtime: ToolRuntime,
@@ -667,7 +667,7 @@ def delegate(
 
     # ① 派发 —— 编排（run_task → 落账 → 试答 → 落账 → 取代）走**两条路共用**的那个函数；
     #    `run_task` 内部已含「出口限制」：既没完成也没提问会被推回去继续。
-    outcome, answer, mooted = dispatch(
+    outcome, answer, mooted = await dispatch(
         skill, rec, runtime.state.get("tasks") or [],
         trigger="delegate", messages=runtime.state.get("messages") or [],
     )

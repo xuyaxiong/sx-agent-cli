@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import io
 import sys
 
@@ -86,6 +87,35 @@ def _no_delivery() -> ExecOutcome:
     return ExecOutcome(status="incomplete", artifacts=[], report="（这一轮没交出东西）", rounds=3)
 
 
+def _run_feed(state):
+    """`_feed_waiting` 现在是**协程** —— 测试里包一层同步收口（asyncio 迁移第 2 步）。"""
+    return asyncio.run(graph._feed_waiting(state))
+
+
+def _run_node_feed(state):
+    """同上：`node_feed` 现在是协程。"""
+    return asyncio.run(graph.node_feed(state))
+
+
+def _run_node_prepare(state):
+    """⚠️ `node_prepare` **还是同步的**（它没有 I/O，纯拼串）—— 原样调就行。
+
+    迁移到纯 asyncio 时它也会变成 `async def`（图里不该有同步节点），但那一步
+    **不影响行为**，所以留到最后。
+    """
+    return graph.node_prepare(state)
+
+
+def _stub_returns(value):
+    """`run_task` 的桩：不管参数是什么都返回 `value`。
+
+    ⚠️ 得是 **async** —— `run_task` 现在是协程（asyncio 迁移第 2 步）。
+    """
+    async def _f(*a, **k):  # noqa: ANN002, ANN003, ANN202
+        return value
+    return _f
+
+
 def _capture() -> list[tuple[str, list | None]]:
     """把 `run_task` 换成记录器，返回它每次收到的 **（提示词, 用户原话）**。
 
@@ -94,7 +124,7 @@ def _capture() -> list[tuple[str, list | None]]:
     """
     seen: list[tuple[str, list | None]] = []
 
-    def fake(skill, briefing: str = "", user_turns=None):  # noqa: ANN001, ANN202
+    async def fake(skill, briefing: str = "", user_turns=None):  # noqa: ANN001, ANN202
         seen.append((briefing, user_turns))
         return _waiting()
 
@@ -103,7 +133,7 @@ def _capture() -> list[tuple[str, list | None]]:
     #    不打桩的话，每个"仍待答"的 section 都会**真调一次模型** ——
     #    **实测踩过**：忘了打桩 → 一个 section 多等 4.4 秒、还真花 token（单测必须不调 LLM）。
     #    要测"试答答得上"那条，自己在那一节里改成返回一句答案（见 ⑧）。
-    proto.agent._ask_main = lambda *a, **k: ""  # type: ignore[assignment]
+    proto.agent._ask_main = _stub_returns("")  # type: ignore[assignment]
     return seen
 
 
@@ -129,7 +159,7 @@ def main() -> None:
             }
         ],
     }
-    graph._feed_waiting(state)
+    _run_feed(state)
     prompt = seen[0][0] if seen else ""
     check("投递发生了", bool(seen))
     check("带上本次答复", "篇幅一页" in prompt, prompt[-200:] if prompt else "（没投递）")
@@ -141,7 +171,7 @@ def main() -> None:
         *state["tasks"][0]["qa"],
         {"by": "主 agent", "q": "这份导学单用在哪？", "a": "用户之前说过是三年级"},
     ]
-    graph._feed_waiting(state)
+    _run_feed(state)
     prompt = seen[0][0] if seen else ""
     check("带上主 agent 补的那条", "用户之前说过是三年级" in prompt, prompt[-240:] if prompt else "")
     check("**两条都在**（历次累积，不覆盖）", "课前预习" in prompt, prompt[-240:] if prompt else "")
@@ -154,7 +184,7 @@ def main() -> None:
     readable = store_artifact("《白桦》教案", "四年级诗歌教学", "md", "教案正文" * 20)
     seen = _capture()
     state["tasks"][0]["refs"] = [readable]
-    graph._feed_waiting(state)
+    _run_feed(state)
     prompt = seen[0][0] if seen else ""
     check("可读产物进了交接书", readable in prompt and "《白桦》教案" in prompt, prompt[-260:])
 
@@ -170,7 +200,7 @@ def main() -> None:
             "asked": "这份导学单用在哪？（课前预习 / 课中探究 / 课后巩固）",
         }
     )
-    graph._feed_waiting(state)
+    _run_feed(state)
     prompt = seen[0][0] if seen else ""
     # 期望值**独立地**拼一遍（不抄 `_feed_waiting` 内部那个表达式），
     # 断的是"投递确实走的是 render_briefing"这条不变量
@@ -195,7 +225,7 @@ def main() -> None:
     state["tasks"][0]["user_turns"] = [
         {"n": 1, "text": "帮我备一节三年级语文《荷花》的课，第一课时，直接生成不用再问我。"},
     ]
-    graph._feed_waiting(state)
+    _run_feed(state)
     prompt, turns = seen[0] if seen else ("", None)
     check("清单进了交接书", "第 1 轮" in prompt and "直接生成不用再问我" in prompt, prompt[-260:])
     # 🔴 交接书里只有清单，**全文走 `read_user_turn`** —— 所以原话必须一路传到 run_task
@@ -211,7 +241,7 @@ def main() -> None:
     # ⚠️ 2026-11-05：这条原来喂的是 `completed` + 空产物 —— 判定退休后**那个状态不可达**
     #    （三态由结构定，`artifacts` 空就不可能是 `completed`），等于在测一条走不通的路。
     #    换成真正可达的 `incomplete`（推满轮次）：**要守的不变量一个字没变**。
-    proto.executor.run_task = lambda *a, **k: _no_delivery()  # type: ignore[assignment]
+    proto.executor.run_task = _stub_returns(_no_delivery())  # type: ignore[assignment]
     state6 = {
         "messages": [HumanMessage("就按这个改")],
         # 🔴 **标识**（`solution.md` §0.65 Y1）：这句在回答哪个待答任务 ——
@@ -224,7 +254,7 @@ def main() -> None:
             "report": "请问用在哪？",
         }],
     }
-    out6, _ = graph._feed_waiting(state6)
+    out6, _ = _run_feed(state6)
     check("stage 迁移到 failed（没交付就是没交付）", out6[0]["stage"] == "failed", out6[0]["stage"])
     check("**上一轮交付的产物还在**（没被这一轮的空 artifacts 抹掉）",
           out6[0]["artifacts"] == ["art_001"], repr(out6[0]["artifacts"]))
@@ -237,9 +267,9 @@ def main() -> None:
     #    **唯一的信号**，说错了没有任何东西能纠正它。
     from proto.handoff.ledger import render_ledger as _ledger
 
-    proto.executor.run_task = lambda *a, **k: ExecOutcome(  # type: ignore[assignment]
+    proto.executor.run_task = _stub_returns(ExecOutcome(  # type: ignore[assignment]
         status="incomplete", artifacts=[], report="", rounds=1,
-        fault="TimeoutError: （模拟）投递那趟抖动")
+        fault="TimeoutError: （模拟）投递那趟抖动"))
     state6b = {
         "messages": [HumanMessage("就按这个改")],
         # 🔴 **标识**（`solution.md` §0.65 Y1）：这句在回答哪个待答任务 ——
@@ -251,7 +281,7 @@ def main() -> None:
             "report": "请问用在哪？", "qa": [],
         }],
     }
-    out6b, _ = graph._feed_waiting(state6b)
+    out6b, _ = _run_feed(state6b)
     check("故障这一趟：stage 记 failed", out6b[0]["stage"] == "failed", out6b[0]["stage"])
     check("**故障原因落进了 Task**（不落 → 台账只能说「没交付」这句假话）",
           out6b[0].get("fault") == "TimeoutError: （模拟）投递那趟抖动",
@@ -272,8 +302,8 @@ def main() -> None:
     # > 150 字，逼出台账的截断
     # ⚠️ **长的那一份要放在 `asked` 上**（2026-11-04）：台账 waiting 那档现在打的是
     #    `asked`（"它要的信息"），不是 `report`（那段过场）—— 见 `ledger.render_ledger`。
-    proto.executor.run_task = lambda *a, **k: _waiting(  # type: ignore[assignment]
-        "问课时" * 60, asked="用几个课时？" * 30)
+    proto.executor.run_task = _stub_returns(_waiting(  # type: ignore[assignment]
+        "问课时" * 60, asked="用几个课时？" * 30))
     state7 = {
         "messages": [HumanMessage("两课时")],
         # 🔴 **标识**（`solution.md` §0.65 Y1）：这句在回答哪个待答任务 ——
@@ -286,7 +316,7 @@ def main() -> None:
             "qa": [], "user_turns": [], "run_by": "delegate",   # ← 上一轮是主 agent 派的
         }],
     }
-    out7, _ = graph._feed_waiting(state7)
+    out7, _ = _run_feed(state7)
     check("这一轮记成了 `feed`", out7[0].get("run_by") == "feed", repr(out7[0].get("run_by")))
     led = render_ledger(out7)
     # 🔴 **2026-11-06**：待答那档**不再重印问题**（`ledger`〔沿革 11〕）—— 全文出处是
@@ -307,7 +337,7 @@ def main() -> None:
     #    ⚠️ 这条守的是"两条路走同一个函数"（`agent.try_answer_then_rerun`）：
     #    拿掉投递路径那一步 → 这里红。
     seen8 = _capture()
-    proto.agent._ask_main = lambda *a, **k: "课时按两课时算"  # type: ignore[assignment]
+    proto.agent._ask_main = _stub_returns("课时按两课时算")  # type: ignore[assignment]
     try:
         state8 = {
             "messages": [HumanMessage("两课时")],
@@ -321,9 +351,9 @@ def main() -> None:
                 "qa": [], "user_turns": [],
             }],
         }
-        out8, logs8 = graph._feed_waiting(state8)
+        out8, logs8 = _run_feed(state8)
     finally:
-        proto.agent._ask_main = lambda *a, **k: ""  # type: ignore[assignment]
+        proto.agent._ask_main = _stub_returns("")  # type: ignore[assignment]
     check("试答之后**又重跑了一次**执行器（run_task 被调 2 次）", len(seen8) == 2, f"{len(seen8)} 次")
     # 🔴 **「问」= `outcome.asked`**（`ask_user` 的参数原话），**不是** `outcome.report`
     #    （它最后说的那段话）—— 2026-11-04 日志定位。两条一起断，缺一条就分不出取错了源。
@@ -356,7 +386,7 @@ def main() -> None:
             "qa": [], "user_turns": [],
         }],
     }
-    out9 = graph.node_feed(state9)
+    out9 = _run_node_feed(state9)
     acts9 = out9.get("actions") or []
     check("投递那一跳写了**结构化动作**（`did=feed`）",
           [a.get("did") for a in acts9] == ["feed"], repr(acts9))
@@ -383,7 +413,7 @@ def main() -> None:
         ],
     }
     _seen = _capture()
-    _out, _ = graph._feed_waiting({**_two})
+    _out, _ = _run_feed({**_two})
     check("**只投标识指的那一条**（另一条不动）",
           len(_seen) == 1 and [t["id"] for t in _out] == ["tA"],
           f"投了 {len(_seen)} 次：{[t['id'] for t in _out]}")
@@ -391,12 +421,12 @@ def main() -> None:
           any(t["id"] == "tB" for t in _two["tasks"]) and not any(t["id"] == "tB" for t in _out),
           repr([t["id"] for t in _out]))
     _seen2 = _capture()
-    _out2, _ = graph._feed_waiting({"messages": [HumanMessage("随便说点什么")],
+    _out2, _ = _run_feed({"messages": [HumanMessage("随便说点什么")],
                                     "tasks": _two["tasks"]})
     check("**没有标识 → 一条都不投**（那是主 agent 的输入）",
           not _seen2 and not _out2, f"投了 {len(_seen2)} 次")
     _seen3 = _capture()
-    _out3, _ = graph._feed_waiting({**_two, "answer_to": "tZZZ"})
+    _out3, _ = _run_feed({**_two, "answer_to": "tZZZ"})
     check("标识指向**不存在的任务** → 也不投（不猜、不广播）",
           not _seen3 and not _out3, f"投了 {len(_seen3)} 次")
 
@@ -454,7 +484,7 @@ def main() -> None:
     #    `reply_excludes` 就是这么被删掉的）。真要判语义 → 走软 rubric（判断留档）。
     _reply_checks: list[str] = []
     for _fn in ast.walk(ast.parse(io.open("evals/checks.py", encoding="utf-8").read())):
-        if not isinstance(_fn, ast.FunctionDef):
+        if not isinstance(_fn, (ast.FunctionDef, ast.AsyncFunctionDef)):   # `async def` 是另一个类
             continue
         # ⚠️ **两种写法都要抓**（第一版只认下标 `turn["reply"]`，而代码里用的是
         #    `turn.get("reply")` —— 探针当场证明那条守卫**不挡人** ✗）。
@@ -499,8 +529,8 @@ def main() -> None:
     #    完成时它真的被调用、结果真的进了返回的 tasks（reducer 才合得上）。
     turns1 = [{"n": 1, "text": "给我做个导学单", "after": ""}]
     turns2 = [*turns1, {"n": 2, "text": "用在课前预习", "after": ""}]
-    proto.executor.run_task = lambda *a, **k: ExecOutcome(  # type: ignore[assignment]
-        status="completed", artifacts=["art_ok"], report="（交付了）", rounds=1)
+    proto.executor.run_task = _stub_returns(ExecOutcome(  # type: ignore[assignment]
+        status="completed", artifacts=["art_ok"], report="（交付了）", rounds=1))
     st = {
         "messages": [HumanMessage("用在课前预习")],
         "answer_to": "t-new",
@@ -513,7 +543,7 @@ def main() -> None:
              "artifacts": [], "refs": [], "qa": [], "user_turns": turns2},
         ],
     }
-    out, _logs = graph._feed_waiting(st)
+    out, _logs = _run_feed(st)
     by_id = {t["id"]: t for t in out}
     check("被投递的那条落成 completed", by_id.get("t-new", {}).get("stage") == "completed",
           repr(by_id.get("t-new")))
@@ -521,7 +551,7 @@ def main() -> None:
           by_id.get("t-old", {}).get("stage") == "superseded", repr(by_id.get("t-old")))
     # 🔴 取代副本不许污染"这轮投给了谁"（`node_feed` 的 actions 读它）——
     #    t-old 的 `run_by` 是上一轮留下的 "feed"，只认 run_by 会把它报成"投过"。
-    pre = graph.node_feed({**st, "log": []})
+    pre = _run_node_feed({**st, "log": []})
     fed_ids = [i for a in (pre.get("actions") or []) if a.get("did") == "feed"
                for i in a.get("tasks", [])]
     check("actions 里「投给了谁」只有被投的那条（取代副本不许混进来）",
@@ -573,7 +603,8 @@ def main() -> None:
     #    纪律守不住的地方，靠形状守住。
     _tree = ast.parse(io.open("proto/graph.py", encoding="utf-8").read())
     _fn = next(n for n in ast.walk(_tree)
-               if isinstance(n, ast.FunctionDef) and n.name == "node_feed")
+               if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+               and n.name == "node_feed")
     _returns = [n for n in ast.walk(_fn) if isinstance(n, ast.Return)]
     _keys: set[str] = set()
     _bad: list[str] = []
@@ -592,13 +623,13 @@ def main() -> None:
     # 再按**今天这条真实路径**跑一遍（AST 管"有没有"，这里管"值对不对"）
     _done = {"id": "t1", "skill": "quiz", "stage": "completed",
              "artifacts": [], "refs": [], "qa": []}
-    _ret = graph.node_feed({"messages": [HumanMessage("顺便再出三道题")],
+    _ret = _run_node_feed({"messages": [HumanMessage("顺便再出三道题")],
                             "tasks": [_done], "answer_to": "t1", "log": []})
     check("投递后 `answer_to` 清成空串 ＋ `fed_asking` 写成本轮值",
           _ret.get("answer_to") == "" and "fed_asking" in _ret,
           repr({k: _ret.get(k) for k in ("answer_to", "fed_asking")}))
     # 台账那半：`prepare` 不再碰这两个键（它们跟着投递走了）—— 免得两处都写又漂开
-    _prep = graph.node_prepare({"messages": [HumanMessage("你好")], "tasks": [_done]})
+    _prep = _run_node_prepare({"messages": [HumanMessage("你好")], "tasks": [_done]})
     check("`node_prepare` **不碰** `answer_to` / `fed_asking`（它们归 `feed`，一处写）",
           "answer_to" not in _prep and "fed_asking" not in _prep, repr(sorted(_prep)))
 

@@ -295,7 +295,7 @@ def _at(run_id: str, n: int) -> str:
     return f"{run_id} · 内部第 {n} 轮"
 
 
-def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = None) -> ExecOutcome:
+async def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = None) -> ExecOutcome:
     """通用执行器：干活、**判定出口**、没出口就推它继续。
 
     Args:
@@ -395,8 +395,8 @@ def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = N
         # `role` 是**逻辑**（展示层按它归版式），`who` 只是给人看的名字 —— 两者别混。
         resp = {}
         try:
-            for chunk in trace.stream_agent(agent, {"messages": messages}, None,
-                                            f"执行器·{skill.name}", role=trace.EXECUTOR):
+            async for chunk in trace.stream_agent(agent, {"messages": messages}, None,
+                                                  f"执行器·{skill.name}", role=trace.EXECUTOR):
                 resp = chunk
         except Exception as e:  # noqa: BLE001
             # 🔴 **基础设施抖动不该炸整轮**：`stream_agent` 内部已经重试过一次，

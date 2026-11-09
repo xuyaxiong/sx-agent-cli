@@ -23,6 +23,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import re
 import sys
 
@@ -283,8 +284,10 @@ def main() -> None:
         tool_call_id = "call_abc12345"
 
     real = {
-        "rejected_skill": A.delegate.func(skill_name="nope", task="x", runtime=_R()),
-        "rejected_artifact": A.delegate.func(skill_name="quiz", task="x", artifacts=["art_9"], runtime=_R()),
+        "rejected_skill": asyncio.run(A.delegate.coroutine(
+            skill_name="nope", task="x", runtime=_R())),
+        "rejected_artifact": asyncio.run(A.delegate.coroutine(
+            skill_name="quiz", task="x", artifacts=["art_9"], runtime=_R())),
     }
     for kind, cmd in real.items():
         msg = cmd.update["messages"][0]
