@@ -45,6 +45,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import io
+import subprocess
 import sys
 import tempfile
 import threading
@@ -241,6 +242,41 @@ def main() -> None:
             "✅ 原样 **没撞上** —— 发号器结构上不重号（`itertools.count()`）。\n"
             "   这条现在守的是**回归**：谁把两步之间的活插回来、或退回 `len()`，这里就该红。"
         )
+
+
+    # ── ⑤ `session.current()` 是**fail-closed** 的（2026-11-09）──
+    #
+    # 🔴 它原来**静默回落**到进程级默认会话（`thread_id` 是空串）—— 多会话宿主里
+    #    漏包一次 `with session()`，产物和日志就串进"公共桶"，**一声不吭**。
+    #    现在：**开过会话之后**再在上下文外读 → **当场炸**。
+    #    ⚠️ **单会话宿主一个字没变**（三个入口都 `use()` 了；从没开过会话的宿主照旧回落）。
+    #    有效性自检：把 `current()` 改回 `return _current.get() or _DEFAULT` → 这里必须红。
+    print("\n⑤ `session.current()` 在「开过会话但没包」时**当场炸**（不是静默回落）")
+    _fresh = subprocess.run(
+        [sys.executable, "-c",
+         "from proto import session;"
+         " s = session.current();"
+         " raise SystemExit(0 if s is session.default() else 1)"],
+        capture_output=True, timeout=180, check=False)
+    print(f"  {'✅' if _fresh.returncode == 0 else '❌'} 从没开过会话的宿主：照旧"
+          f"**回落默认会话**（CLI / 跑批 / 单测那条路）　exit={_fresh.returncode}")
+    _leak = subprocess.run(
+        [sys.executable, "-c",
+         "from proto import session\n"
+         "with session.session(thread_id='user-A'):\n"
+         "    assert session.current().thread_id == 'user-A'\n"
+         "try:\n"
+         "    session.current()\n"
+         "except RuntimeError:\n"
+         "    raise SystemExit(0)\n"
+         "raise SystemExit(1)"],
+        capture_output=True, timeout=180, check=False)
+    print(f"  {'✅' if _leak.returncode == 0 else '❌'} 开过会话之后在 `with` 块**外面**读："
+          f"**当场炸**　exit={_leak.returncode}"
+          + ("" if _leak.returncode == 0 else
+             " —— 静默回落回来了？那多会话宿主里漏包就没人管了"))
+    if _fresh.returncode != 0 or _leak.returncode != 0:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":
