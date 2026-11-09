@@ -256,6 +256,7 @@ def drive(on_phase: Callable[[str, list[dict], str], None] | None = None) \
         return ex.ExecOutcome(
             status="completed", artifacts=["art_001"], rounds=2,
             report="教案已生成并交付。")
+    ex.run_task = _stub_completed  # type: ignore[assignment]
     try:
         asyncio.run(_feed_waiting(
             {"tasks": [sample_task()], "messages": [HumanMessage("探究发现型")],
