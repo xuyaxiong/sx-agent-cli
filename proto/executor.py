@@ -115,6 +115,27 @@
     确定性拒绝 —— 重试是白烧一次，"原样再派"对它就是**错的话**（该说"换措辞/改内容"）；
     `timeout` 又两样都不是（它**一直在干活**，只是没干完）。三档记成结构
     （`fault_kind`），四处引导句按它渲染；**不许从 `fault` 文本反解析**（判据一）。
+18. **`run_task` 拆成四个件**（2026-11-09，第四轮外审 P1-8）。用户定：
+    *"函数必须得内聚呀 不要让函数成为富函数 这样容易失去维护"*。
+    它原来是 **217 行**的一个函数，里面**四件事缠在一起**：建 agent ＋ 渲染输入、
+    跑一轮（墙钟 / 流式 / 三种"没跑成"）、**判出口**（三态 ＋ 推回去）、收尾（算 status ＋
+    记判定 ＋ 写结束行）。⇒ 拆成：
+
+    | 件 | 干什么 | 行数（代码） |
+    |---|---|---|
+    | `_open_run` | 准备：建 agent、渲染这一趟的输入、写开跑前那三条日志 | 46（30） |
+    | `_run_round` | 跑**一轮**：墙钟 → 流式 → 吸收结果。**没跑成返回 `None`** | 75（56） |
+    | `_decide_exit` | **判出口**：按结构看这一轮该怎么走（`"stop"` / `"again"`） | 57（38） |
+    | `_close_run` | 收尾：算三态 → 记判定 → 写结束那行 | 27（17） |
+
+    `run_task` 自己只剩 **28 行**编排（准备 → `for 轮次: 跑一轮 → 判出口` → 收尾）。
+    ⚠️ **"没跑成"和"判出口"是两个函数、两种返回**：前者返回 `resp | None`
+    （`None` ＝ 故障，已记进 `outcome`），后者返回动作串 —— 原来它们都是循环里的 `break`，
+    读的人得自己数"这个 break 是故障还是出口"。
+    ⚠️ **运行态收进 `_Run`**（`messages` / `outcome` / `created` / `asked` / `t0`）——
+    拆函数就得有个地方放它们；`created` / `asked` 还是**工具的闭包**，必须和 `agent` 同生共死。
+    ⚠️ **零行为变化**：注释、日志、分支顺序、`break` 的时机全部原样搬。
+    守卫还是原来那些（`unit_ask_flow` 真跑 `run_task` ＋ `unit_handoff`）。
 """
 
 from __future__ import annotations
@@ -296,34 +317,35 @@ def _at(run_id: str, n: int) -> str:
     return f"{run_id} · 内部第 {n} 轮"
 
 
-async def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = None) -> ExecOutcome:
-    """通用执行器：干活、**判定出口**、没出口就推它继续。
+@dataclass
+class _Run:
+    """一次 `run_task` 的**运行态** —— 拆成几个函数之后，这些得有个地方待着。
 
-    Args:
-        skill: 专业技能包（指令从这里来）。
-        briefing: 这次交给它的全部已知 —— 由 `agent.render_briefing(task)` 渲染。
-            平台**不解析、不抽取、不比对**，原样带给执行器。
-            ⚠️ 名字是 briefing 不是 given：它是**整份交接**（任务 / 上次做到哪 / 历次答复 /
-            已产出产物 / 可读产物），不是"这一轮的增量"—— 执行器用完即弃，每次都是重入。
-            ⚠️ **可读产物清单也由它承载**（原来 `run_task` 另拼一个 `artifacts` 参数、
-            两处都渲染 → 执行器看到两遍；现在只有一个来源）。
-        user_turns: 用户原话（`[{"n": 1, "text": "..."}]`）—— 只给 `read_user_turn` 工具用。
-            **交接书里只渲染清单**（每轮一行、开头几十字），全文按需取：
-            用户可能粘长文，一上来全加载就把执行器的上下文塞满了（渐进式披露）。
-
-    Returns:
-        `ExecOutcome` —— 平台据此定任务状态（**不再靠"产物库空不空"猜**）。
+    ⚠️ **只在 `executor` 内部传**（`run_task` ↔ 下面那几个私有件），不对外 ——
+    对外的结果是 `ExecOutcome`。
+    ⚠️ `created` / `asked` 是**工具的闭包**写的（`make_write_artifact` / `make_ask_user`），
+    所以它们必须和 `agent` 同生共死（`_open_run` 把两者一起造出来）。
     """
-    #: 🔴 **这次 run 写了哪些产物 —— 由工具自己记**（闭包，按 run 归属；见
-    #: `make_write_artifact`）。〔沿革 7〕
-    #:
-    #: ⚠️ **清单里没有"哪份是成品"这个概念 —— 这是定的，别再往这里加草稿/成品的区分**
-    #: （`docs/solution.md` §五 **X5**）：一轮里写两份就交两份。要平台标"最终版"＝要它
-    #: **读内容判断**"这次是重写还是又交了一样东西" —— 那是**质量判断**，判定就是死在
-    #: 这上面。真要做只能让**模型自己声明**（新机制、且靠自觉），没被咬到之前不造。
-    created: list[str] = []
-    #: `ask_user` 申报的内容（闭包按 run 归属，同 `created`）
-    asked: dict = {}
+
+    skill: Skill
+    run_id: str
+    t0: float
+    #: 每轮重入的输入 —— 推回去时往它后面追加（见 `_run_round` 的 ③）
+    messages: list
+    outcome: ExecOutcome
+    #: 这次 run 写了哪些产物 —— **由工具自己记**（闭包，按 run 归属；见 `make_write_artifact`）。〔沿革 7〕
+    created: list[str]
+    #: `ask_user` 申报的内容（闭包，同 `created`）
+    asked: dict
+
+
+def _build_executor(user_turns: list[dict] | None,
+                    created: list[str], asked: dict):
+    """建**执行器**那个子 agent —— 工具表 ＋ 平台规则。
+
+    ⚠️ 工具表在这儿拼、agent 在这儿建：`created` / `asked` 是**工具的闭包**，
+    两者得绑在同一份闭包上（工具记的东西就是这一趟 run 的东西）。
+    """
     tools = [
         make_write_artifact(created),
         read_artifact,
@@ -332,12 +354,22 @@ async def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | No
     ]
     if user_turns:
         tools.append(_user_turn_reader(user_turns))
-    agent = create_agent(
+    return create_agent(
         get_model(),
         tools=tools,
         system_prompt=_PLATFORM_RULE,
         name="executor",
     )
+
+
+def _open_run(skill: Skill, briefing: str, user_turns: list[dict] | None) -> tuple[_Run, object]:
+    """**准备**：建 agent → 渲染这一趟的输入 → 把开跑前那三条日志写掉。
+
+    返回 `(运行态, agent)` —— agent 得交回给 `run_task`（每轮都用同一个）。
+    """
+    created: list[str] = []
+    asked: dict = {}
+    agent = _build_executor(user_turns, created, asked)
 
     briefing_text = briefing.strip() or "（暂无 —— 你需要的任何信息都要先问，不要猜）"
     # 技能自带文件时，把**清单**（路径 + 字数）一起给执行器 —— 正文按需 `read_skill_file` 读。
@@ -373,128 +405,156 @@ async def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | No
         }),
         kind="executor_briefing",
     )
-    t0 = time.time()
-    messages: list = [HumanMessage(task_text)]
-    outcome = ExecOutcome()
-    for round_i in range(MAX_REACT_ROUNDS):
-        # 🔴 **整趟的墙钟**：在**轮次边界**查（拦不住单次阻塞调用，那个归
-        #    `MODEL_TIMEOUT_S`）—— 超了就**不再开新一轮**，按故障交回主 agent。
-        #    ⚠️ 它是**故障**不是"执行器干不了"：它一直在干活，只是没干完（`timeout` 那档）。
-        if time.time() - t0 > MAX_WALL_S:
-            outcome.fault = f"整趟超过墙钟上限（{MAX_WALL_S}s）"
-            outcome.fault_kind = "timeout"
-            outcome.rounds = round_i
-            trace.note(
-                f"⚠️ {run_id} **时间用完了**（已跑 {time.time() - t0:.0f}s > 上限 {MAX_WALL_S}s）"
-                f" → 不再开新一轮，交回主 agent（原样再委派可以；老超时就拆小）",
-                kind="run_fault",
-            )
-            break
-        # 不传 config —— 传了执行器会变成独立根图。
-        # `stream_agent` 边跑边录（每个字都写进日志）—— 一次 LLM 调用那几十秒不再黑屏。
-        # ⚠️ `who` 带上技能名：多个执行器**并行**时，流式行会交错，得能分辨是谁。
-        # `role` 是**逻辑**（展示层按它归版式），`who` 只是给人看的名字 —— 两者别混。
-        resp = {}
-        try:
-            async for chunk in trace.stream_agent(agent, {"messages": messages}, None,
-                                                  f"执行器·{skill.name}", role=trace.EXECUTOR):
-                resp = chunk
-        except Exception as e:  # noqa: BLE001
-            # 🔴 **基础设施抖动不该炸整轮**：`stream_agent` 内部已经重试过一次，
-            #    **两次都失败才走到这** —— 这一轮记成"**平台故障**"（不是执行器干不了），
-            #    把决定权交回主 agent。〔沿革 2〕
-            # ⚠️ 不在这里重跑：`run_task` 一轮就是 60–120 秒，再重跑是拿用户的时间赌。
-            # 🔴 **故障分类从结构取**：4xx（除 408/429）是上游对**这份内容**的确定性拒绝
-            #    —— 重试层已经不重试它了（`trace.upstream_rejected`），这里把"类"记下来，
-            #    四处引导句据此说"换措辞"而不是"原样再派"。〔沿革 17〕
-            outcome.fault = f"{type(e).__name__}: {e}"
-            outcome.fault_kind = "rejected" if trace.upstream_rejected(e) else "transient"
-            outcome.rounds = round_i + 1
-            if outcome.fault_kind == "rejected":
-                trace.note(
-                    f"⚠️ {_at(run_id, round_i + 1)}**上游拒绝了这次请求**（4xx，未重试 ——"
-                    f" 重发同一份内容会再被拒）：{type(e).__name__}: {e}"
-                    f" —— 这一轮没跑成，交回主 agent 换措辞/改内容",
-                    kind="run_fault",
-                )
-            else:
-                trace.note(
-                    f"⚠️ {_at(run_id, round_i + 1)}**平台故障**（已重试过一次仍失败）："
-                    f"{type(e).__name__}: {e} —— 这一轮没跑成，交回主 agent",
-                    kind="run_fault",
-                )
-            break
-        if not resp:
-            # 🔴 **流一步都没吐** → 按**同一套故障处置**：这一轮没跑成，交回主 agent
-            #    （同上面 `except`）。⚠️ 主 agent 那边有同类兜底（`graph.node_agent` 的
-            #    `stream_empty`），执行器这条原来没有。〔沿革 15〕
-            outcome.fault = "流式一步都没吐（stream 为空）"
-            outcome.fault_kind = "transient"
-            outcome.rounds = round_i + 1
-            trace.note(
-                f"⚠️ {_at(run_id, round_i + 1)}**流式一步都没吐** → 这一轮没跑成，"
-                f"交回主 agent（同平台故障处置）",
-                kind="run_fault",
-            )
-            break
-        trace.dump_trace(_at(run_id, round_i + 1), resp["messages"],
-                         role=trace.EXECUTOR)
+    return _Run(skill=skill, run_id=run_id, t0=time.time(),
+                messages=[HumanMessage(task_text)], outcome=ExecOutcome(),
+                created=created, asked=asked), agent
 
-        outcome.artifacts = list(created)  # 记账，不扫文本
-        outcome.report = _last_ai_text(resp)
+
+async def _run_round(run: _Run, agent, round_i: int) -> dict | None:
+    """跑**一轮**：墙钟 → 流式跑 → 把这一轮的结果吸收进 `outcome`。
+
+    返回那一轮的 `state`（`resp`）；**没跑成返回 `None`** —— 三种"没跑成"（墙钟用完 /
+    流式抛异常 / 流一步都没吐）**故障已经记进 `outcome`**，调用方看到 `None` 直接停
+    （三者的处置是同一套：交回主 agent，由它决定原样再派还是换措辞）。
+    """
+    outcome = run.outcome
+    # 🔴 **整趟的墙钟**：在**轮次边界**查（拦不住单次阻塞调用，那个归
+    #    `MODEL_TIMEOUT_S`）—— 超了就**不再开新一轮**，按故障交回主 agent。
+    #    ⚠️ 它是**故障**不是"执行器干不了"：它一直在干活，只是没干完（`timeout` 那档）。
+    if time.time() - run.t0 > MAX_WALL_S:
+        outcome.fault = f"整趟超过墙钟上限（{MAX_WALL_S}s）"
+        outcome.fault_kind = "timeout"
+        outcome.rounds = round_i
+        trace.note(
+            f"⚠️ {run.run_id} **时间用完了**（已跑 {time.time() - run.t0:.0f}s > 上限 {MAX_WALL_S}s）"
+            f" → 不再开新一轮，交回主 agent（原样再委派可以；老超时就拆小）",
+            kind="run_fault",
+        )
+        return None
+    # 不传 config —— 传了执行器会变成独立根图。
+    # `stream_agent` 边跑边录（每个字都写进日志）—— 一次 LLM 调用那几十秒不再黑屏。
+    # ⚠️ `who` 带上技能名：多个执行器**并行**时，流式行会交错，得能分辨是谁。
+    # `role` 是**逻辑**（展示层按它归版式），`who` 只是给人看的名字 —— 两者别混。
+    resp = {}
+    try:
+        async for chunk in trace.stream_agent(agent, {"messages": run.messages}, None,
+                                              f"执行器·{run.skill.name}", role=trace.EXECUTOR):
+            resp = chunk
+    except Exception as e:  # noqa: BLE001
+        # 🔴 **基础设施抖动不该炸整轮**：`stream_agent` 内部已经重试过一次，
+        #    **两次都失败才走到这** —— 这一轮记成"**平台故障**"（不是执行器干不了），
+        #    把决定权交回主 agent。〔沿革 2〕
+        # ⚠️ 不在这里重跑：`run_task` 一轮就是 60–120 秒，再重跑是拿用户的时间赌。
+        # 🔴 **故障分类从结构取**：4xx（除 408/429）是上游对**这份内容**的确定性拒绝
+        #    —— 重试层已经不重试它了（`trace.upstream_rejected`），这里把"类"记下来，
+        #    四处引导句据此说"换措辞"而不是"原样再派"。〔沿革 17〕
+        outcome.fault = f"{type(e).__name__}: {e}"
+        outcome.fault_kind = "rejected" if trace.upstream_rejected(e) else "transient"
         outcome.rounds = round_i + 1
-
-        # 🔴 **三件事按结构分派** —— 平台只看自己看得见的（判定退休，见模块头设计原则 1）：〔沿革 3〕
-        #
-        # ① **它申报了要信息**（调了 `ask_user`）→ 这一轮到此结束
-        #    ⚠️ 平台**不等它继续说**（结构 ✓ 不靠提示词让它自觉 ✓）——
-        #    它调完工具还会接着往下说，那半截话不进这一轮的结论。
-        if asked.get("question"):
-            outcome.asked = asked["question"]
-            # 🔴 **「问」是一条链，每一跳都写清「谁 → 谁：什么」**〔沿革 10〕——
-            #    这一跳是**链头**：执行器 → 平台。摘要行走 `trace.handoff`
-            #    （和别的交接**同一套形状** ✓），问题原话由上面那条 `🔧 TOOL` 给全。
-            trace.handoff("要信息", "执行器", "平台", outcome.asked,
-                          structured="`ask_user(question=…)` 的参数原话"
-                                     "（**全文见上面那条 `🔧 TOOL`**，这里不重贴）")
-            trace.note(f"{_at(run_id, round_i + 1)}：**申报要信息** → 这一轮结束", kind="ask")
-            break
-
-        # ② **它交了产物** → 收工。
-        #    ⚠️ 平台只说"**交了东西**"这个**事实** ✓ —— "够不够、对不对"由主 agent 判
-        #    （回执把交付账摆给它 ✓）。平台**不判质量**（那是判定的活，判定的毛病就在这）。
-        if outcome.artifacts:
+        if outcome.fault_kind == "rejected":
             trace.note(
-                f"{_at(run_id, round_i + 1)}：交付 {len(outcome.artifacts)} 个产物 → 收工",
-                kind="delivered",
+                f"⚠️ {_at(run.run_id, round_i + 1)}**上游拒绝了这次请求**（4xx，未重试 ——"
+                f" 重发同一份内容会再被拒）：{type(e).__name__}: {e}"
+                f" —— 这一轮没跑成，交回主 agent 换措辞/改内容",
+                kind="run_fault",
             )
-            break
-
-        # ③ **既没交、也没申报** → 推回去（照结构事实说，不编"还缺什么"）
-        #    🔴 这才是"出口限制"的意义：没干完活是**它的问题**，不该转嫁给用户。
-        if round_i + 1 < MAX_REACT_ROUNDS:
-            nudge = nudge_text()
-            trace.note(
-                f"⚠️ {_at(run_id, round_i + 1)}**既没交付、也没申报要信息**"
-                f" → 推它继续（提示词见下）",
-                kind="nudge",
-            )
-            trace.handoff("推回去", "平台", "执行器", nudge,
-                          structured="结构事实：本轮无产物 ＋ 没调 `ask_user`", full=True)
-            messages = list(resp["messages"]) + [HumanMessage(nudge)]
         else:
-            # **显式写出这个分支**：推满了，不再推 → 下面按结构定成 incomplete
             trace.note(
-                f"⚠️ {_at(run_id, round_i + 1)}既没交付、也没申报，且已到轮次上限"
-                f" → 不再推，交给主 agent"
+                f"⚠️ {_at(run.run_id, round_i + 1)}**平台故障**（已重试过一次仍失败）："
+                f"{type(e).__name__}: {e} —— 这一轮没跑成，交回主 agent",
+                kind="run_fault",
             )
+        return None
+    if not resp:
+        # 🔴 **流一步都没吐** → 按**同一套故障处置**：这一轮没跑成，交回主 agent
+        #    （同上面 `except`）。⚠️ 主 agent 那边有同类兜底（`graph.node_agent` 的
+        #    `stream_empty`），执行器这条原来没有。〔沿革 15〕
+        outcome.fault = "流式一步都没吐（stream 为空）"
+        outcome.fault_kind = "transient"
+        outcome.rounds = round_i + 1
+        trace.note(
+            f"⚠️ {_at(run.run_id, round_i + 1)}**流式一步都没吐** → 这一轮没跑成，"
+            f"交回主 agent（同平台故障处置）",
+            kind="run_fault",
+        )
+        return None
+    trace.dump_trace(_at(run.run_id, round_i + 1), resp["messages"],
+                     role=trace.EXECUTOR)
 
-    outcome.wall_s = time.time() - t0
+    outcome.artifacts = list(run.created)  # 记账，不扫文本
+    outcome.report = _last_ai_text(resp)
+    outcome.rounds = round_i + 1
+    return resp
+
+
+def _decide_exit(run: _Run, resp: dict, round_i: int) -> str:
+    """**判出口**：这一轮跑完了，按结构看下一步怎么走。
+
+    返回 `"stop"`（有出口了 —— 申报要信息 / 交了产物）／`"again"`（推回去接着跑，
+    或已到轮次上限、推不动了）。
+
+    🔴 **出口是"结构算出来的"**（判定退休，见模块头设计原则 1）：只看平台自己看得见的
+    三件事 —— 调没调 `ask_user` / 记没记账 / 有没有产物。**不读正文、不判质量**。〔沿革 3〕
+
+    ⚠️ 推回去时**改的是 `run.messages`**（下一轮的输入）—— 所以它拿的是 `run` 本身。
+    """
+    outcome = run.outcome
+    # 🔴 **三件事按结构分派** —— 平台只看自己看得见的（判定退休，见模块头设计原则 1）：〔沿革 3〕
+    #
+    # ① **它申报了要信息**（调了 `ask_user`）→ 这一轮到此结束
+    #    ⚠️ 平台**不等它继续说**（结构 ✓ 不靠提示词让它自觉 ✓）——
+    #    它调完工具还会接着往下说，那半截话不进这一轮的结论。
+    if run.asked.get("question"):
+        outcome.asked = run.asked["question"]
+        # 🔴 **「问」是一条链，每一跳都写清「谁 → 谁：什么」**〔沿革 10〕——
+        #    这一跳是**链头**：执行器 → 平台。摘要行走 `trace.handoff`
+        #    （和别的交接**同一套形状** ✓），问题原话由上面那条 `🔧 TOOL` 给全。
+        trace.handoff("要信息", "执行器", "平台", outcome.asked,
+                      structured="`ask_user(question=…)` 的参数原话"
+                                 "（**全文见上面那条 `🔧 TOOL`**，这里不重贴）")
+        trace.note(f"{_at(run.run_id, round_i + 1)}：**申报要信息** → 这一轮结束", kind="ask")
+        return "stop"
+
+    # ② **它交了产物** → 收工。
+    #    ⚠️ 平台只说"**交了东西**"这个**事实** ✓ —— "够不够、对不对"由主 agent 判
+    #    （回执把交付账摆给它 ✓）。平台**不判质量**（那是判定的活，判定的毛病就在这）。
+    if outcome.artifacts:
+        trace.note(
+            f"{_at(run.run_id, round_i + 1)}：交付 {len(outcome.artifacts)} 个产物 → 收工",
+            kind="delivered",
+        )
+        return "stop"
+
+    # ③ **既没交、也没申报** → 推回去（照结构事实说，不编"还缺什么"）
+    #    🔴 这才是"出口限制"的意义：没干完活是**它的问题**，不该转嫁给用户。
+    if round_i + 1 < MAX_REACT_ROUNDS:
+        nudge = nudge_text()
+        trace.note(
+            f"⚠️ {_at(run.run_id, round_i + 1)}**既没交付、也没申报要信息**"
+            f" → 推它继续（提示词见下）",
+            kind="nudge",
+        )
+        trace.handoff("推回去", "平台", "执行器", nudge,
+                      structured="结构事实：本轮无产物 ＋ 没调 `ask_user`", full=True)
+        run.messages = list(resp["messages"]) + [HumanMessage(nudge)]
+    else:
+        # **显式写出这个分支**：推满了，不再推 → 下面按结构定成 incomplete
+        trace.note(
+            f"⚠️ {_at(run.run_id, round_i + 1)}既没交付、也没申报，且已到轮次上限"
+            f" → 不再推，交给主 agent"
+        )
+    return "again"
+
+
+def _close_run(run: _Run) -> ExecOutcome:
+    """**收尾**：算三态 → 记判定 → 写结束那行。"""
+    outcome = run.outcome
+    outcome.wall_s = time.time() - run.t0
     outcome.status = _structural_status(outcome)
 
     # 🔴 **「任务完成没」的判定记录** —— 判定那次 **LLM 调用**退休了，但**这个判断还在**，
     #    而且它正是用户要审计的那一处（为什么记、记什么，见 `_verdict` 的 docstring）。〔沿革 13〕
-    emit_decision(**_verdict(outcome, run_id))
+    emit_decision(**_verdict(outcome, run.run_id))
 
     # 🔴 **这行是「这次 run 的账」，不是复述**〔沿革 11〕——
     #    ① 两个编号各自带名字（`_at`）；② **不再重贴那句问题**：它上面已经有该有的
@@ -505,7 +565,7 @@ async def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | No
     _fault_label = {"rejected": "上游拒绝了这次请求",
                     "timeout": "时间用完了"}.get(outcome.fault_kind, "平台故障")
     trace.note(
-        f"{run_id} · {skill.name} **结束**：status={outcome.status}"
+        f"{run.run_id} · {run.skill.name} **结束**：status={outcome.status}"
         f"（内部 {outcome.rounds} 轮，产物 {len(outcome.artifacts)} 个，"
         f"{outcome.wall_s:.1f}s）"
         + ("｜它要的那句见上面 `ask_user`" if outcome.asked else "")
@@ -513,6 +573,38 @@ async def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | No
         kind="run_end",
     )
     return outcome
+
+
+async def run_task(skill: Skill, briefing: str = "", user_turns: list[dict] | None = None) -> ExecOutcome:
+    """通用执行器：干活、**判定出口**、没出口就推它继续。
+
+    Args:
+        skill: 专业技能包（指令从这里来）。
+        briefing: 这次交给它的全部已知 —— 由 `agent.render_briefing(task)` 渲染。
+            平台**不解析、不抽取、不比对**，原样带给执行器。
+            ⚠️ 名字是 briefing 不是 given：它是**整份交接**（任务 / 上次做到哪 / 历次答复 /
+            已产出产物 / 可读产物），不是"这一轮的增量"—— 执行器用完即弃，每次都是重入。
+            ⚠️ **可读产物清单也由它承载**（原来 `run_task` 另拼一个 `artifacts` 参数、
+            两处都渲染 → 执行器看到两遍；现在只有一个来源）。
+        user_turns: 用户原话（`[{"n": 1, "text": "..."}]`）—— 只给 `read_user_turn` 工具用。
+            **交接书里只渲染清单**（每轮一行、开头几十字），全文按需取：
+            用户可能粘长文，一上来全加载就把执行器的上下文塞满了（渐进式披露）。
+
+    Returns:
+        `ExecOutcome` —— 平台据此定任务状态（**不再靠"产物库空不空"猜**）。
+
+    ⚠️ **它自己只做编排**（2026-11-09 拆）：准备 → `for 轮次: 跑一轮 → 判出口` → 收尾。
+    四件事各在一个私有件里（`_open_run` / `_run_round` / `_decide_exit` / `_close_run`）——
+    原来是一个 217 行的函数，**"跑一轮"和"判出口"和"写日志"缠在一起**。〔沿革 18〕
+    """
+    run, agent = _open_run(skill, briefing, user_turns)
+    for round_i in range(MAX_REACT_ROUNDS):
+        resp = await _run_round(run, agent, round_i)
+        if resp is None:  # 没跑成（墙钟 / 异常 / 空流）—— 故障已经记进 outcome
+            break
+        if _decide_exit(run, resp, round_i) == "stop":
+            break
+    return _close_run(run)
 
 
 def _structural_status(outcome: ExecOutcome) -> str:
