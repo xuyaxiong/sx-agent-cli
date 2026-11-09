@@ -89,7 +89,7 @@ def main() -> None:
     check("report.RUNS_DIR 走同一来源", _same(report.RUNS_DIR, fake / "runs"))
 
     print("\n② 只读资源取 `_MEIPASS`（随包带进来的示例技能）")
-    check("SEED_SKILLS_DIR", _same(runtime.SEED_SKILLS_DIR, REPO / "evals" / "skills"))
+    check("SEED_SKILLS_DIR", _same(runtime.SEED_SKILLS_DIR, REPO / "skills"))
 
     print("\n③ 首次运行初始化")
     runtime.ensure_app_dirs()
@@ -97,7 +97,7 @@ def main() -> None:
     # ⚠️ 断言**规则**（源目录里有几个包就铺几个），**不写死数字** ——
     # 写死的话每加一个技能这条就假红（2026-10-30 踩过）。
     src_packs = sorted(
-        p.name for p in (REPO / "evals" / "skills").iterdir() if (p / "SKILL.md").is_file()
+        p.name for p in (REPO / "skills").iterdir() if (p / "SKILL.md").is_file()
     )
     seeded = sorted(p.name for p in (fake / "skills").iterdir() if (p / "SKILL.md").is_file())
     check("铺的 == 源目录里的技能包（散文件如 README.md 不铺）", seeded == src_packs, str(seeded))
@@ -109,7 +109,7 @@ def main() -> None:
     check(
         "子目录也一起拷了",
         all(
-            not any((REPO / "evals" / "skills" / n).rglob("*/"))
+            not any((REPO / "skills" / n).rglob("*/"))
             or any((fake / "skills" / n).rglob("*/*"))
             for n in seeded
         ),

@@ -100,7 +100,7 @@ exec_path: inline      # 强制主 agent 自己干
 
 ```bash
 # 交互式入口也一样能用（2026-11-02 接上）—— 想手工看某条链路时用它
-uv run python -m evals.chat --skills evals/skills --exec-path delegate
+uv run python -m app.chat --skills skills --exec-path delegate
 ```
 
 **为什么要它**：跑批时想验某条链路，原来只能**碰运气**碰上一个模型愿意走那条路的 case ——

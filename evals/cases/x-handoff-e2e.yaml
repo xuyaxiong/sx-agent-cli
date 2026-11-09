@@ -8,7 +8,7 @@ why: >
   最后让主 agent 读一次产物正文（隔离的反面：读了就一直在）。
 realism: 用户指定的实测任务
 tier: audit
-skills_dir: evals/skills
+skills_dir: skills
 skills_mode: replace
 turns:
   - "帮我备课，三年级数学《分数的初步认识》，再出一份配套的导学单"

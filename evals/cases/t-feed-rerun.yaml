@@ -29,7 +29,7 @@ why: >
   那条路**确定性的**覆盖在 `unit_feed_waiting` ⑧（假模型，必然走到）。
 realism: 用户"一次答一个"的真实节奏（`docs/scenarios.md` 记过这个形状）
 tier: audit
-skills_dir: evals/skills
+skills_dir: skills
 skills_mode: replace
 # 🔴 **强制走委派那条路**（`proto/agent.EXEC_PATH`）：本 case 验的就是**执行器**那条链路，
 #    而"派不派"是模型的自由选择 —— 实测 r1 它先 `read_skill` 就收尾了（没建 Task），

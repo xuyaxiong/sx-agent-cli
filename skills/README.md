@@ -67,7 +67,7 @@ skills/
 ## 怎么被 evals 消费
 
 `adapted/*.md` 是 `name` / `description` 的 frontmatter + 正文即 `instructions`，
-与 `proto.skills.Skill` 一一对应。case YAML 用 `skills_dir: evals/skills`
+与 `proto.skills.Skill` 一一对应。case YAML 用 `skills_dir: skills`
 引用（`_child.py` 的加载见 `evals/plan-test-skills.md` §四），加载后按
 `skills_mode: replace` 只挂这三个，避免混进原型自带的 `quiz` / `courseware-config`。
 

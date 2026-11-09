@@ -54,10 +54,10 @@ NAME = "sxagent"
 ENTRY = ROOT / "app" / "chat.py"
 DIST = ROOT / "dist" / NAME   # 默认落点；`--out` 可以换（上一个包还在跑时必须换）
 
-#: 随包带的**只读资源** —— `evals/skills/*.md` 是首次运行要铺给用户的示例技能。
+#: 随包带的**只读资源** —— `skills/` 下每个包是首次运行要铺给用户的示例技能。
 #: 落点必须和 `proto.config.RESOURCE_ROOT` 的约定对上（冻结后 = `sys._MEIPASS`）。
 ADD_DATA: list[tuple[str, str]] = [
-    ("evals/skills", "evals/skills"),
+    ("skills", "skills"),
 ]
 
 #: 🔴 **动态导入重灾区** —— 不加这些，打出来的包会在用户那里报 ImportError。

@@ -9,7 +9,7 @@ why: >
   ——改了没验，等于没改。
 realism: 抖动实测发生过（`OpenAIConnectionError` 3 次 / 216 run）；故障出口本身只被注入触发过
 tier: audit
-skills_dir: evals/skills
+skills_dir: skills
 skills_mode: replace
 fault:
   # 让**执行器**那条链的第一次流式调用直接死 → `run_task` 落 `outcome.fault`

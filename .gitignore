@@ -24,8 +24,8 @@ runs/
 
 # 用户给的真实技能样例（2026-10-30 要求不入库）——
 # 拿来验"技能包"这条链路的：一个带 references/ 子目录，一个带 assets/
-evals/skills/pbl-teaching-designer/
-evals/skills/zhiwo-ai-multi-role-agent-builder/
+skills/pbl-teaching-designer/
+skills/zhiwo-ai-multi-role-agent-builder/
 
 # 本地临时目录（审查报告、草稿等，不入库）
 tmp/

@@ -99,17 +99,18 @@ ROOT = app_root()
 #: 只读资源（随包带）：冻结后是 `sys._MEIPASS`，开发时同 ROOT。
 RESOURCE_ROOT = proto_config.RESOURCE_ROOT
 
-#: **技能目录的默认值** —— 冻结后是 exe 旁边的 `skills/`（用户往里丢 `.md` 就加技能）；
-#: 开发时还是仓库里的 `evals/skills/`。
-DEFAULT_SKILLS_DIR = (ROOT / "skills") if FROZEN else (ROOT / "evals" / "skills")
+#: **技能目录的默认值** —— exe 旁边的 `skills/`（用户往里丢技能包就加技能）。
+#: 🔴 **冻结 / 开发是同一个表达式**（2026-11-09）：`skills/` 从 `evals/` 搬到**仓库顶层**之后，
+#: 两边指的本来就是同一个地方 —— 原来那条 `if FROZEN` 分叉**没有理由**，删了。
+DEFAULT_SKILLS_DIR = ROOT / "skills"
 
 #: **运行记录落哪** —— 冻结后是 exe 旁边的 `runs/`（便携、用户找得到、方便整包发回来）；
 #: 开发时还是仓库里的 `evals/runs/`（文档和历史记录都指这里）。
 RUNS_DIR = (ROOT / "runs") if FROZEN else (ROOT / "evals" / "runs")
 
-#: 首次运行时铺进用户技能目录的**示例技能**（让他们知道 `.md` 该长什么样）。
-#: 从只读资源里取 —— 开发时就是 `evals/skills/` 本身。
-SEED_SKILLS_DIR = RESOURCE_ROOT / "evals" / "skills"
+#: 首次运行时铺进用户技能目录的**示例技能**（让他们知道技能包该长什么样）。
+#: 从只读资源里取 —— 开发时就是 `skills/` 本身。
+SEED_SKILLS_DIR = RESOURCE_ROOT / "skills"
 
 
 def ensure_app_dirs() -> list[str]:
@@ -650,13 +651,13 @@ def _render_messages(turn: dict) -> list[str]:
             ]
             if tool in ("read_artifact", "read_skill"):
                 # 🔴 正文/原文**不进日志**（用户要求：只写"读了啥、谁读的"）——
-                # 产物落盘在 `art_*`，技能原文在 `evals/skills/`，都另有出处。
+                # 产物落盘在 `art_*`，技能原文在 `skills/`，都另有出处。
                 what = "产物" if tool == "read_artifact" else "技能"
                 key = "artifact_id" if tool == "read_artifact" else "skill_name"
                 out += [
                     f"　**主 agent 读了{what} `{target.get(key, '?')}` 的全文**"
                     f"（{len(content)} 字，原文不在这里复述 —— "
-                    + ("见同目录 `art_*` 落盘文件" if tool == "read_artifact" else "见 `evals/skills/`")
+                    + ("见同目录 `art_*` 落盘文件" if tool == "read_artifact" else "见 `skills/`")
                     + "）",
                     "",
                 ]

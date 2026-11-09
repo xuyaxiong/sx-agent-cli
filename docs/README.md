@@ -218,7 +218,7 @@ README.md（本文）              入口 + **导航**（找东西 / 写东西�
 
 ```bash
 cd langgraph-lab
-uv run python -m evals.chat --skills evals/skills  # 交互式（技能来自文件夹，不再绑 case）
+uv run python -m app.chat --skills skills  # 交互式（技能来自文件夹，不再绑 case）
 uv run python -m evals.run --tag baseline         # 跑批
 uv run python -m proto                            # 裸原型（内置玩具技能）
 ```

@@ -9,8 +9,8 @@ why: >
   执行器自己 `read_artifact` 读全文 —— 不靠主 agent 转述。）
 realism: 用户指定的实测任务
 tier: audit
-# 适配版技能（六类机械改动，见 evals/skills/README.md）；replace 掉自带的 4 个小技能
-skills_dir: evals/skills
+# 适配版技能（六类机械改动，见 skills/README.md）；replace 掉自带的 4 个小技能
+skills_dir: skills
 skills_mode: replace
 turns:
   - "生成人教版小学语文荷花这一课的教案、导学单，注意导学单内容得参考教案内容"

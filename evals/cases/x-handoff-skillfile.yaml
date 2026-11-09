@@ -8,7 +8,7 @@ why: >
   这条链路不保证被压到（2026-11-02 实测：`EXEC_PATH=delegate` 一开，第一次跑就撞上"执行器猜技能名"）。
 realism: 用户 2026-11-02 实测踩过（技能名没写进清单 → 执行器猜了 4 个变体、卡 121 秒）
 tier: audit
-skills_dir: evals/skills
+skills_dir: skills
 skills_mode: replace
 exec_path: delegate
 turns:

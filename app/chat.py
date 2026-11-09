@@ -1,6 +1,6 @@
 """交互式跑原型（**产品入口**，打包打的就是它）—— **你当用户**，技能从一个文件夹全量注入。
 
-    uv run python -m app.chat                      # 默认 evals/skills/
+    uv run python -m app.chat                      # 默认 skills/
     uv run python -m app.chat --skills 别的目录
 
 与 `evals.run`（跑批）的分工：
@@ -736,7 +736,7 @@ def main() -> None:
     # "建目录"是内部事务，说了只是噪音。措辞也换成人话（不提目录名）。
     created = ensure_app_dirs()
     # ⚠️ 数字**由 `ensure_app_dirs` 报**，别写死 —— 原来硬编码"3 个"，
-    # 而 `evals/skills/` 里早就是 5 个包了（2026-11-02 空跑时发现：嘴上说 3、实际铺 5）。
+    # 而 `skills/` 里早就是 5 个包了（2026-11-02 空跑时发现：嘴上说 3、实际铺 5）。
     seed_note = next((c for c in created if "示例技能" in c), "")
 
     # 技能来自**文件夹**（不再绑 case）—— 用户 2026-10-30：*"有一个文件夹里面有各种 skill

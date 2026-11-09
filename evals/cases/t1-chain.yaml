@@ -7,7 +7,7 @@ why: >
   跨轮才是"依赖桥接"真正的考验。
 realism: 文档记录的需求（plan-test-skills §三 主场景；用户原话"某一课 → 先生成教案，再生成导学单和交互式教案"）
 tier: full
-skills_dir: evals/skills
+skills_dir: skills
 skills_mode: replace
 # ⚠️ 三轮都**把信息给全 + 明说不用提问**：三个技能各自会问 2 个问题，
 #    若让它问，这条 case 就同时压着"重入投递"（那是 t3-split-answers / F15 的事），
