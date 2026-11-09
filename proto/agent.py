@@ -189,6 +189,22 @@
     原来是两条路各写一遍 —— 于是"重入前要先落账"这条**只在一条路上成立**（实测：
     投递那条路的试答重跑拿到的是**上一轮**的 `report`，而 `delegate` 那条是新的）。
     顺序这种东西，**写两遍就一定会漂**；收进一处，漂不动了。
+21. **`delegate` 拆成四个件**（2026-11-09，第四轮外审 P1-8）。用户定：
+    *"函数必须得内聚呀 不要让函数成为富函数 这样容易失去维护"*。
+    它原来是 **159 行**（代码 84）的一个函数，把四件事缠在一起 ——
+    **准入**（校验技能 / 校验产物引用）、**立案**（建那条 `Task`）、**执行**（`dispatch`）、
+    **回话**（按三态说回主 agent）。⇒ 后三件各抽一个私有件：
+
+    | 件 | 干什么 | 代码 |
+    |---|---|---|
+    | `_new_task` | 建**委托单**（那个 14 键的字面量 ＋ 它的注释） | 11 行 |
+    | `_out` | 统一返回口（回执对象 ＋ 渲染文本）—— 原来是 `delegate` 里的闭包 | 13 行 |
+    | `_reply` | **回话**：按三态枚举分派（穷举，没有第四种） | 22 行 |
+
+    `delegate` 自己只剩 **30 行**代码：准入 → 立案 → 执行 → 回话，每步一句话。
+    ⚠️ **`_out` 从闭包变模块级**（`_reply` 要用它）—— 代价是显式收 `runtime` /
+    `rec` / `superseded` 三个参数。
+    ⚠️ **零行为变化**：注释、日志、分支顺序、拒绝的文案全部原样搬。
 """
 
 from __future__ import annotations
@@ -559,58 +575,13 @@ def _user_turns(messages: list) -> list[dict]:
 # ──────────────────────────── 委派 ────────────────────────────
 
 
-@tool
-async def delegate(
-    skill_name: str,
-    task: str,
-    runtime: ToolRuntime,
-    artifacts: list[str] | None = None,
-) -> Command:
-    """把**一件具体工作**委派给隔离的执行器（它在独立上下文里干，只把产物和**梗概**带回来）。
+def _new_task(skill_name: str, task: str, tid: str, refs: list[str],
+              turns: list[dict]) -> Task:
+    """建**委托单** —— 这次委派的全部已知（schema 见 `handoff.briefing.Task`）。
 
-    **需要专业技能时一律用它**；闲聊、追问、澄清自己直接答。
-    执行器在独立上下文里干活，产出不会撑爆你的上下文。
-
-    ⚠️ **用户原话由平台原样转交**：每一轮都在执行器手里的索引里（序号 · 字数 · 开头 ·
-    它在回答什么），需要哪一轮的全文它自己按需读。所以你**不用**在 `task` 里复述用户的话，
-    也不用标注依据哪一轮。
-
-    Args:
-        skill_name: 技能名。
-        task: 这件工作的具体要求。**不要把前序产物的正文抄进来** —— 需要它作为输入时，
-            把产物 ID 放进 `artifacts`，执行器会自己读全文（转述既失真、又白占你的上下文）。
-        artifacts: 这次工作要参考的产物 ID（如 `["art_001"]`）。不确定有哪些产物先
-            `list_artifacts()`；不确定某个技能交付什么先 `read_skill(name)`。
+    ⚠️ `total=False` 是**如实**：`case.initial_tasks` 注入的 Task 可能只有部分字段。
     """
-    skill = registry.get(skill_name)
-    if skill is None:
-        return _reject(runtime, "rejected_skill", f"❌ 没有技能「{skill_name}」",
-                       "、".join(registry.names()))
-
-    # 用户原话**平台硬搬**（快照进 Task）—— 见 `_user_turns` 的 docstring。
-    # ⚠️ 平台**不挑**哪几轮给全文（原来由主 agent 用 `based_on_turns` 点名，那个字段已删，
-    #    见 `briefing.turn_lines`）：全给索引、全文按需取。
-    turns = _user_turns(runtime.state.get("messages") or [])
-
-    # 产物引用**当场校验**：编出来的 ID 直接拒掉，并给出真实清单 ——
-    # 放行的话，执行器读不到会自己找补，错误被埋进产物里。
-    refs = [a for a in (artifacts or []) if a]
-    unknown = [a for a in refs if not artifacts_mod.has(a)]
-    if unknown:
-        # ⚠️ 用**换行**拼，不用"；" —— 清单每项可能两行（梗概 ＋ 路径），
-        #    分号拼会把它们挤成一大坨（`body_lines` 那边会整块缩进，本来就是列表）。
-        have = "\n".join(artifact_index_lines()) or "（本会话还没有产物）"
-        return _reject(
-            runtime, "rejected_artifact",
-            f"❌ 产物 {'、'.join(unknown)} 不存在", have,
-        )
-
-    # id 用 tool_call_id 派生 —— **并行调用时不会撞车**（用序号会撞，实测踩过）。
-    # ⚠️ 必须取**尾部**：tool_call_id 形如 `call_abc123...`，前几位所有调用都一样。
-    tid = f"t{(runtime.tool_call_id or 'x')[-8:]}"
-    # 同 skill 下还没了结的旧 Task → 标记 superseded，免得台账里挂着过期项
-    superseded = _supersede_old(runtime, skill_name)
-    rec: Task = {
+    return {
         "id": tid, "skill": skill_name, "task": task,
         "stage": "running", "artifacts": [], "report": "", "agent_tried": False,
         # 它申报要的那条信息（`ask_user` 的原话）—— 新建的 Task 还没申报；
@@ -643,64 +614,60 @@ async def delegate(
         #    `qa` 是"派发**之后**用户答的"，时间上不重叠
         "user_turns": turns,
     }
-    # kind：语义标签，展示层（订阅事件的那层）按它归角色 —— 不靠子串认行
-    trace.section(f"delegate · {skill_name} · {tid}", kind="dispatch")
-    if superseded:
-        trace.note(f"取代了 {len(superseded)} 个同技能的未了结 Task：{[t['id'] for t in superseded]}",
-                   kind="supersede")
 
-    def _out(rec: Task, outcome: Any, *, agent_answer: str = "", note: str = "",
-             mooted: list[Task] | None = None) -> Command:
-        """统一的返回口 —— **总是带上被取代的旧 Task**。
 
-        🔴 它做两件事，**一次做完**：构造**回执对象**、渲染成文本 ——
-        文本进 `content`（模型只看这个），对象挂 `additional_kwargs`（模型看不到，
-        记录层读它）。见 `proto/handoff/receipt.py` 的 docstring。〔沿革 7〕
+def _out(runtime: ToolRuntime, rec: Task, superseded: list[Task], outcome: Any, *,
+         agent_answer: str = "", note: str = "", mooted: list[Task] | None = None) -> Command:
+    """统一的返回口 —— **总是带上被取代的旧 Task**。
 
-        ⚠️ `mooted` 由 `dispatch` 算好传进来（**取代的判据只有一处**，见它的 docstring）。
-        """
-        r = build_receipt(outcome, agent_answer=agent_answer, note=note)
-        text = render_receipt(r)
-        # 交接关键日志（复盘用）：这一跳交了多少、有没有结构化对象 —— 见 `trace.handoff`。
-        # 正文**不在这里 dump**：主 agent 的逐步骤 dump 里已经有它（`graph.node_agent`）。
-        trace.handoff("回执", "执行器", "主 agent", text,
-                      structured=f"Receipt(kind={r['kind']}，{len(r['sections'])} 段)")
-        return _cmd(runtime, [rec, *superseded, *(mooted or [])], text, handoff=r)
+    🔴 它做两件事，**一次做完**：构造**回执对象**、渲染成文本 ——
+    文本进 `content`（模型只看这个），对象挂 `additional_kwargs`（模型看不到，
+    记录层读它）。见 `proto/handoff/receipt.py` 的 docstring。〔沿革 7〕
 
-    # ① 派发 —— 编排（run_task → 落账 → 试答 → 落账 → 取代）走**两条路共用**的那个函数；
-    #    `run_task` 内部已含「出口限制」：既没完成也没提问会被推回去继续。
-    outcome, answer, mooted = await dispatch(
-        skill, rec, runtime.state.get("tasks") or [],
-        trigger="delegate", messages=runtime.state.get("messages") or [],
-    )
+    ⚠️ `mooted` 由 `dispatch` 算好传进来（**取代的判据只有一处**，见它的 docstring）。
+    """
+    r = build_receipt(outcome, agent_answer=agent_answer, note=note)
+    text = render_receipt(r)
+    # 交接关键日志（复盘用）：这一跳交了多少、有没有结构化对象 —— 见 `trace.handoff`。
+    # 正文**不在这里 dump**：主 agent 的逐步骤 dump 里已经有它（`graph.node_agent`）。
+    trace.handoff("回执", "执行器", "主 agent", text,
+                  structured=f"Receipt(kind={r['kind']}，{len(r['sections'])} 段)")
+    return _cmd(runtime, [rec, *superseded, *(mooted or [])], text, handoff=r)
 
-    # ② 按**三态枚举**分派 —— 穷举，没有第四种（用户「封闭原则」）
-    # ⚠️ 状态迁移一律走 `settle()`（**唯一一处**，在 `dispatch` 里）—— 手写
-    #    `rec.update(stage=…)` 是**无条件覆盖**，会把"这一轮没产出就不抹掉上一轮产物"
-    #    的保护当场抵消。〔沿革 8〕
+
+def _reply(runtime: ToolRuntime, rec: Task, superseded: list[Task], tid: str,
+           skill: Any, outcome: Any, *, answer: str = "",
+           mooted: list[Task] | None = None) -> Command:
+    """**回话**：把这一趟的结果说回主 agent —— 按**三态枚举**分派，穷举，没有第四种。
+
+    ⚠️ 状态迁移一律走 `settle()`（**唯一一处**，在 `dispatch` 里）—— 手写
+    `rec.update(stage=…)` 是**无条件覆盖**，会把"这一轮没产出就不抹掉上一轮产物"
+    的保护当场抵消。〔沿革 8〕
+    """
+    # ① **完成了** —— 🔴 **平台不下"完成了"的结论**：三态是**结构算的**
+    #    （交没交产物 / 报没报要信息）—— "**够不够**"由主 agent 判：
+    #    回执把交付账摆给它，它自己看 ✓。〔沿革 16〕
+    # ⚠️ **文案从 `receipt.next_note` 取**（不就地写）：样例文档要渲染同一份 —— 见它的 docstring。
+    # ⚠️ `agent_answer`：试答补上的那次要把"你补的信息"一起带上 —— `dispatch` 收口后
+    #    outcome 已经是**最终**三态，这里一并带（原来在 waiting 分支里分过一次）。
     if outcome.status == "completed":
-        # 🔴 **平台不下"完成了"的结论**：三态是**结构算的**（交没交产物 / 报没报要信息）——
-        #    "**够不够**"由主 agent 判：回执把交付账摆给它，它自己看 ✓。〔沿革 16〕
-        # ⚠️ **文案从 `receipt.next_note` 取**（不就地写）：样例文档要渲染同一份 —— 见它的 docstring。
-        # ⚠️ `agent_answer`：试答补上的那次要把"你补的信息"一起带上 —— `dispatch` 收口后
-        #    outcome 已经是**最终**三态，这里一并带（原来在 waiting 分支里分过一次）。
-        return _out(rec, outcome, agent_answer=answer,
+        return _out(runtime, rec, superseded, outcome, agent_answer=answer,
                     note=next_note("completed", skill=skill.name), mooted=mooted)
 
+    # ② **在要信息** —— **试答那一步已经在 `dispatch` 里走过了**（两条路共用同一个函数）。
+    #    走到这里 = 试答答不上（或答了仍缺）→ 登记待答：执行器问的那句，**由平台原样转给用户**。
+    # ⚠️ 「**主 agent 答不上**」这半句**不写在这儿**：它就在上面那条 `🧭 DECIDE` 的
+    #    【结果】里，而展示层上屏时**已经加了**「分支：主 agent 答不上 → 」前缀
+    #    （`chat._on_event`）—— 再写一遍就是同一个意思印两回。〔沿革 17〕
     if outcome.status == "waiting_for_input":
-        # ③ 在要信息 —— **试答那一步已经在 `dispatch` 里走过了**（两条路共用同一个函数）。
-        #    走到这里 = 试答答不上（或答了仍缺）→ 登记待答：执行器问的那句，**由平台原样转给用户**。
-        # ⚠️ 「**主 agent 答不上**」这半句**不写在这儿**：它就在上面那条 `🧭 DECIDE` 的
-        #    【结果】里，而展示层上屏时**已经加了**「分支：主 agent 答不上 → 」前缀
-        #    （`chat._on_event`）—— 再写一遍就是同一个意思印两回。〔沿革 17〕
         trace.note(
             f"delegate · {tid}（{skill.name}）**登记待答** —— 执行器问的那句"
             f"由平台原样转给用户（不由主 agent 代问）",
             kind="waiting",
         )
-        return _out(rec, outcome, note=next_note("waiting"))
+        return _out(runtime, rec, superseded, outcome, note=next_note("waiting"))
 
-    # ④ 只剩 `incomplete`（含"试答补了信息之后反而变成 incomplete"那条）——
+    # ③ 只剩 `incomplete`（含"试答补了信息之后反而变成 incomplete"那条）——
     #    推了 N 轮，**既没交产物、也没申报要信息**。
     #    按评审人 E2「情况 A：执行失败」→ **交给主 agent 决定**，而不是拿去烦用户。
     #    ⚠️ 平台**不猜**它为什么没交（不读正文 ✓）：可能它真干不了，也可能它把答案
@@ -715,10 +682,82 @@ async def delegate(
         trace.note(f"delegate · {tid} "
                    + NOTE_BY_FAULT.get(outcome.fault_kind, NOTE_FAULT_UNCLASSIFIED),
                    kind="delegate_failed")
-        return _out(rec, outcome, note=next_note("fault", fault_kind=outcome.fault_kind))
+        return _out(runtime, rec, superseded, outcome,
+                    note=next_note("fault", fault_kind=outcome.fault_kind))
     trace.note(f"delegate · {tid} status=incomplete（推了 {outcome.rounds} 轮）→ failed",
                kind="delegate_failed")
-    return _out(rec, outcome, note=next_note("failed"))
+    return _out(runtime, rec, superseded, outcome, note=next_note("failed"))
+
+
+@tool
+async def delegate(
+    skill_name: str,
+    task: str,
+    runtime: ToolRuntime,
+    artifacts: list[str] | None = None,
+) -> Command:
+    """把**一件具体工作**委派给隔离的执行器（它在独立上下文里干，只把产物和**梗概**带回来）。
+
+    **需要专业技能时一律用它**；闲聊、追问、澄清自己直接答。
+    执行器在独立上下文里干活，产出不会撑爆你的上下文。
+
+    ⚠️ **用户原话由平台原样转交**：每一轮都在执行器手里的索引里（序号 · 字数 · 开头 ·
+    它在回答什么），需要哪一轮的全文它自己按需读。所以你**不用**在 `task` 里复述用户的话，
+    也不用标注依据哪一轮。
+
+    Args:
+        skill_name: 技能名。
+        task: 这件工作的具体要求。**不要把前序产物的正文抄进来** —— 需要它作为输入时，
+            把产物 ID 放进 `artifacts`，执行器会自己读全文（转述既失真、又白占你的上下文）。
+        artifacts: 这次工作要参考的产物 ID（如 `["art_001"]`）。不确定有哪些产物先
+            `list_artifacts()`；不确定某个技能交付什么先 `read_skill(name)`。
+
+    ⚠️ **它自己只做四步**（2026-11-09 拆）：**准入 → 立案 → 执行 → 回话**。
+    后三步各在一个私有件里（`_new_task` / `dispatch` / `_reply`）——
+    原来是一个 159 行的函数，把"校验输入""建单""委派""按三态回话"缠在一起。〔沿革 21〕
+    """
+    # ① **准入** —— 技能不存在 / 引用了不存在的产物，**当场拒**（编出来的 ID 放行的话，
+    #    执行器读不到会自己找补，错误被埋进产物里）。
+    skill = registry.get(skill_name)
+    if skill is None:
+        return _reject(runtime, "rejected_skill", f"❌ 没有技能「{skill_name}」",
+                       "、".join(registry.names()))
+    refs = [a for a in (artifacts or []) if a]
+    unknown = [a for a in refs if not artifacts_mod.has(a)]
+    if unknown:
+        # ⚠️ 用**换行**拼，不用"；" —— 清单每项可能两行（梗概 ＋ 路径），
+        #    分号拼会把它们挤成一大坨（`body_lines` 那边会整块缩进，本来就是列表）。
+        have = "\n".join(artifact_index_lines()) or "（本会话还没有产物）"
+        return _reject(runtime, "rejected_artifact",
+                       f"❌ 产物 {'、'.join(unknown)} 不存在", have)
+
+    # ② **立案** —— 这次委派记成一条 Task。
+    # 用户原话**平台硬搬**（快照进 Task）—— 见 `_user_turns` 的 docstring。
+    # ⚠️ 平台**不挑**哪几轮给全文（原来由主 agent 用 `based_on_turns` 点名，那个字段已删，
+    #    见 `briefing.turn_lines`）：全给索引、全文按需取。
+    turns = _user_turns(runtime.state.get("messages") or [])
+    # id 用 tool_call_id 派生 —— **并行调用时不会撞车**（用序号会撞，实测踩过）。
+    # ⚠️ 必须取**尾部**：tool_call_id 形如 `call_abc123...`，前几位所有调用都一样。
+    tid = f"t{(runtime.tool_call_id or 'x')[-8:]}"
+    # 同 skill 下还没了结的旧 Task → 标记 superseded，免得台账里挂着过期项
+    superseded = _supersede_old(runtime, skill_name)
+    rec = _new_task(skill_name, task, tid, refs, turns)
+    # kind：语义标签，展示层（订阅事件的那层）按它归角色 —— 不靠子串认行
+    trace.section(f"delegate · {skill_name} · {tid}", kind="dispatch")
+    if superseded:
+        trace.note(f"取代了 {len(superseded)} 个同技能的未了结 Task：{[t['id'] for t in superseded]}",
+                   kind="supersede")
+
+    # ③ **执行** —— 编排（run_task → 落账 → 试答 → 落账 → 取代）走**两条路共用**的那个函数；
+    #    `run_task` 内部已含「出口限制」：既没完成也没提问会被推回去继续。
+    outcome, answer, mooted = await dispatch(
+        skill, rec, runtime.state.get("tasks") or [],
+        trigger="delegate", messages=runtime.state.get("messages") or [],
+    )
+
+    # ④ **回话** —— 按三态说回主 agent（穷举，没有第四种）。
+    return _reply(runtime, rec, superseded, tid, skill, outcome,
+                  answer=answer, mooted=mooted)
 
 
 # ──────────────────────────── 装配 ────────────────────────────

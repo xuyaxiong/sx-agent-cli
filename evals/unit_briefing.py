@@ -54,20 +54,21 @@ def _declared_fields() -> list[str]:
 
 
 def _built_fields() -> list[str]:
-    """`agent.delegate` 里那个 `rec` 字面量的键（AST）。
+    """**建 Task 那个字面量**的键（AST）—— 现在住 `agent._new_task` 的 `return {…}`。
 
-    ⚠️ 认的是**形状**（`rec: dict[str, Any] = {…}`），不是行号 —— 挪了位置也照样找得到；
-    找不到就返回空，由断言报红（**不静默放过**）。
+    ⚠️ **2026-11-09 挪窝**：`delegate` 拆成四个件之后，那个 `rec: Task = {…}`
+    从 `delegate` 里搬进了 `_new_task`，形状也从**赋值**变成**返回**。
+    ⇒ 锚点跟着改成"`_new_task` 里那个 `return` 的 dict 字面量"。
+    ⚠️ 认的是**形状 ＋ 那个函数名**，不是行号 —— 再挪窝它会红（**不静默放过**），
+    那时**改这里**，别去改产品代码迁就守卫。
     """
     src = io.open("proto/agent.py", encoding="utf-8").read()
-    for n in ast.walk(ast.parse(src)):
-        if (
-            isinstance(n, ast.AnnAssign)
-            and isinstance(n.target, ast.Name)
-            and n.target.id == "rec"
-            and isinstance(n.value, ast.Dict)
-        ):
-            return [k.value for k in n.value.keys if isinstance(k, ast.Constant)]
+    for fn in ast.walk(ast.parse(src)):
+        if not (isinstance(fn, ast.FunctionDef) and fn.name == "_new_task"):
+            continue
+        for n in ast.walk(fn):
+            if isinstance(n, ast.Return) and isinstance(n.value, ast.Dict):
+                return [k.value for k in n.value.keys if isinstance(k, ast.Constant)]
     return []
 
 #: **显式排除名单** —— 这些字段不进交接书，每一条都要有理由。
@@ -362,7 +363,8 @@ def main() -> None:
     #    用 AST 抽两边的字段表直接对（不看注释、不跑代码）。
     declared, built = _declared_fields(), _built_fields()
     check("`Task` 声明的字段抽得到（AST）", bool(declared), "没抽到 —— 类名改了？")
-    check("`delegate` 建的字段抽得到（AST）", bool(built), "没抽到 —— 那个 `rec` 字面量改名/挪窝了？")
+    check("**建 Task 那个字面量**的字段抽得到（AST）", bool(built),
+          "没抽到 —— `_new_task` 改名/挪窝了？改 `_built_fields()` 的锚点，别改产品代码迁就它")
     check("两边**字段集完全一致**", set(declared) == set(built),
           f"建了没声明：{sorted(set(built) - set(declared))}；"
           f"声明了没建：{sorted(set(declared) - set(built))}")
