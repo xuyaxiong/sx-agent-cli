@@ -207,6 +207,7 @@ from proto.config import get_model
 from proto import executor  # ⚠️ 走模块属性，见 delegate 的注释
 from proto.handoff.ask import build_prompt as ask_prompt  # 试答
 from proto.handoff.briefing import (  # 委托单
+    Task,
     absorb_outcome,
     moot_older_waiting,
     render_briefing,
@@ -398,7 +399,7 @@ async def _ask_main(messages: list, skill_name: str, task: str, outcome: Any) ->
 
 
 async def try_answer_then_rerun(
-    rec: dict, skill: Any, outcome: Any, *, messages: list
+    rec: Task, skill: Any, outcome: Any, *, messages: list
 ) -> tuple[Any, str]:
     """执行器说「缺信息」→ **平台强制主 agent 先用自己上下文试答** → 答得上就重跑一遍。
 
@@ -427,8 +428,8 @@ async def try_answer_then_rerun(
     return o2, answer
 
 
-async def dispatch(skill: Any, rec: dict, tasks: list[dict], *, trigger: str,
-                   messages: list) -> tuple[Any, str, list[dict]]:
+async def dispatch(skill: Any, rec: Task, tasks: list[Task], *, trigger: str,
+                   messages: list) -> tuple[Any, str, list[Task]]:
     """**派发编排** —— 两条路（`delegate` / `graph._feed_waiting`）共用的那一段。
 
     🔴 **为什么抽出来**：核心早就统一了（`try_answer_then_rerun` / `settle` /
@@ -608,7 +609,7 @@ async def delegate(
     tid = f"t{(runtime.tool_call_id or 'x')[-8:]}"
     # 同 skill 下还没了结的旧 Task → 标记 superseded，免得台账里挂着过期项
     superseded = _supersede_old(runtime, skill_name)
-    rec: dict[str, Any] = {
+    rec: Task = {
         "id": tid, "skill": skill_name, "task": task,
         "stage": "running", "artifacts": [], "report": "", "agent_tried": False,
         # 它申报要的那条信息（`ask_user` 的原话）—— 新建的 Task 还没申报；
@@ -647,8 +648,8 @@ async def delegate(
         trace.note(f"取代了 {len(superseded)} 个同技能的未了结 Task：{[t['id'] for t in superseded]}",
                    kind="supersede")
 
-    def _out(rec: dict, outcome: Any, *, agent_answer: str = "", note: str = "",
-             mooted: list[dict] | None = None) -> Command:
+    def _out(rec: Task, outcome: Any, *, agent_answer: str = "", note: str = "",
+             mooted: list[Task] | None = None) -> Command:
         """统一的返回口 —— **总是带上被取代的旧 Task**。
 
         🔴 它做两件事，**一次做完**：构造**回执对象**、渲染成文本 ——

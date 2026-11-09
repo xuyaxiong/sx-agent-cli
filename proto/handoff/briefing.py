@@ -164,7 +164,6 @@ from proto.handoff import (
     OutcomeStatus,
     TaskStage,
     body_lines,
-    bullet_lines,
     section_head,
 )
 
@@ -247,7 +246,7 @@ class Task(TypedDict, total=False):
 _one_line_limit = 40
 
 
-def asked_text(t: dict) -> str:
+def asked_text(t: Task) -> str:
     """待答任务 → **用户该答的那一句**（`Task.asked`）。取不到就**显式说清**。
 
     🔴 **只负责"取哪句"，不负责排版** —— 两个视图**载体不同**（一个是对话里的
@@ -323,7 +322,7 @@ def turn_lines(turns: list[dict]) -> list[str]:
     return out
 
 
-def render_briefing(task: dict) -> str:
+def render_briefing(task: Task) -> str:
     """把 Task 渲染成**执行器的输入** —— 所有重入路径的唯一入口。
 
     ⚠️ 名字是 task 不是 given：它是**整份交接**（任务 / 上次做到哪 / 历次答复 /
@@ -461,7 +460,7 @@ def render_briefing(task: dict) -> str:
     return "\n\n".join(blocks)
 
 
-def absorb_outcome(rec: dict, outcome: Any) -> None:
+def absorb_outcome(rec: Task, outcome: Any) -> None:
     """把执行器的结果**写进 Task** —— 四个字段一个都不能少（F15 的同类：存了才可能喂）。
 
     ⚠️ `artifacts` 只在非空时覆盖：执行器可能这一轮没产出，不能把上一轮的抹掉。
@@ -490,7 +489,7 @@ _STATUS_TO_STAGE: dict[OutcomeStatus, TaskStage] = {
 }
 
 
-def settle(rec: dict, outcome: Any) -> str:
+def settle(rec: Task, outcome: Any) -> str:
     """**把一次执行结果落进 Task** —— 状态迁移的唯一入口（原来散在 7 处手写，〔沿革 7〕）。
 
     两件事一起做完，顺序不能反：
@@ -518,7 +517,7 @@ def settle(rec: dict, outcome: Any) -> str:
     return rec["stage"]
 
 
-def moot_older_waiting(done: dict, tasks: list[dict]) -> list[dict]:
+def moot_older_waiting(done: Task, tasks: list[Task]) -> list[Task]:
     """**刚完成的这条**让哪些更早的待答成了哑问题 → 显式标 `superseded`（**不是静默丢**）。
 
     ## 判据（两条，都是**结构事实**，不是猜）

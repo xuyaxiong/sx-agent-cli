@@ -65,21 +65,16 @@
 - **台账目前是全量注入**（用户确认）。若台账变长到撑上下文，可改成只注入活跃的
   （进行中 / 待答 / 最近完成的），老归档不注入。
 - **接 Web 宿主时：显示走 `trace` 事件订阅，别按 `values` 流推 state**（第三轮外审 P3-3，
-  用户定：*"先记住这个问题 暂不处理"*）。`node_feed` 里**同步**跑 60–120 秒的执行器
+  用户定：*"先记住这个问题 暂不处理"*）。`node_feed` 里跑 60–120 秒的执行器
   （`dispatch` → `run_task`），而 `stream_mode="values"` 是**每个 super-step 吐一次** ——
   那 60–120 秒里它**一个 chunk 都不吐**。
-  ⚠️ **只影响那一个会话**：LangGraph 把**非 async 的节点函数**包了 `run_in_executor`
-  （`.venv/.../langgraph/pregel/_call.py`），所以它跑在**线程**里、不占事件循环；
-  CLI 更不受影响 —— N2 之后展示层订阅事件，而事件在 `node_feed` **内部**就发出来了。
   ⇒ **它是"接宿主时的选型提醒"，不是性能缺陷。** 真要按 `values` 流推，就得把投递改成
   **异步 task** —— 图要重新长出条件边（现在是直线五节点）。
-  ⚠️ 真会**跨会话**的是**线程池饱和**（uvicorn 默认 40 线程）：40 个会话各占一个线程
-  120 秒，第 41 个请求开始排队 —— 那是**容量规划**，不是这段代码的缺陷。
-  🔴 **⚠️ 上面那句"只影响一个会话"只在"节点跑在线程里"时成立** —— 而那靠的是
-  LangGraph 的 `run_in_executor`。**迁到纯 asyncio（节点改 `async def`）之后没有线程池兜底**：
-  那时一个**同步阻塞调用卡住的是整个事件循环**，不只一个会话。
-  ⇒ **迁移时 `node_feed` 这条链必须真 `await` 掉**（不是可选）。反过来：真 await 之后
-  60–120s 变成协作式的，**线程池饱和也一并消失** —— 纯 asyncio 就是这条的正解。
+  ✅ **事件订阅这条路 CLI 已经在走**（N2 之后展示层只订阅事件，而事件在 `node_feed`
+  **内部**就发出来了）—— 所以 CLI 那 60–120 秒里**不黑屏**，宿主照做即可。
+  ⚠️ 原来那条"**只影响那一个会话**"（靠 LangGraph 把**同步**节点包 `run_in_executor`
+  跑在线程里）**已经作废** —— 全链路异步之后没有那层兜底，一个同步阻塞卡的是**整个
+  事件循环**。作废与替代见〔沿革 33〕。
 
 ## 沿革（改过什么、为什么改）
 
@@ -223,6 +218,24 @@
     "**属性访问**（`executor.run_task`）而不是 from-import"（这里没有属性访问）。
     全文件 `grep executor` **只剩注释命中**。⇒ 删 import，两处注释改成**指向真正调它的地方**
     （`agent.dispatch`）；`harness.install()` 那句"两个文件都走模块属性"也一起改准。
+33. **全链路改异步**（2026-11-06 起步 → 2026-11-09 收尾）。用户定：*"那就分步骤来做啊
+    反正我要的结果是异步驱动 异步节点"*、*"收尾啊 必须收尾啊"*。三步：`066fdc0`
+    （只换驱动，节点一个没改 —— 先有异步驱动才能一个一个改节点）→ `d28b42b`
+    （节点与执行链）→ `be4accc`（收尾：剩下 2 个节点 ＋ 7 个工具）。⇒ 4 个节点、
+    8 个工具、执行链全是 `async def`，`graph.stream` → `astream`，
+    **图里再没有任何东西被丢进线程池**。
+    🔴 **这一步把上面遗留问题里那条老分析作废了**：原来"阻塞只影响一个会话"靠的正是
+    `run_in_executor` 把**同步**节点包进线程 —— 没有同步节点之后**那层兜底不存在**，
+    同步阻塞卡的是**整个事件循环**。⇒ "显示走事件订阅、别按 `values` 流推"这条提醒
+    **依然成立**（理由变了，结论没变）；"线程池饱和"那一半（40 个会话各占一个线程）
+    **一并消失**。
+    ⚠️ **事件循环一个进程一个**（`proto/aio.py`）：`get_model()` 是 `lru_cache` 的，
+    里面那个 async httpx 客户端绑在创建它的循环上 —— 每轮 `asyncio.run` 开新循环会撞
+    `Event loop is closed`（跑批实测踩到）。四个调用方（三个入口 ＋ `judge`）都走
+    `aio.run`。
+    ⚠️ **"零同步"指的是节点与工具**：同步**文件** IO 还在事件循环里
+    （`trace._write` 每行 write+flush、`skill_pack` 的 `read_text`…）—— 见 `trace.py`
+    的遗留问题。
 """
 
 from __future__ import annotations
@@ -239,7 +252,7 @@ from langgraph.graph.message import add_messages
 from proto import trace
 from proto.agent import build_agent
 from proto.agent import dispatch  # 派发编排（两条路共用，F5 收口）
-from proto.handoff.briefing import asked_text
+from proto.handoff.briefing import Task, asked_text
 from proto.handoff import render_hop  # 唯一那条渲染路（见 handoff/__init__）
 from proto.handoff.ledger import render_ledger
 # ⚠️ **本模块不直接调执行器**（原来有 `from proto import executor`，是**死 import**）：
@@ -250,7 +263,7 @@ from proto.handoff.ledger import render_ledger
 from proto.registry import registry  # 技能注册表（唯一持有者）
 
 
-def _merge_tasks(old: list[dict] | None, new: list[dict] | None) -> list[dict]:
+def _merge_tasks(old: list[Task] | None, new: list[Task] | None) -> list[Task]:
     """按 id 合并 Task —— `tasks` 的 reducer。
 
     ⚠️ **必须用 reducer**：模型会**并行**发多个 `delegate` 调用，每个工具都读到同一份
@@ -265,7 +278,7 @@ def _merge_tasks(old: list[dict] | None, new: list[dict] | None) -> list[dict]:
 class State(TypedDict):
     messages: Annotated[list[AnyMessage], add_messages]
     #: 只记录"主 agent 决定委派出去的工作"。不委派就是空 —— 这是 Task 概念在新设计里的落点
-    tasks: NotRequired[Annotated[list[dict[str, Any]], _merge_tasks]]
+    tasks: NotRequired[Annotated[list[Task], _merge_tasks]]
     #: 平台这一轮干了什么 —— **给人看的渲染记录**（`_run.md`、CLI 的 delta）。
     #: ⚠️ **不许拿它做判据**（断言 / 报告都不许）—— 它是渲染产物，改一句文案就静默失配〔沿革 10〕。
     log: NotRequired[Annotated[list[str], operator.add]]
@@ -309,7 +322,7 @@ class AgentState(TypedDict):
     """
 
     messages: Annotated[list[AnyMessage], add_messages]
-    tasks: NotRequired[Annotated[list[dict[str, Any]], _merge_tasks]]
+    tasks: NotRequired[Annotated[list[Task], _merge_tasks]]
     #: 🔴 **这一轮投递之后，执行器又问了一个**（`discussion-log` F18 的
     #: **「投递后又问」那一形状**）。
     #:
@@ -527,7 +540,7 @@ def render_relay(waiting: list[dict]) -> str:
     ⚠️ **走唯一那条渲染路**（`render_hop`），段名是【待答】；技能名用 `「」` ——
     **不许拿段名的括号包技能名**（`【…】` 是段名专用符号）〔沿革 24〕。
     """
-    def _one(t: dict) -> str:
+    def _one(t: Task) -> str:
         who = t.get("skill") or "?"
         # ⚠️ **"取哪句、取不到怎么办"只有一处定义**（`asked_text`）——
         #    CLI 的提示符（另一个**视图**）也用它。见那个函数的 docstring。
