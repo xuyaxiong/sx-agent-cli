@@ -40,6 +40,7 @@
 from __future__ import annotations
 
 import asyncio
+
 import sys
 from typing import Callable
 
@@ -58,7 +59,19 @@ import os
 os.environ["PROTO_LOG_TAG"] = "unit-ask-flow"
 os.environ["PROTO_LOG_DIR"] = "tmp/logs"   # 🔴 测试日志是**噪音** —— 别混进给人看的 `logs/`
 
+from proto import graph as _graph
+
 from proto import trace
+
+def _prepare(state):
+    """`node_prepare` 现在是**协程** —— 测试里的同步收口。"""
+    return asyncio.run(_graph.node_prepare(state))
+
+
+def _finalize(state):
+    """`node_finalize` 现在是**协程** —— 同上。"""
+    return asyncio.run(_graph.node_finalize(state))
+
 
 #: 这次「问」的原话 —— 断言拿它当指纹（全文出现在哪、不出现在哪）。
 Q = "这节课你希望侧重哪种上法？（A. 探究发现型 B. 讲解示范型 C. 练习巩固型）"
@@ -157,7 +170,10 @@ def drive(on_phase: Callable[[str, list[dict], str], None] | None = None) \
         ⚠️ 得是 **async** 生成器 —— `stream_agent` 现在是异步的（asyncio 迁移第 2 步）。
         """
         ask = next(t for t in box["tools"] if t.name == "ask_user")
-        ret = ask.invoke({"question": Q})
+        # ⚠️ **`await`，不是 `asyncio.run`** —— 这个假流本身就是**协程**，跑在事件循环里，
+        #    再 `asyncio.run` 会报 "cannot be called from a running event loop"，
+        #    于是 `run_task` 走故障分支、**dump 根本不发生**（实测踩到）。
+        ret = await ask.ainvoke({"question": Q})
         yield {"messages": [*state["messages"],
                             AIMessage("", tool_calls=[{"name": "ask_user", "id": "call_ask",
                                                        "args": {"question": Q}}]),
@@ -231,7 +247,7 @@ def drive(on_phase: Callable[[str, list[dict], str], None] | None = None) \
     from proto.graph import _feed_waiting, node_finalize
 
     n = len(events)
-    node_finalize({"tasks": [sample_task()], "messages": []})
+    _finalize({"tasks": [sample_task()], "messages": []})
     at = _phase("③ 平台 → 用户：把它问的那句原样转达（透传）", at, n)
 
     # ── ④ 用户 → 执行器：答复投递（`_feed_waiting` 真跑）──────────────────────

@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import io
 import sys
 
@@ -264,11 +265,12 @@ def main() -> None:
     # ③ `read_user_turn` 给的是**整轮**（原话 ＋ 它在回答的那句），不是孤零零一句
     from proto.executor import _user_turn_reader
     reader = _user_turn_reader(task["user_turns"])
-    got = reader.invoke({"turn": 2})
+    got = asyncio.run(reader.ainvoke({"turn": 2}))
     check("read_user_turn 返回原话全文", str(task["user_turns"][1]["text"]) in got)
     check("read_user_turn **也返回它在回答的那句**",
           "它在回答的上一句" in got and str(task["user_turns"][1]["after"]) in got)
-    check("read_user_turn 对不存在的轮次仍然报错", "没有第 9 轮" in reader.invoke({"turn": 9}))
+    check("read_user_turn 对不存在的轮次仍然报错",
+          "没有第 9 轮" in asyncio.run(reader.ainvoke({"turn": 9})))
 
     print("\n⑥ 首跑不该出现「续跑」相关的话（否则它会以为有前情）")
     fresh = {k: ([] if isinstance(v, list) else "") for k, v in task.items()}

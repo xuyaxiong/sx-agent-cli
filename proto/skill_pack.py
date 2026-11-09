@@ -204,7 +204,7 @@ def load_skill_file(skill_name: str, path: str) -> str | None:
 
 
 @tool
-def read_skill(skill_name: str) -> str:
+async def read_skill(skill_name: str) -> str:
     """按需读一个技能的**完整指令**（渐进式披露第二层），附带它自带哪些文件。
 
     常驻在你眼前的只有技能名和一句话描述。写任务要求前若不确定这个技能
@@ -228,7 +228,7 @@ def read_skill(skill_name: str) -> str:
 
 
 @tool
-def read_skill_file(skill_name: str, path: str) -> str:
+async def read_skill_file(skill_name: str, path: str) -> str:
     """读技能包里某个**文件的全文**（渐进式披露第三层）。
 
     技能自带的规范 / 模板 / 标准（如《教案结构模板》《评分标准》《学科课标》）——

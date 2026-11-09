@@ -227,7 +227,7 @@ def make_ask_user(asked: dict):
     """
 
     @tool
-    def ask_user(question: str) -> str:
+    async def ask_user(question: str) -> str:
         """你**没法往下干**了，需要一条你自己拿不到的信息 —— 用这个问。
 
         Args:
@@ -256,7 +256,7 @@ def _user_turn_reader(user_turns: list[dict]):
     by_n = {int(t["n"]): t for t in user_turns}
 
     @tool
-    def read_user_turn(turn: int) -> str:
+    async def read_user_turn(turn: int) -> str:
         """读某一轮**用户原话的完整上下文**：原话全文 ＋ **它在回答的那一句**。
 
         交接书【用户原话】那一段列了每一轮的开头；**确定这一轮确实用得上再读** ——

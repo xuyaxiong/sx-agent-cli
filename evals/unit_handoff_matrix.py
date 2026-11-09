@@ -30,6 +30,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import re
 import sys
@@ -45,11 +46,23 @@ import os
 os.environ["PROTO_LOG_TAG"] = "unit-handoff-matrix"
 os.environ["PROTO_LOG_DIR"] = "tmp/logs"   # 🔴 测试日志是**噪音** —— 别混进给人看的 `logs/`
 
+from proto import graph as _graph
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 OK, BAD, NA = "✅", "❌", "—"
 rows: list[tuple[str, str, str, str, str]] = []
+
+
+def _prepare(state):
+    """`node_prepare` 现在是**协程** —— 测试里的同步收口（asyncio 迁移收尾）。"""
+    return asyncio.run(_graph.node_prepare(state))
+
+
+def _finalize(state):
+    """`node_finalize` 现在是**协程** —— 同上。"""
+    return asyncio.run(_graph.node_finalize(state))
 
 
 def row(hop: str, c1: str, c2: str, c3: str, c4: str, c5: str) -> None:
@@ -158,7 +171,7 @@ def main() -> None:  # noqa: C901
     _w1 = {"id": "t1", "skill": "quiz", "stage": "waiting_for_input",
            "asked": "用几课时？", "report": "执行器问的"}
     _r = render_relay([_w1])
-    _fin = node_finalize({"tasks": [_w1]})
+    _fin = _finalize({"tasks": [_w1]})
     row("⑦ 待答透传（平台→用户）",
         # ①来源：贴的是**它申报的原话**（不是那段过场），而且**打了 `injected_by` 标记**
         #      （记录层据此不把它算成主 agent 说的话）
@@ -187,9 +200,9 @@ def main() -> None:  # noqa: C901
 
     _A.clear()
     _mine: list[str] = []
-    make_write_artifact(_mine).func("甲", "s", "md", "x" * 5)
+    asyncio.run(make_write_artifact(_mine).coroutine("甲", "s", "md", "x" * 5))
     _n = len(_mine)
-    read_artifact.func(artifact_id=_mine[0]) if _mine else None
+    asyncio.run(read_artifact.coroutine(artifact_id=_mine[0])) if _mine else None
     _structural = _n == 1 and len(_mine) == _n      # 记账了，且**读**不记账
     row("⑨ 产物归属（执行器→平台）", NA, NA, NA,
         OK if _structural else BAD,                # ④ 结构化：按 run 记账，不扫文本

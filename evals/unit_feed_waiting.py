@@ -98,12 +98,8 @@ def _run_node_feed(state):
 
 
 def _run_node_prepare(state):
-    """⚠️ `node_prepare` **还是同步的**（它没有 I/O，纯拼串）—— 原样调就行。
-
-    迁移到纯 asyncio 时它也会变成 `async def`（图里不该有同步节点），但那一步
-    **不影响行为**，所以留到最后。
-    """
-    return graph.node_prepare(state)
+    """`node_prepare` 现在是**协程** —— 测试里的同步收口。"""
+    return asyncio.run(graph.node_prepare(state))
 
 
 def _stub_returns(value):

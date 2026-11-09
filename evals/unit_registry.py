@@ -50,6 +50,7 @@ R1 修掉的是"同一张表有三个绑定点"：
 from __future__ import annotations
 
 import ast
+import asyncio
 import io
 import re
 from pathlib import Path
@@ -263,8 +264,8 @@ def main() -> None:
 
     builtin = registry.names()
     registry.replace({"only-one": Skill(name="only-one", description="临时", instructions="干活")})
-    out = skill_pack.read_skill.invoke({"skill_name": "only-one"})
-    miss = skill_pack.read_skill.invoke({"skill_name": "lesson-prep"})
+    out = asyncio.run(skill_pack.read_skill.ainvoke({"skill_name": "only-one"}))
+    miss = asyncio.run(skill_pack.read_skill.ainvoke({"skill_name": "lesson-prep"}))
     check("replace 后 `read_skill` 看到新表（核心验收点）", "only-one" in out, repr(out[:60]))
     check("replace 后旧技能不在表里（不是「两份表并存」）", "没有技能" in miss, repr(miss[:60]))
 

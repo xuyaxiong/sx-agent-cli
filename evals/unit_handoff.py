@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+
 import io
 import re
 import sys
@@ -41,8 +42,20 @@ import os
 os.environ["PROTO_LOG_TAG"] = "unit-handoff"
 os.environ["PROTO_LOG_DIR"] = "tmp/logs"   # 🔴 测试日志是**噪音** —— 别混进给人看的 `logs/`
 
+from proto import graph as _graph
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+def _prepare(state):
+    """`node_prepare` 现在是**协程** —— 测试里的同步收口。"""
+    return asyncio.run(_graph.node_prepare(state))
+
+
+def _finalize(state):
+    """`node_finalize` 现在是**协程** —— 同上。"""
+    return asyncio.run(_graph.node_finalize(state))
+
 
 PASS: list[str] = []
 FAIL: list[str] = []
@@ -235,7 +248,7 @@ def main() -> None:
                    "asked": LONG,
                    "qa": [], "user_turns": []}],
     }
-    injected = node_prepare(st)["messages"][0].content
+    injected = _prepare(st)["messages"][0].content
     # 🔴 **待答那档一个字都不重印**（2026-11-06，`ledger`〔沿革 11〕）：全文出处是【待答】
     #    （`node_finalize` **无条件**注入、而且是全的）。实测每句 `Task.asked` 原来在主
     #    agent 上下文里出现**两遍** —— **截断的那份就是台账这行**。
@@ -243,18 +256,18 @@ def main() -> None:
           LONG not in injected and "平台已原样转达" in injected)
     check("② 台账 · 但**清单还在**：说清它有多少字", f"（{len(LONG)} 字" in injected)
     check("② 台账 · 短的那档也不重印（不因为短就破例）",
-          "用几课时？" not in node_prepare(
+          "用几课时？" not in _prepare(
               {**st, "tasks": [{**st["tasks"][0], "asked": "用几课时？"}]}
           )["messages"][0].content)
     check("② 台账 · `asked` 缺失时**不许留空冒号**，要说清是「没有」",
-          "没留下问题原话" in node_prepare(
+          "没留下问题原话" in _prepare(
               {**st, "tasks": [{**st["tasks"][0], "asked": ""}]}
           )["messages"][0].content)
 
     # ── ②′ 台账**截断**那一档：`failed` 的 `report`（"执行器说"）──
     # ⚠️ 原来这一列测的是 waiting 的 `asked`；那行改成"不重印"之后，**截断只剩这一档**。
     fail_st = {**st, "tasks": [{**st["tasks"][0], "stage": "failed"}]}
-    fail_led = node_prepare(fail_st)["messages"][0].content
+    fail_led = _prepare(fail_st)["messages"][0].content
     check("②′ 台账 · 长内容被截了（它是每轮重复注入的索引，允许短）", LONG not in fail_led)
     check("②′ 台账 · **但截了必须说**：带了平台截断标记", "【平台截断" in fail_led)
     check("②′ 台账 · 说明了还差多少字", "还有" in fail_led and "字" in fail_led)
@@ -264,10 +277,10 @@ def main() -> None:
     #    原来两条路都写"全文见那次的回执"—— 投递那条路指过去，只会翻到**上一轮**的回执
     #    （内容还是旧的），把旧的当成当前的：**指向"存在但内容不对"的出处比指不到更坏**。
     check("②′ 台账 · `delegate` 那轮：指向回执",
-          "全文见那次的回执" in node_prepare(
+          "全文见那次的回执" in _prepare(
               {**fail_st, "tasks": [{**fail_st["tasks"][0], "run_by": "delegate"}]}
           )["messages"][0].content)
-    _feed_led = node_prepare(
+    _feed_led = _prepare(
         {**fail_st, "tasks": [{**fail_st["tasks"][0], "run_by": "feed"}]})["messages"][0].content
     check("②′ 台账 · `feed` 那轮：**不许**指向回执，要说清「你手上没有」",
           "全文见" not in _feed_led and "不在你的上下文里" in _feed_led)
@@ -276,7 +289,7 @@ def main() -> None:
     # ⚠️ 短的**不该**被标截断 —— 这一档打的就是 `report`，只缩它就够。
     short_task = {**st["tasks"][0], "report": "很短", "asked": "用几课时？"}
     check("②′ 台账 · 短内容**不该**被标截断",
-          "【平台截断" not in node_prepare(
+          "【平台截断" not in _prepare(
               {**fail_st, "tasks": [{**fail_st["tasks"][0], "report": "很短"}]}
           )["messages"][0].content)
 
@@ -293,7 +306,7 @@ def main() -> None:
     #    「它在回答的上一句」的来源。**问题出在"它有机会说"，不在"它看得见"。**
     from proto.graph import node_finalize, render_relay
 
-    fin = node_finalize({**st, "tasks": [short_task]})["messages"][0]
+    fin = _finalize({**st, "tasks": [short_task]})["messages"][0]
     tag = (fin.additional_kwargs or {}).get("injected_by")
     check("⑪ 透传 · 注入了 AIMessage（转写里那条问题）", type(fin).__name__ == "AIMessage")
     check("⑪ 透传 · 打了 `injected_by` 标记", tag == "platform.finalize", f"tag={tag!r}")
@@ -329,7 +342,7 @@ def main() -> None:
 
     # 🔴 同一刻还要写**结构化动作**（2026-11-04）：断言读它，不读 `log` 那句人话 ——
     #    见 `State.actions` 的注释。拿掉这一条 → `unit_feed_waiting` ⑨ 的守卫会红。
-    fin_out = node_finalize({**st, "tasks": [short_task]})
+    fin_out = _finalize({**st, "tasks": [short_task]})
     acts = fin_out.get("actions") or []
     check("⑪ 透传 · 写了结构化动作（`did=relay` + 涉及哪些 Task + 多少字）",
           [a.get("did") for a in acts] == ["relay"]
@@ -445,7 +458,7 @@ def main() -> None:
             self._tools = {t.name: t for t in tools}
 
         async def astream(self, state, config, stream_mode):  # noqa: ANN001, ANN201
-            self._tools["write_artifact"].invoke({
+            await self._tools["write_artifact"].ainvoke({
                 "title": "《荷花》教案", "summary": "三年级下册完整教案",
                 "file_type": "md", "content": "正文" * 40})
             yield ("values", {"messages": [*state["messages"], _AIM("教案已交付")]})
@@ -693,14 +706,14 @@ def main() -> None:
     _A.clear()
     mine: list[str] = []
     other: list[str] = []
-    make_write_artifact(mine).func("甲", "s", "md", "正文" * 5)
-    make_write_artifact(other).func("乙", "s", "md", "正文" * 5)
+    asyncio.run(make_write_artifact(mine).coroutine("甲", "s", "md", "正文" * 5))
+    asyncio.run(make_write_artifact(other).coroutine("乙", "s", "md", "正文" * 5))
     check("⑬ 谁写的谁记账，且**按 run 分开**",
           len(mine) == 1 and len(other) == 1 and mine[0] != other[0], f"{mine} / {other}")
     n = len(mine)
-    read_artifact.func(artifact_id=mine[0])
+    asyncio.run(read_artifact.coroutine(artifact_id=mine[0]))
     check("⑬ **读**不记账 —— 「读来的算成写出来的」结构性不可能", len(mine) == n)
-    _main_writer.func("丙", "s", "md", "正文" * 5)
+    asyncio.run(_main_writer.coroutine("丙", "s", "md", "正文" * 5))
     check("⑬ 主 agent 的实例不记账（它不需要按 run 归属）", len(mine) == n)
     # ⚠️ 查**代码**不是查注释 —— 注释里正解释着"原来是怎么扫的"，那两个词会出现
     _src = io.open("proto/executor.py", encoding="utf-8").read()

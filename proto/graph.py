@@ -473,7 +473,7 @@ async def node_feed(state: State) -> dict:
     }
 
 
-def node_prepare(state: State) -> dict:
+async def node_prepare(state: State) -> dict:
     """② 把**任务台账**注入主 agent 上下文。
 
     **投递已经在 `feed` 里做完了**（顺序由图的边保证：`feed → prepare`）—— 所以这里读到的
@@ -541,7 +541,7 @@ def render_relay(waiting: list[dict]) -> str:
     return render_hop("relay", {"relay": "\n".join(_one(t) for t in waiting)})
 
 
-def node_finalize(state: State) -> dict:
+async def node_finalize(state: State) -> dict:
     """**透传**：待答原样贴进回复，保证问题一定到用户手上。
 
     🔴 **这里原来是 LLM 判断**（`_which_unasked`：问"主 agent 问出去了吗"，没问出去才补）。

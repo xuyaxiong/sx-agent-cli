@@ -229,7 +229,7 @@ def make_write_artifact(created: list[str] | None = None):
     """
 
     @tool
-    def write_artifact(title: str, summary: str, file_type: str, content: str) -> str:
+    async def write_artifact(title: str, summary: str, file_type: str, content: str) -> str:
         """把一份**产物**写进产物库。正文不会再回到主 agent 的上下文，只返回产物 ID。
 
         Args:
@@ -256,7 +256,7 @@ write_artifact = make_write_artifact()
 
 
 @tool
-def read_artifact(artifact_id: str) -> str:
+async def read_artifact(artifact_id: str) -> str:
     """按需读回产物全文（渐进式披露第二层）。
 
     ⚠️ **读了就进你的上下文**，长产物会一直占着。只有确实要看内容时才读；
@@ -288,7 +288,7 @@ def artifact_index_lines() -> list[str]:
 
 
 @tool
-def list_artifacts() -> str:
+async def list_artifacts() -> str:
     """列出本会话已交付的产物：ID、名称、字数、梗概、**落盘路径**。**不含正文。**
 
     要判断"该把哪份产物交给下一个任务"、或**要答"文件在哪"**时用它；

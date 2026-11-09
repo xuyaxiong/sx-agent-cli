@@ -43,6 +43,7 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import io
 import sys
 import tempfile
@@ -197,10 +198,10 @@ def main() -> None:
     artifacts.clear()
     with session.session(thread_id="user-A"):
         a_id = store_artifact("A 的教案", "A 的", "md", "A 的内容")
-        a_list = artifacts.list_artifacts.invoke({})   # 真工具（`@tool` 包过）
+        a_list = asyncio.run(artifacts.list_artifacts.ainvoke({}))   # 真工具（`@tool` 包过）
     with session.session(thread_id="user-B"):
         b_id = store_artifact("B 的导学单", "B 的", "md", "B 的内容")
-        b_list = artifacts.list_artifacts.invoke({})
+        b_list = asyncio.run(artifacts.list_artifacts.ainvoke({}))
         b_reads_a = artifacts.get(a_id)
         b_count = artifacts.count()
 
