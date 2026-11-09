@@ -15,6 +15,7 @@ from typing import Any, Callable
 
 from pydantic import BaseModel, Field
 
+from proto import aio
 from proto.llm import safe_structured
 
 Result = tuple[bool, str]
@@ -137,7 +138,7 @@ def rubric_no_repeat_question(run: dict, turn: dict, fields: list[str]) -> Resul
         "（助手内部向它自己索要、但助手没转达给用户的，不算。）"
     )
     try:
-        r = asyncio.run(safe_structured(_RepeatQuestion, prompt, None, tag=f"评分 · 有没有重复问 {fields}"))
+        r = aio.run(safe_structured(_RepeatQuestion, prompt, None, tag=f"评分 · 有没有重复问 {fields}"))
     except Exception as e:  # noqa: BLE001
         _log(run, "no_repeat_question", prompt, f"⚠️ 调用失败：{e}")
         return False, f"⚠️ 评分调用失败，无法判定：{type(e).__name__}: {e}"
@@ -194,7 +195,7 @@ def rubric_artifact_derives_from_source(run: dict, turn: dict, source: str = "�
         "把产物 ID 分别列进 `derived` 与 `generic`。"
     )
     try:
-        r = asyncio.run(safe_structured(_Derives, prompt, None, tag="评分 · 后序产物是否基于源产物"))
+        r = aio.run(safe_structured(_Derives, prompt, None, tag="评分 · 后序产物是否基于源产物"))
     except Exception as e:  # noqa: BLE001
         _log(run, "artifact_derives_from_source", prompt, f"⚠️ 调用失败：{e}")
         return False, f"⚠️ 评分调用失败，无法判定：{type(e).__name__}: {e}"
@@ -236,7 +237,7 @@ def rubric_reply_is_summary(run: dict, turn: dict) -> Result:
         "只是转述一两句要点、或列出产物 ID → false。"
     )
     try:
-        r = asyncio.run(safe_structured(_ReplyIsSummary, prompt, None, tag="评分 · 回复是不是摘要"))
+        r = aio.run(safe_structured(_ReplyIsSummary, prompt, None, tag="评分 · 回复是不是摘要"))
     except Exception as e:  # noqa: BLE001
         _log(run, "reply_is_summary", prompt, f"⚠️ 调用失败：{e}")
         return False, f"⚠️ 评分调用失败，无法判定：{type(e).__name__}: {e}"
@@ -287,7 +288,7 @@ def rubric_artifact_is_complete(run: dict, turn: dict, budget: int = 2500) -> Re
         "把**确实没写完**的产物 ID 列进 unfinished，摘原话；都写完了就留空。"
     )
     try:
-        r = asyncio.run(safe_structured(_IsComplete, prompt, None, tag="评分 · 产物写完了没有"))
+        r = aio.run(safe_structured(_IsComplete, prompt, None, tag="评分 · 产物写完了没有"))
     except Exception as e:  # noqa: BLE001
         _log(run, "artifact_is_complete", prompt, f"⚠️ 调用失败：{e}")
         return False, f"⚠️ 评分调用失败，无法判定：{type(e).__name__}: {e}"

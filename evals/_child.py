@@ -47,18 +47,6 @@ from evals.harness import dump_artifacts, dump_run_record, install, snapshot
 # ──────────────────────────── 主流程 ────────────────────────────
 
 
-#: 🔴 **一个进程一个事件循环**（不是"一轮一个"）。`get_model()` 是 `lru_cache` 的，
-#: 里面那个 **async** httpx 客户端**绑在创建它的那个循环上** —— 每轮 `asyncio.run` 开新循环，
-#: 第二轮就撞 `RuntimeError: Event loop is closed`（实测：真会话 R01 报过，靠重试蒙过去）。
-#: ⚠️ 别改回 `asyncio.run` —— 那是"跑完就关循环"，正是这条的病因。
-_LOOP = asyncio.new_event_loop()
-
-
-def _run(coro):
-    """在**进程级**那个循环上跑一个协程（见 `_LOOP` 的注释）。"""
-    return _LOOP.run_until_complete(coro)
-
-
 def run_case(case: dict, rep: int, out_dir: Path | None = None) -> dict:
     from proto import session, trace
     from proto import artifacts
@@ -125,7 +113,7 @@ def run_case(case: dict, rep: int, out_dir: Path | None = None) -> dict:
             # 判据见 `checks.py` 顶部。
             if i == 1 and case.get("initial_tasks"):
                 init["tasks"] = case["initial_tasks"]
-            state = _run(graph.ainvoke(init, config))   # 异步驱动（见 `graph` 的说明）
+            state = aio.run(graph.ainvoke(init, config))   # 异步驱动（见 `graph` 的说明）
             snap = snapshot(state, user, seen, i, round(time.time() - t1, 1))
             if answer_to:
                 snap["answer_to"] = answer_to   # 记录层如实标：这句是在答哪一条
