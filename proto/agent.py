@@ -205,11 +205,17 @@
     ⚠️ **`_out` 从闭包变模块级**（`_reply` 要用它）—— 代价是显式收 `runtime` /
     `rec` / `superseded` 三个参数。
     ⚠️ **零行为变化**：注释、日志、分支顺序、拒绝的文案全部原样搬。
+22. **`build_agent` 的返回类型写准了**（2026-11-09，第四轮外审 P2-14）。原来是 `-> Any`
+    —— 于是调用它的 `graph.build()` 拿到 `Any`，后面 `.ainvoke` / `.astream` **一路不检查**。
+    ⇒ `-> CompiledStateGraph`（`create_agent` 自己的返回标注就是它）。
+    ⚠️ **价值是 IDE 补全，不是"CI 会拦住"** —— 这个仓库没有 mypy（外审 P1-9）。
+    ⚠️ 其余 45 处 `Any` **不动**：它们在框架边界（`RunnableConfig` / `AgentMiddleware` /
+    模型返回值），外审自己也说"这部分放弃类型是理性的"。
 """
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from langchain.agents import create_agent
 from langchain.agents.middleware import AgentMiddleware, hook_config
@@ -217,6 +223,9 @@ from langchain.tools import ToolRuntime, tool
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.types import Command
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:  # 只给标注用 —— 运行时不 import
+    from langgraph.graph.state import CompiledStateGraph
 
 from proto import trace
 from proto.config import get_model
@@ -858,7 +867,7 @@ class _StopWhenPending(AgentMiddleware):
         return {"jump_to": "end"}
 
 
-def build_agent(state_schema: type) -> Any:
+def build_agent(state_schema: type) -> CompiledStateGraph:
     """主 agent：一个完整的 agent（工具 + 循环）。
 
     ⚠️ **工具集由 `EXEC_PATH` 决定**（默认 `"auto"` = 两条路都开）。

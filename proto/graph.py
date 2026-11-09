@@ -241,11 +241,14 @@
 from __future__ import annotations
 
 import operator
-from typing import Annotated, Any, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Annotated, Any, NotRequired, TypedDict
 
 from langchain_core.messages import AIMessage, AnyMessage, HumanMessage, SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import InMemorySaver
+
+if TYPE_CHECKING:  # 只给标注用 —— 运行时不 import
+    from langgraph.graph.state import CompiledStateGraph
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
@@ -706,12 +709,14 @@ def _make_node_agent(main_agent):
     return node_agent
 
 
-def build():
+def build() -> CompiledStateGraph:
     """把父图拼起来 —— 五个节点、一条直线，`InMemorySaver` 做 checkpointer。
 
     ⚠️ **它自己只做编排**（2026-11-09 拆）：`node_agent` 那 40 行搬进了
     `_make_node_agent`（工厂 —— 它要闭包捕获 `main_agent`）。原来是一个 65 行的函数，
     定义节点和连边缠在一起。
+    ⚠️ 返回类型 `-> CompiledStateGraph`（2026-11-09 补）—— 原来**连标注都没有**，
+    同 `agent.build_agent`（外审 P2-14）。
     """
     g = StateGraph(State)
     # 🔴 **两个节点，顺序由边保证**：`feed`（投递 —— 里面同步跑执行器，60–120 秒）→

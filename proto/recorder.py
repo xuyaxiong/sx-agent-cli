@@ -68,7 +68,7 @@ import os
 import re
 import time
 from pathlib import Path
-from typing import Any
+from typing import TextIO
 
 from proto import session
 from proto import trace
@@ -133,7 +133,7 @@ def log_file() -> Path:
     return s.log_file
 
 
-def _fh() -> Any:
+def _fh() -> TextIO:
     """当前会话**打开着的**日志句柄 —— 没开就开（跟着 `log_file()` 一起惰性建）。"""
     s = session.current()
     if s.log_fh is None:
