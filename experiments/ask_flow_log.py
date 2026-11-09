@@ -26,7 +26,7 @@ import sys
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from evals import chat
+from app import chat
 from evals.unit_ask_flow import drive, sample_task
 from proto import trace
 from proto.handoff.briefing import asked_text

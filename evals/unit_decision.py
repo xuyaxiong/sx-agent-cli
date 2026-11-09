@@ -9,13 +9,13 @@
 很显然：**决策前提是什么、要决策的问题是什么、决策结果是什么**，有可能还要补充
 **下一步该干什么** —— 你现在的打印也是人类不好看懂。"*
 
-⚠️ **这个测试管不了"模型读懂没有"** —— 那要真跑（`uv run python -m evals.chat`）。
+⚠️ **这个测试管不了"模型读懂没有"** —— 那要真跑（`uv run python -m app.chat`）。
 它管的是**机制**，就两件事：
 
 **① 记录层**：`emit_decision` 渲出来的四段**齐全、顺序对、值一个字不丢**，
    而且列表**不是 Python repr**（原来是 `['…', '…']`，括号引号全是噪音）。
 
-**② 记录层 ↔ 展示层不许失配**：`evals/chat.py` 认决策块走**结构化事件**（`emit_decision`
+**② 记录层 ↔ 展示层不许失配**：`app/chat.py` 认决策块走**结构化事件**（`emit_decision`
    发的 `{"type": "decision", …}`，四段在字段里）—— 展示层**不再解析渲染文本**。
    旧契约（从 `trace.DECISION_HEAD` 前缀认块）是**文本契约**：措辞一改就**静默失配**，
    块认不出来 → 整块当噪音丢掉 —— 而丢的正是"平台为什么这么决定"。
@@ -48,13 +48,13 @@ import os
 #    grep 不动 —— 打上 tag 后文件名是 `proto-<ts>-unit-<名字>.log`，一眼可辨
 #    （清理：`rm logs/*-unit-*.log`）。复用跑批那个 `PROTO_LOG_TAG`（`evals/_child.py`）。
 # ⚠️ **必须排在所有非标准库 import 之前**：`proto.trace` 在 import 那一刻读 env 定文件名，
-#    而 `from evals import chat` 这种**间接** import 也会把它拉进来（实测踩过：
-#    第一版插在 `from evals import chat` 之后 → 日志照样没 tag）。
+#    而 `from app import chat` 这种**间接** import 也会把它拉进来（实测踩过：
+#    第一版插在 `from app import chat` 之后 → 日志照样没 tag）。
 #    守卫：`unit_feed_waiting` ⑮。
 os.environ["PROTO_LOG_TAG"] = "unit-decision"
 os.environ["PROTO_LOG_DIR"] = "tmp/logs"   # 🔴 测试日志是**噪音** —— 别混进给人看的 `logs/`
 
-from evals import chat
+from app import chat
 
 from proto import recorder, trace
 from proto.handoff.decision import emit_decision
@@ -123,7 +123,7 @@ def main() -> None:
           "      - 尚未收到用户对第二个问题的答复" in got and "['" not in got)
 
     print("\n③ 展示层认决策块走**结构化事件** —— 不许从文本反解析")
-    src = io.open("evals/chat.py", encoding="utf-8").read()
+    src = io.open("app/chat.py", encoding="utf-8").read()
     # 旧契约（`body.startswith(trace.DECISION_HEAD)`）已废：展示层订阅 `decision`
     # 事件、从**字段**自取四段 —— 措辞怎么改都不可能失配。
     check("`chat.py` 订阅了事件总线", "trace.subscribe(" in src)
@@ -356,7 +356,7 @@ def main() -> None:
     #    有效性自检：把任意一个入口里的 `session.use(...)` 删掉，这里必须红。
     _entries = {
         "proto/__main__.py": "CLI",
-        "evals/chat.py": "交互式",
+        "app/chat.py": "交互式",
         "evals/_child.py": "跑批子进程",
     }
     _not_wired = []

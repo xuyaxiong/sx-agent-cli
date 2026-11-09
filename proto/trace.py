@@ -10,7 +10,7 @@
 
 ```
 业务代码 ──trace.*()──▶ 事件总线 _publish() ──┬──▶ 记录器（proto/recorder.py）：落日志文件
-                                            └──▶ 展示层（evals.chat 订阅）：自己排版上屏
+                                            └──▶ 展示层（app.chat 订阅）：自己排版上屏
 ```
 
 ⚠️ **落盘的那一半住在 `proto/recorder.py`**（2026-11-09 拆出去）—— 本模块从此
@@ -88,7 +88,7 @@
    **`role` 是逻辑（枚举）**、**`who` 是显示名（随便改）**。
 9. **`kind` 收成受控词汇**（2026-11-03 审核 F3）。原来 kind 是**自由字符串** —— 把
    `dispatch` 打成 `delegate`、或改个名，终端上那一行就**静默消失**，没有任何测试会红。
-   加一个 kind 要同时登记进 `KINDS` ＋ 在 `evals/chat.py` **表态**（漏表态 `unit_console` 会红）。
+   加一个 kind 要同时登记进 `KINDS` ＋ 在 `app/chat.py` **表态**（漏表态 `unit_console` 会红）。
 10. **note 的前缀归记录器**（2026-11-03 审核 F1）。前缀原来是**业务侧**写进正文的
     （`f"finalize: 透传 …"`），展示层于是按**位置**切回来（`[len("finalize: "):]`）——
     只改文案措辞，上屏就被**静默吃掉 10 个字**（实测）。
@@ -401,7 +401,7 @@ def _check_role(role: Any, where: str) -> str:
 #: 🔴 原来是**自由字符串** —— 把 `dispatch` 打成 `delegate`、或改个名，终端上那一行就
 #: **静默消失**，没有任何测试会红。所以按 `role` 的办法收口：加一个 kind 就登记在这里，
 #: 漏登记的地方**当场炸**。〔沿革 9〕
-#: ⚠️ 加完还要去 `evals/chat.py` **表态**（上屏 / 有专门分支 / 只进日志）——
+#: ⚠️ 加完还要去 `app/chat.py` **表态**（上屏 / 有专门分支 / 只进日志）——
 #: 漏表态 `unit_console` 会红。
 KINDS = frozenset({
     # agent.delegate
@@ -430,7 +430,7 @@ def _check_kind(kind: str, where: str) -> str:
         raise ValueError(
             f"{where} 的 kind={kind!r} 不在受控词汇里（{sorted(KINDS)}）。"
             "加新 kind 要同时：① 登记进 trace.KINDS；"
-            "② 在 evals/chat.py 表态（上屏 / 有专门分支 / 只进日志）。"
+            "② 在 app/chat.py 表态（上屏 / 有专门分支 / 只进日志）。"
         )
     return kind
 
@@ -536,8 +536,8 @@ def dump_trace(tag: str, messages: list, *, role: str) -> None:
 
 # ──────────────── 消息渲染（**各视图共用**：记录器 / 终端 / 台账 / 跑批记录） ────────────────
 #
-# ⚠️ 原来这儿写着"记录器专用" —— **不是事实**：`evals/chat.py`（终端）、`proto/graph.py`
-#    （待答透传）、`evals/harness.py`（`_run.md`）都在用。它们是**通用的**
+# ⚠️ 原来这儿写着"记录器专用" —— **不是事实**：`app/chat.py`（终端）、`proto/graph.py`
+#    （待答透传）、`app/runtime.py`（`_run.md`）都在用。它们是**通用的**
 #    "LangChain 消息对象 → 一行文本"，**不认识任何领域词汇** —— 所以留在总线这边，
 #    而不是搬去 `proto/recorder.py`：那样**展示层就得反过来依赖记录器**（方向反了）。
 

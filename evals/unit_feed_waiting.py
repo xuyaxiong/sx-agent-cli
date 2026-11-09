@@ -34,8 +34,8 @@ import os
 #    grep 不动 —— 打上 tag 后文件名是 `proto-<ts>-unit-<名字>.log`，一眼可辨
 #    （清理：`rm logs/*-unit-*.log`）。复用跑批那个 `PROTO_LOG_TAG`（`evals/_child.py`）。
 # ⚠️ **必须排在所有非标准库 import 之前**：`proto.trace` 在 import 那一刻读 env 定文件名，
-#    而 `from evals import chat` 这种**间接** import 也会把它拉进来（实测踩过：
-#    第一版插在 `from evals import chat` 之后 → 日志照样没 tag）。
+#    而 `from app import chat` 这种**间接** import 也会把它拉进来（实测踩过：
+#    第一版插在 `from app import chat` 之后 → 日志照样没 tag）。
 #    守卫：`unit_feed_waiting` ⑮。
 os.environ["PROTO_LOG_TAG"] = "unit-feed-waiting"
 os.environ["PROTO_LOG_DIR"] = "tmp/logs"   # 🔴 测试日志是**噪音** —— 别混进给人看的 `logs/`
@@ -439,9 +439,9 @@ def main() -> None:
 
     check("`checks.py` 里**一次都不许**引用 `log`（断言只读对象）",
           not _log_refs("evals/checks.py"), repr(_log_refs("evals/checks.py")))
-    check("`harness.py` 里 `log` 只许出现在「快照复制 / `_run.md` 渲染」两处",
-          _log_refs("evals/harness.py") == ["dump_run_record", "snapshot"],
-          repr(_log_refs("evals/harness.py")))
+    check("`app/runtime.py` 里 `log` 只许出现在「快照复制 / `_run.md` 渲染」两处",
+          _log_refs("app/runtime.py") == ["dump_run_record", "snapshot"],
+          repr(_log_refs("app/runtime.py")))
 
     # 🔴 断言**不许在非结构化文本里找词**（用户 2026-11-05：*"不准在任何非结构化的文本里
     # 通过关键字或者正则匹配的方式来做强逻辑判断 —— 绝对禁止"*）。
@@ -658,7 +658,7 @@ def main() -> None:
 
     print("\n⑭ 默认执行路径是 `auto`（产品行为：两条路都开）")
     # 外审 N5 那一小项。⚠️ 真正靠这个默认值的**只有 `python -m proto`** ——
-    # `evals.chat` 与 `evals.harness` 都按 case 显式设（harness 每次 `or "auto"` 重置）。
+    # `app.chat` 与 `app.runtime` 都按 case 显式设（harness 每次 `or "auto"` 重置）。
     # 所以这里守的是"**别把它写死成别的值忘了改回**"（比如为了验 delegate 改成 "delegate"）。
     check("`proto.agent.EXEC_PATH` 默认是 `auto`", proto.agent.EXEC_PATH == "auto",
           f"当前 = {proto.agent.EXEC_PATH!r}")
@@ -694,7 +694,7 @@ def main() -> None:
           not _untagged, repr(_untagged))
     # ⚠️ 还有一半：**必须排在所有非标准库 import 之前**（`trace` 在 import 那一刻读 env
     #    定文件名）。⚠️ 只查"在 `import proto` 之前"**不够** —— 实测踩过：`unit_decision`
-    #    的 tag 原来设在 `from evals import chat` 之后，而**那一行就把 `proto.trace`
+    #    的 tag 原来设在 `from app import chat` 之后，而**那一行就把 `proto.trace`
     #    间接导进来了** → 日志照样没 tag，而"直接 proto import"那版守卫**放它过去了**。
     #    ⇒ 判据改成：赋值行必须早于**第一个非标准库 import**（`sys.stdlib_module_names`）。
     import sys as _sys

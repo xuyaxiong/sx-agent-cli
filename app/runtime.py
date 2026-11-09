@@ -1,6 +1,6 @@
-"""跑 agent 的**装配 + 记录层** —— 交互式 CLI 与跑批**共用**的那部分。
+"""跑 agent 的**装配 + 记录层** —— 交互式入口与跑批**共用**的那部分。
 
-    from evals.harness import install, snapshot, dump_run_record
+    from app.runtime import install, snapshot, dump_run_record
 
 **装什么**：技能（从目录读，或 case 内联）→ 换进 `proto.registry`（唯一入口）；
 再把 `store_artifact` / `run_task` / 模型调用包一层**记录器**
@@ -11,12 +11,31 @@
 
 🔴 **为什么两个入口必须共用这一层**：它们要产**同一种记录格式**。
 交互式入口就是"把脚本预置的 turns 换成真人当场打的字"—— 格式不一致的话，
-收回来的一堆 run 没法比，而"比"正是现在要做的事（见 `chat.py` 的 docstring）。
+收回来的一堆 run 没法比，而"比"正是现在要做的事（见 `app/chat.py` 的 docstring）。
 
-⚠️ **来历**（2026-10-30）：从 `_child.py` 拆出来。原来 803 行里只有 68 行
-（`run_case` + `main`）是跑批独有的，其余全是共用的 —— 但文件名和 docstring
-只描述了那 68 行，于是 `chat.py` 的 `from evals._child import ...`
-看着像"产品依赖测试代码"。**共享是故意的，错的是名字。**
+## 沿革（改过什么、为什么改）
+
+> 编号是**引用锚**（正文里写 `〔沿革 N〕`）—— **只追加、不改号**，新条目加在**末尾**。
+
+1. **从 `_child.py` 拆出来**（2026-10-30）。原来 803 行里只有 68 行（`run_case` + `main`）
+   是跑批独有的，其余全是共用的 —— 但文件名和 docstring 只描述了那 68 行，于是
+   `chat.py` 的 `from evals._child import ...` 看着像"产品依赖测试代码"。
+   **共享是故意的，错的是名字** —— 当时改名成 `harness`。
+2. **搬出 `evals/`：`harness.py` → `app/runtime.py`**（2026-11-09）。沿革 1 只修了
+   **名字**，**位置**没动 —— 而 `harness` 本身就是个**测试词**，于是"产品代码住在
+   测试目录里"这件事原样留着（第四轮外审 P0-1 报的就是它）。
+   ⇒ 新建 `app/`：**`proto/` 是库、`app/` 是宿主、`evals/` 只放测试**。
+   ⚠️ **故障注入搬去了 `evals/stubs.py`**（`_FlakyStructured` ＋ 那两段）——
+   它是**纯测试旋钮**（`app/chat.py` 根本没有 `--fault` 这个开关），
+   住在本模块就是"测试关切混进产品装配"。`install()` 返回的 `fault` / `stream_fault`
+   **形状不变**（空 dict），由 `stubs.inject_faults(case, inst)` 往里写 ——
+   因为运行记录里带着它，产品那条路也要写出这个键。
+   ⚠️ `_append_trace` 也从 `evals/run.py` 收进来了（渲染运行记录的活儿，
+   产品入口也要用 —— 见〔沿革 3〕）。
+3. **`_append_trace` 从 `evals/run.py` 收编**（2026-11-09）。它把原始 trace 并进
+   `_run.md`，**渲染运行记录** —— 和 `dump_run_record` 是一件事。原来住在跑批模块里，
+   于是 `app/chat.py` 得 `from evals.run import _append_trace`（**产品 import 测试包**，
+   沿革 2 要修的就是它）。⇒ 挪到这儿，跟 `dump_run_record` 做邻居。
 """
 
 from __future__ import annotations
@@ -69,39 +88,6 @@ class UsageCounter(BaseCallbackHandler):
             "out_tokens": self.out_tokens,
             "total_tokens": self.in_tokens + self.out_tokens,
         }
-
-
-# ──────────────────────────── 故障注入 ────────────────────────────
-
-
-class _FlakyStructured:
-    """让 `with_structured_output(...).invoke()` 先失败 N 次。
-
-    ⚠️ 注入点在 `safe_structured` **内部那一步**（`get_model().with_structured_output(...)`），
-    这样测的才是 `safe_structured` **自己的重试 + 保守默认值**兜底，
-    而不是绕过它。`proto.llm.get_model` 是值导入，patch 这里正好。
-    """
-
-    def __init__(self, inner, state: dict) -> None:
-        self._inner = inner
-        self._state = state
-
-    def __getattr__(self, k):  # noqa: ANN001
-        return getattr(self._inner, k)
-
-    def with_structured_output(self, schema, **kw):  # noqa: ANN001
-        inner = self._inner.with_structured_output(schema, **kw)
-        state = self._state
-
-        class _R:
-            def invoke(self, prompt, **kw2):  # noqa: ANN001
-                if state["left"] > 0:
-                    state["left"] -= 1
-                    state["fired"] += 1
-                    raise RuntimeError("注入的抖动：sandbox grammar compile timed out")
-                return inner.invoke(prompt, **kw2)
-
-        return _R()
 
 
 # ──────────────────────────── 应用根 / 目录约定 ────────────────────────────
@@ -286,62 +272,16 @@ def install(case: dict) -> dict:
     proto.executor.get_model = counting
     proto.llm.get_model = counting
 
-    # ⑤ 故障注入（可选）
-    fault_state = {"left": 0, "fired": 0}
-    n_fault = int((case.get("fault") or {}).get("structured", 0))
-    if n_fault:
-        fault_state["left"] = n_fault
-
-        def flaky(temperature: float = 0.0):
-            return _FlakyStructured(counting(temperature), fault_state)
-
-        proto.llm.get_model = flaky  # 只影响 safe_structured，主模型调用不受影响
-
-    # ⑤′ **流式抖动注入**（`fault.stream: N`，可选 `fault.role` 限定哪条链）——
-    #     让 `stream_agent` 前 N 次调用**直接抛**。
-    #
-    # 🔴 **它替换的是整个 `stream_agent`（连同内部那次重试）**，所以：
-    #      - **一次调用 = 一轮**（`_stream_with_retry` 被绕过了，不会有第二次尝试）；
-    #      - `fault.stream: 1` → 第 1 轮（谁先跑就是谁）直接死 → 测**降级**；
-    #      - `fault.stream: 2` + `role: executor` → 执行器两次调用都死。
-    #    ⚠️ **想测"重试一次救回来"不能用它** —— 那必须让**同一个** `stream_agent` 调用
-    #    内部失败一次再成功：单测里用假图做（`unit_stream_join` ④），真跑里把注入点
-    #    放在**图的 `stream()`** 上（`experiments/` 里那个跑法）。
-    #
-    # ⚠️ `role` 用**枚举**（`trace.AGENT` / `trace.EXECUTOR`）过滤，**不按 `who` 的措辞**：
-    #    `who` 是显示名（"执行器·lesson-prep"），拿它做判据正是这套代码一直在治的病。
-    stream_fault_state = {"left": 0, "fired": 0}
-    _fault_cfg = case.get("fault") or {}
-    n_stream_fault = int(_fault_cfg.get("stream", 0))
-    if n_stream_fault:
-        stream_fault_state["left"] = n_stream_fault
-        only_role = str(_fault_cfg.get("role") or "")
-        if only_role and only_role not in proto.trace.ROLES:
-            raise ValueError(
-                f"case.fault.role 只能是 {sorted(proto.trace.ROLES)} 之一，收到 {only_role!r}"
-                "（它是**角色枚举**，不是显示名 —— 见 `trace.AGENT` / `trace.EXECUTOR`）"
-            )
-        orig_stream = proto.trace.stream_agent
-
-        def flaky_stream(*a, **k):  # noqa: ANN002, ANN003, ANN202
-            role = k.get("role")
-            if role is None and len(a) > 4:  # 位置传参也认
-                role = a[4]
-            if (stream_fault_state["left"] > 0) and (not only_role or role == only_role):
-                stream_fault_state["left"] -= 1
-                stream_fault_state["fired"] += 1
-                raise TimeoutError("（注入）流式调用抖动")
-
-            return orig_stream(*a, **k)
-
-        proto.trace.stream_agent = flaky_stream
-
+    # ⑤ **故障注入不在这儿** —— 它是**测试旋钮**（产品入口根本没有那个开关），
+    #    住在产品装配里就是"测试关切混进产品模块"。见 `evals/stubs.py`：
+    #    `stubs.inject_faults(case, inst)` 在 `install()` **之后**调，往下面这两个
+    #    dict 里写（它们是**同一个对象**，所以运行记录照旧带着 `fault` / `stream_fault`）。〔沿革 2〕
     return {
         "counter": counter,
         "writes": writes,
         "run_tasks": run_tasks,
-        "fault": fault_state,
-        "stream_fault": stream_fault_state,
+        "fault": {"left": 0, "fired": 0},
+        "stream_fault": {"left": 0, "fired": 0},
     }
 
 
@@ -418,7 +358,7 @@ def snapshot(state: dict, user: str, prev_len: int, idx: int, wall_s: float) -> 
     return {
         "turn": idx,
         "user": user,
-        #: 这句话是谁给的 —— `scripted`（case YAML 预置）/ `human`（`evals.chat` 当场打的）。
+        #: 这句话是谁给的 —— `scripted`（case YAML 预置）/ `human`（`app.chat` 当场打的）。
         #: 日志必须如实标：读的人不能把"我编的答复"当成真实用户行为。
         "input_source": "scripted",
         "reply": _last_ai_text(state),
@@ -614,7 +554,7 @@ def _turn_summary(turns: list[dict], i: int) -> list[str]:
         else:
             out.append("- 上一轮：系统没有反问（没有 Task 在要信息）")
     out.append(
-        "- 本轮输入：**真人当场输入**（`evals.chat` 交互式跑，不是预置脚本）"
+        "- 本轮输入：**真人当场输入**（`app.chat` 交互式跑，不是预置脚本）"
         if human
         else "- 本轮输入：**测试脚本预置**（`evals/cases/*.yaml` 的 `turns` 里写死的字符串）"
         "，**不是真人即时输入**"
@@ -849,5 +789,34 @@ def dump_run_record(out_dir: Path, case_id: str, rep: int, result: dict) -> None
                         "",
                     ]
     (d / "_run.md").write_text("\n".join(lines), encoding="utf-8")
+
+
+# ──────────────────────────── 原始 trace 附录 ────────────────────────────
+
+
+def append_trace(result: dict, tag: str) -> None:
+    """把该 run 的**原始 trace** 作为附录并进它自己的 `_run.md`（一份文件读完）。
+
+    顺序：概览 → 逐轮全记录（子进程写）→ 软判断留档（`judge._log` 追加）→ 本附录。
+
+    ⚠️ **它原来叫 `evals.run._append_trace`**（跑批模块里的私有名）—— 但它是
+    **渲染运行记录**的活儿，和 `dump_run_record` 是一件事，产品入口也要用。
+    住在那儿就逼出 `app/chat.py` 的 `from evals.run import _append_trace`：
+    **产品 import 测试包**。〔沿革 3〕
+    """
+    src = result.get("trace_log")
+    if not src or not Path(src).exists():
+        return
+    d = RUNS_DIR / tag / "artifacts" / f"{result['case']}__r{result['rep']}"
+    d.mkdir(parents=True, exist_ok=True)
+    with (d / "_run.md").open("a", encoding="utf-8") as fh:
+        fh.write(
+            "\n\n## 附录 · 原始 trace\n\n"
+            "执行器每一轮、被推回去时的提示词、判定逐条理由、以及软判断的逐字 "
+            "prompt/response，都在这里。\n\n"
+            "````\n"  # ⚠️ 四个反引号：内容里本身就有 ``` （技能指令、产物正文）
+        )
+        fh.write(Path(src).read_text(encoding="utf-8", errors="replace"))
+        fh.write("\n````\n")
 
 

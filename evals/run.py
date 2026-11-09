@@ -30,7 +30,8 @@ CASES_DIR = HERE / "cases"
 # 🔴 **不要自己算 `HERE / "runs"`**（2026-10-30 踩过）：冻结后 `HERE` 在 `_internal/` 里，
 # 于是 `_append_trace` 把 trace 附录写进了 `_internal/evals/runs/` —— 用户永远看不到，
 # 收回来的一堆 `_run.md` 全都缺了附录。**路径只有 `harness` 一个来源。**
-from evals.harness import RUNS_DIR  # noqa: E402
+from app.runtime import RUNS_DIR  # noqa: E402
+from app import runtime  # noqa: E402
 
 
 # ──────────────────────────── 载入 ────────────────────────────
@@ -155,27 +156,6 @@ def evaluate(case: dict, result: dict) -> list[dict]:
 # ──────────────────────────── 主流程 ────────────────────────────
 
 
-def _append_trace(result: dict, tag: str) -> None:
-    """把该 run 的**原始 trace** 作为附录并进它自己的 `_run.md`（一份文件读完）。
-
-    顺序：概览 → 逐轮全记录（子进程写）→ 软判断留档（`judge._log` 追加）→ 本附录。
-    """
-    src = result.get("trace_log")
-    if not src or not Path(src).exists():
-        return
-    d = RUNS_DIR / tag / "artifacts" / f"{result['case']}__r{result['rep']}"
-    d.mkdir(parents=True, exist_ok=True)
-    with (d / "_run.md").open("a", encoding="utf-8") as fh:
-        fh.write(
-            "\n\n## 附录 · 原始 trace\n\n"
-            "执行器每一轮、被推回去时的提示词、判定逐条理由、以及软判断的逐字 "
-            "prompt/response，都在这里。\n\n"
-            "````\n"  # ⚠️ 四个反引号：内容里本身就有 ``` （技能指令、产物正文）
-        )
-        fh.write(Path(src).read_text(encoding="utf-8", errors="replace"))
-        fh.write("\n````\n")
-
-
 def main() -> None:
     ap = argparse.ArgumentParser(description="跑批：case × N 遍")
     ap.add_argument("--tag", required=True, help="本次跑批的名字（结果落在 runs/<tag>/）")
@@ -233,7 +213,7 @@ def main() -> None:
     for (cid, rep), res in sorted(results.items()):
         checks = evaluate(case_by_id[cid], res)
         res["checks"] = checks
-        _append_trace(res, args.tag)
+        runtime.append_trace(res, args.tag)
         lines.append(res)
 
     # ⚠️ **缩进的多行 JSON**，不是 JSONL —— 用户要能直接打开看

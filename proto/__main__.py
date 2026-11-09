@@ -3,7 +3,7 @@
     uv run python -m proto                          # 交互式
     uv run python -m proto --say "帮我备课，三年级数学"   # 单轮
 
-⚠️ **产品入口是 `evals/chat.py`**（打包打的就是它，见 `build_exe.py`）—— 这里是
+⚠️ **产品入口是 `app/chat.py`**（打包打的就是它，见 `build_exe.py`）—— 这里是
 **内置玩具技能、显示层最简**的那个入口，用来快速看机制。
 
 ## 这个文件是什么
@@ -15,7 +15,7 @@
 ## 设计原则（不变量）
 
 1. **显示层只认事件**：谁说的由**事件自己带着**（`role` / `kind`），**不读 `state`、
-   不从渲染文本反推**（判据一）—— 同 `evals/chat.py` 的契约（`proto/trace.py`：
+   不从渲染文本反推**（判据一）—— 同 `app/chat.py` 的契约（`proto/trace.py`：
    展示层不读记录层的产物）。〔沿革 3〕
 2. **不建第二张 kind→角色 表**（那正是"两套"）：`chat._ROLE_BY_KIND` 是它的表态，
    这里是**另一份**，加一个 kind 就要改两处、而只有它那张有守卫（`unit_console` ⑪）——
@@ -30,7 +30,7 @@
 
 ## 关键取舍
 
-**不抽公共渲染层**：`evals/chat.py` 那份渲染在**产品入口**上、被 `unit_console` 钉着 ——
+**不抽公共渲染层**：`app/chat.py` 那份渲染在**产品入口**上、被 `unit_console` 钉着 ——
 为一个裸原型去动它是反向的。这一层只求"能看机制"。
 
 **读数从回合末的快照取**（Task 表 / 上下文体积）：那些是**事件里没有的东西**（`_dump`），
@@ -45,7 +45,7 @@
    重试过仍失败）原来会把**整个进程**带走。
 3. **显示层改成订阅事件总线**（2026-11-06，外审 N2 的收尾）：原来从 `state["messages"]` /
    `state["log"]` 里渲染，于是平台透传的那条 `AIMessage`（装的是**执行器的原话**）被印成
-   `🤖 主 agent 输出` —— **来源标错**（`evals/chat.py` 早就订阅事件了）。现在"谁说的"
+   `🤖 主 agent 输出` —— **来源标错**（`app/chat.py` 早就订阅事件了）。现在"谁说的"
    由事件自己带着（`role` / `kind`），归属不可能再标错；`_print_delta` /
    `_print_new_messages` 随之删掉。守卫：`evals/unit_proto_cli`。
 4. **`--answer` 的默认值不再替用户编答案**（2026-11-06）：默认值原来是某次测试留下的
@@ -144,7 +144,7 @@ def _on_event(ev: dict) -> None:
               + (f"｜{ev['see']}" if ev.get("see") else ""))
     elif t == "dump":
         _on_dump(ev)
-    # `handoff`（交接记录）只进日志文件，不上屏 —— 同 `evals/chat.py` 的契约：
+    # `handoff`（交接记录）只进日志文件，不上屏 —— 同 `app/chat.py` 的契约：
     # 它的内容上面那些形状已经各自播过一遍，这里再播就是同一个事实两副面孔。
 
 

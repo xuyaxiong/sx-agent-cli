@@ -30,7 +30,7 @@
 1. **反向依赖**：`skills.read_skill` 为了读到"评测替换过的那份表"，得在函数里
    `from proto.agent import SKILLS` —— **领域层依赖编排层**，就为了绕开一个环。
    而那个环本身就是"注册表没有独立的家"造成的。
-2. **换一次技能要赋两次值**：`evals/harness.py` 曾经是 `proto.agent.SKILLS = merged`
+2. **换一次技能要赋两次值**：`app/runtime.py` 曾经是 `proto.agent.SKILLS = merged`
    之后还得补一句 `proto.skills.SKILLS = merged` —— 漏掉那句，多轮投递时执行器
    "像换了个人"（实测踩过）。
 

@@ -32,8 +32,8 @@ import os
 #    grep 不动 —— 打上 tag 后文件名是 `proto-<ts>-unit-<名字>.log`，一眼可辨
 #    （清理：`rm logs/*-unit-*.log`）。复用跑批那个 `PROTO_LOG_TAG`（`evals/_child.py`）。
 # ⚠️ **必须排在所有非标准库 import 之前**：`proto.trace` 在 import 那一刻读 env 定文件名，
-#    而 `from evals import chat` 这种**间接** import 也会把它拉进来（实测踩过：
-#    第一版插在 `from evals import chat` 之后 → 日志照样没 tag）。
+#    而 `from app import chat` 这种**间接** import 也会把它拉进来（实测踩过：
+#    第一版插在 `from app import chat` 之后 → 日志照样没 tag）。
 #    守卫：`unit_feed_waiting` ⑮。
 os.environ["PROTO_LOG_TAG"] = "unit-frozen-paths"
 # ⚠️ **故意不设 `PROTO_LOG_DIR`** —— 这个模块测的就是**默认路径**（冻结后落在 exe 旁边），
@@ -73,25 +73,26 @@ def main() -> None:
     import proto.config as cfg
     import proto.recorder as recorder
     import proto.trace as trace
-    from evals import harness, report, run
+    from app import runtime
+    from evals import report, run
 
     print(f"假 exe 目录：{fake}\n")
 
     print("① 所有路径都落在 **exe 旁边**（不是 `_internal/`、不是仓库里）")
     check("app_root()", _same(cfg.app_root(), fake), str(cfg.app_root()))
-    check("harness.ROOT", _same(harness.ROOT, fake))
-    check("技能目录", _same(harness.DEFAULT_SKILLS_DIR, fake / "skills"))
-    check("运行记录", _same(harness.RUNS_DIR, fake / "runs"))
+    check("runtime.ROOT", _same(runtime.ROOT, fake))
+    check("技能目录", _same(runtime.DEFAULT_SKILLS_DIR, fake / "skills"))
+    check("运行记录", _same(runtime.RUNS_DIR, fake / "runs"))
     check("recorder 日志", _same(recorder.LOG_DIR, fake / "logs"))
     # 🔴 这两个曾经自己算 `HERE / "runs"` —— 冻结后指到 `_internal/` 里去
     check("run.RUNS_DIR 走同一来源", _same(run.RUNS_DIR, fake / "runs"))
     check("report.RUNS_DIR 走同一来源", _same(report.RUNS_DIR, fake / "runs"))
 
     print("\n② 只读资源取 `_MEIPASS`（随包带进来的示例技能）")
-    check("SEED_SKILLS_DIR", _same(harness.SEED_SKILLS_DIR, REPO / "evals" / "skills"))
+    check("SEED_SKILLS_DIR", _same(runtime.SEED_SKILLS_DIR, REPO / "evals" / "skills"))
 
     print("\n③ 首次运行初始化")
-    harness.ensure_app_dirs()
+    runtime.ensure_app_dirs()
     # 技能是**包**（子目录 + SKILL.md），不是散装 .md —— 见 `proto/skill_pack.py`。
     # ⚠️ 断言**规则**（源目录里有几个包就铺几个），**不写死数字** ——
     # 写死的话每加一个技能这条就假红（2026-10-30 踩过）。
@@ -113,7 +114,18 @@ def main() -> None:
             for n in seeded
         ),
     )
-    check("幂等（再跑一次什么都不做）", harness.ensure_app_dirs() == [])
+    check("幂等（再跑一次什么都不做）", runtime.ensure_app_dirs() == [])
+
+    print("\n③′ `build_exe.py` 指的入口**真在**")
+    # 🔴 2026-11-09 实测踩到：`chat.py` 从 `evals/` 搬到 `app/` 之后，
+    #    `build_exe.ENTRY` 还是 `ROOT / "evals" / "chat.py"` —— **一个字都没报错**，
+    #    直到真去打包才炸（`ERROR: Script file … does not exist`）。
+    #    ⇒ 入口路径**是接线，不是机制**：这里当场盯着，别等打包那几分钟。
+    #    有效性自检：把 ENTRY 改回 `evals` → 这里必须红。
+    import build_exe
+    check("ENTRY 指向的文件存在", build_exe.ENTRY.is_file(), str(build_exe.ENTRY))
+    check("入口那个包有 `__init__.py`（PyInstaller 才当包解析）",
+          (build_exe.ENTRY.parent / "__init__.py").is_file())
 
     print("\n④ trace 附录落进**用户看得到**的那份 `_run.md`")
     tag = "unit-frozen-paths"
@@ -122,7 +134,7 @@ def main() -> None:
     (out / "_run.md").write_text("# 假装是逐轮记录\n", encoding="utf-8")
     logf = fake / "logs" / "proto-unit.log"
     logf.write_text("[2026-10-30 00:00:00.000] 主 agent 本轮 消息轨迹（1 条）:\n", encoding="utf-8")
-    run._append_trace({"trace_log": str(logf), "case": tag, "rep": 1}, tag)
+    runtime.append_trace({"trace_log": str(logf), "case": tag, "rep": 1}, tag)
     check("附录写进去了", "附录 · 原始 trace" in (out / "_run.md").read_text(encoding="utf-8"))
     check("没往 `_internal/` 里写", not (fake / "_internal").exists())
 

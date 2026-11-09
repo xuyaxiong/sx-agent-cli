@@ -36,8 +36,8 @@ import os
 #    grep 不动 —— 打上 tag 后文件名是 `proto-<ts>-unit-<名字>.log`，一眼可辨
 #    （清理：`rm logs/*-unit-*.log`）。复用跑批那个 `PROTO_LOG_TAG`（`evals/_child.py`）。
 # ⚠️ **必须排在所有非标准库 import 之前**：`proto.trace` 在 import 那一刻读 env 定文件名，
-#    而 `from evals import chat` 这种**间接** import 也会把它拉进来（实测踩过：
-#    第一版插在 `from evals import chat` 之后 → 日志照样没 tag）。
+#    而 `from app import chat` 这种**间接** import 也会把它拉进来（实测踩过：
+#    第一版插在 `from app import chat` 之后 → 日志照样没 tag）。
 #    守卫：`unit_feed_waiting` ⑮。
 os.environ["PROTO_LOG_TAG"] = "unit-receipt"
 os.environ["PROTO_LOG_DIR"] = "tmp/logs"   # 🔴 测试日志是**噪音** —— 别混进给人看的 `logs/`
@@ -182,7 +182,7 @@ def main() -> None:
     check("补的信息**全文**在", long_answer in t, f"长度 {len(long_answer)}")
 
     print("\n⑥ 记录层读的是**对象**，不是文本（用户 2026-11-03 定的硬规矩）")
-    from evals.harness import _RECEIPT_LABEL, _receipt_sections
+    from app.runtime import _RECEIPT_LABEL, _receipt_sections
     # ⚠️ 只 import `HOPS`：`SECTION` **模块级已经 import 过了** —— 在函数里再 import 一次
     #    会把它变成**整个函数的局部名**，于是它前面那几处用法直接 `UnboundLocalError`（踩过）。
     from proto.handoff import HOPS
@@ -262,7 +262,7 @@ def main() -> None:
     #     而"手抄"第一次加新出口（`fault`，2026-11-04）就漏了：`_run.md` 里那条回执
     #     **没有出口标记**、段标签**回落成裸 key `fault`**。没有任何守卫盯着覆盖性
     #     （不像 `HOPS` 有 ⊆ 校验）。这里补上 —— 名单**从真对象问出来**，不手抄。
-    from evals.harness import _RECEIPT_KINDS, _RECEIPT_LABEL
+    from app.runtime import _RECEIPT_KINDS, _RECEIPT_LABEL
 
     all_receipts = [build_receipt(o) for o in (completed, waiting, failed, faulted)]
     all_receipts += list(rejected.values())

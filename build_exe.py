@@ -51,7 +51,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 NAME = "sxagent"
-ENTRY = ROOT / "evals" / "chat.py"
+ENTRY = ROOT / "app" / "chat.py"
 DIST = ROOT / "dist" / NAME   # 默认落点；`--out` 可以换（上一个包还在跑时必须换）
 
 #: 随包带的**只读资源** —— `evals/skills/*.md` 是首次运行要铺给用户的示例技能。
@@ -164,7 +164,7 @@ def build(out_dir: Path | None = None) -> None:
         "--clean",
         "--distpath", str(dist),
         "--workpath", str(ROOT / "build" / dist.name),  # 临时目录也跟着分开，免得互相踩
-        "--paths", str(ROOT),    # 让 `evals` / `proto` 两个包可被解析
+        "--paths", str(ROOT),    # 让 `app` / `evals` / `proto` 三个包可被解析
     ]
     for src, dst in ADD_DATA:
         args += ["--add-data", f"{src}{';' if sys.platform == 'win32' else ':'}{dst}"]

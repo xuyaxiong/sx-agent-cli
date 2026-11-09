@@ -7,7 +7,7 @@
 `python -m proto` 的显示层原来**从 `state` 里渲染**（`state["messages"]` / `state["log"]`），
 于是平台透传的那条 `AIMessage`（装的是**执行器的原话**）被印成 `🤖 主 agent 输出` ——
 来源标错，而 `proto/trace.py` 那条"展示层不读记录层产物"的规矩本来是防这个的
-（`evals/chat.py` 早就改成订阅事件了）。现在这一层也订阅事件，**归属由事件自己带着**。
+（`app/chat.py` 早就改成订阅事件了）。现在这一层也订阅事件，**归属由事件自己带着**。
 
 🔴 **这条单测守的是那个"不再有第二张表"的取舍**：这一层**故意不建** `kind → 角色`
 映射表（建了就是第二份，加一个 kind 要改两处、而只有 `chat` 那张有守卫 `unit_console` ⑪）。
@@ -32,8 +32,8 @@ import os
 #    grep 不动 —— 打上 tag 后文件名是 `proto-<ts>-unit-<名字>.log`，一眼可辨
 #    （清理：`rm logs/*-unit-*.log`）。复用跑批那个 `PROTO_LOG_TAG`（`evals/_child.py`）。
 # ⚠️ **必须排在所有非标准库 import 之前**：`proto.trace` 在 import 那一刻读 env 定文件名，
-#    而 `from evals import chat` 这种**间接** import 也会把它拉进来（实测踩过：
-#    第一版插在 `from evals import chat` 之后 → 日志照样没 tag）。
+#    而 `from app import chat` 这种**间接** import 也会把它拉进来（实测踩过：
+#    第一版插在 `from app import chat` 之后 → 日志照样没 tag）。
 #    守卫：`unit_feed_waiting` ⑮。
 os.environ["PROTO_LOG_TAG"] = "unit-proto-cli"
 os.environ["PROTO_LOG_DIR"] = "tmp/logs"   # 🔴 测试日志是**噪音** —— 别混进给人看的 `logs/`
@@ -83,7 +83,7 @@ def main() -> None:
         trace.cut("台账", kept=100, total=500, see="全文见日志"),
         trace.handoff("回执", "执行器", "主 agent", "回执正文"),
     ))
-    # ⚠️ `handoff` 是**故意不上屏**的（同 `evals/chat.py` 的契约：它那一跳上面已经播过）——
+    # ⚠️ `handoff` 是**故意不上屏**的（同 `app/chat.py` 的契约：它那一跳上面已经播过）——
     #    所以这里断的是"**除它以外**每一种形状都有输出"。
     for name, needle in (
         ("section", "试答 · 一次决策"),

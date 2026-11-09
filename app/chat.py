@@ -1,7 +1,7 @@
-"""交互式跑原型 —— **你当用户**，技能从一个文件夹全量注入。
+"""交互式跑原型（**产品入口**，打包打的就是它）—— **你当用户**，技能从一个文件夹全量注入。
 
-    uv run python -m evals.chat                      # 默认 evals/skills/
-    uv run python -m evals.chat --skills 别的目录
+    uv run python -m app.chat                      # 默认 evals/skills/
+    uv run python -m app.chat --skills 别的目录
 
 与 `evals.run`（跑批）的分工：
 - **跑批**：case 预置 `turns` + 断言，机器判、出通过率 —— 验"稳不稳"
@@ -35,7 +35,7 @@ from langchain_core.messages import HumanMessage
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
-from evals.harness import (  # noqa: E402
+from app.runtime import (  # noqa: E402
     DEFAULT_SKILLS_DIR,
     RUNS_DIR,
     ctx_warn,
@@ -929,9 +929,9 @@ def main() -> None:
     dump_artifacts(out_dir, tag, 1, result)
     dump_run_record(out_dir, tag, 1, result)
     # 把这次跑的**原始 trace** 作为附录并进 `_run.md`（跑批那条路径是 run.py 干的，交互式得自己做）
-    from evals.run import _append_trace
+    from app.runtime import append_trace
 
-    _append_trace(result, tag)
+    append_trace(result, tag)
     if _SINK is not None:
         _SINK.close()
     (out_dir / "results.json").write_text(

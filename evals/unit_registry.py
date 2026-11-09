@@ -61,8 +61,8 @@ import os
 #    grep 不动 —— 打上 tag 后文件名是 `proto-<ts>-unit-<名字>.log`，一眼可辨
 #    （清理：`rm logs/*-unit-*.log`）。复用跑批那个 `PROTO_LOG_TAG`（`evals/_child.py`）。
 # ⚠️ **必须排在所有非标准库 import 之前**：`proto.trace` 在 import 那一刻读 env 定文件名，
-#    而 `from evals import chat` 这种**间接** import 也会把它拉进来（实测踩过：
-#    第一版插在 `from evals import chat` 之后 → 日志照样没 tag）。
+#    而 `from app import chat` 这种**间接** import 也会把它拉进来（实测踩过：
+#    第一版插在 `from app import chat` 之后 → 日志照样没 tag）。
 #    守卫：`unit_feed_waiting` ⑮。
 os.environ["PROTO_LOG_TAG"] = "unit-registry"
 os.environ["PROTO_LOG_DIR"] = "tmp/logs"   # 🔴 测试日志是**噪音** —— 别混进给人看的 `logs/`
@@ -313,7 +313,7 @@ def main() -> None:
     print("\n④ 装配路径：`install()` 先 reset 再叠加（注册表 API 之外的那一段）")
     # 🔴 `install()` 里那句 `registry.reset()` 是这次**唯一改运行时行为**的地方
     # （空 case 不再继承上一个 case 的表）—— 而 ② 只覆盖注册表 API，覆盖不到它。
-    from evals.harness import install
+    from app.runtime import install
 
     builtin = registry.names()
     install({"skills": [{"name": "只此一个", "description": "d", "instructions": "i"}],

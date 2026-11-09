@@ -14,7 +14,7 @@
 顺带白拿：并发（run.py 起多个子进程）和崩溃隔离。
 
 ⚠️ **装配 / 快照 / 落盘不在这里** —— 那些是交互式 CLI 和跑批**共用**的，
-在 `evals/harness.py`（本文件只负责"跑批子进程"这一个角色：case → run → JSON）。
+在 `app/runtime.py`（本文件只负责"跑批子进程"这一个角色：case → run → JSON）。
 
 ## "值导入"的坑（不写下来下次一定踩）
 
@@ -41,7 +41,8 @@ if hasattr(sys.stdout, "reconfigure"):
 import yaml
 from langchain_core.messages import HumanMessage
 
-from evals.harness import dump_artifacts, dump_run_record, install, snapshot
+from app.runtime import dump_artifacts, dump_run_record, install, snapshot
+from evals import stubs  # 故障注入（测试旋钮，见 stubs 模块头）
 from proto import recorder  # 装上记录器（三个入口之一，见 unit_decision ⑮）
 
 
@@ -53,6 +54,9 @@ def run_case(case: dict, rep: int, out_dir: Path | None = None) -> dict:
     from proto import artifacts
 
     inst = install(case)
+    # ⚠️ **必须在 `install()` 之后** —— 它包的是 install 装好的那一层，
+    #    而且往 `inst["fault"]` / `inst["stream_fault"]` 里写（同一个 dict，见 `evals/stubs.py`）。
+    stubs.inject_faults(case, inst)
 
     from proto.graph import build, next_pending
 
