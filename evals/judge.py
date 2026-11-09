@@ -98,17 +98,28 @@ def _reports(turn: dict) -> str:
 # ──────────────────────────── rubrics ────────────────────────────
 
 
-class _FieldAsked(BaseModel):
-    """**一个字段**的判定 —— 每个字段一条，**不许合并**。"""
-
-    field: str = Field(description="字段名 —— **原样照抄**给定列表里的那一个")
-    asked: bool = Field(description="助手**确实**在向用户索要它 → true；没索要 → false")
-
-
 class _RepeatQuestion(BaseModel):
-    items: list[_FieldAsked] = Field(
+    """**哪些字段被重复索要了** —— 两个**平行**数组，一一对应。
+
+    🔴 **必须是扁平的**（2026-11-09 实测）：原来写成 `items: list[_FieldAsked]`
+    —— **嵌套**一个子模型 ⇒ Pydantic 生成 `$defs` ＋ `$ref` ⇒
+    **DashScope 的 JSON-schema 转换器解析不了**：
+    `400 … json_schema_converter.cc:4181: Cannot find field $defs in #/$defs/_FieldAsked`。
+    后果正是上面警告过的那种：**调用失败 → 返回 False → 假红**（`judge` 里另外四个
+    用扁平 schema 的 rubric 都正常 —— 只有这一个每次都挂）。
+    ⇒ 拆成 `fields` ＋ `asked` 两个**平行数组**：语义一模一样（"没问"照样有正规写法
+    `false`），但**没有嵌套**。〔沿革 2〕
+
+    ⚠️ **别改回嵌套**（哪怕"更类型安全"）—— 服务端不认，改了就是全线假红。
+    """
+
+    fields: list[str] = Field(
         default_factory=list,
-        description="给定列表里的**每一个**字段都要有一条（**包括没索要的**）",
+        description="给定列表里的**每一个**字段，**原样照抄**、顺序不变",
+    )
+    asked: list[bool] = Field(
+        default_factory=list,
+        description="与 `fields` **一一对应**：助手确实在向用户索要它 → true；没索要 → false",
     )
 
 
@@ -145,7 +156,9 @@ def rubric_no_repeat_question(run: dict, turn: dict, fields: list[str]) -> Resul
     _log(run, "no_repeat_question", prompt, r)
     if r is None:
         return False, "⚠️ 评分调用失败（两次都挂），无法判定"
-    asked = [i.field for i in (r.items or []) if i.asked]
+    # ⚠️ 两个**平行**数组（见 `_RepeatQuestion` 的 docstring）—— 按位置配对，
+    #    不认识的字段名（模型自由发挥）也照收：报出来比吞掉强。
+    asked = [f for f, a in zip(r.fields or [], r.asked or []) if a]
     if asked:
         return False, f"又向用户索要了：{asked}"
     return True, f"没有重复索要 {fields}"
