@@ -727,7 +727,33 @@ def main() -> None:
     print(f"{'全部通过' if not FAIL else '有失败'}：{len(PASS)}/{len(PASS) + len(FAIL)}")
     for name in FAIL:
         print(f"  ❌ {name}")
-    print("═" * 78)
+    print("\n⑯ `_supersede_old` **只取代 `failed`** —— `waiting` 一个字不碰")
+    # 🔴 2026-11-09 变异测试实测：把判据改成 `in ("failed", "waiting_for_input")` ——
+    #    **16 个单测一个都不红**。而那条规矩写在 docstring 里：
+    #    「待答由平台负责投递和透传，**重派不是解除待答的路径**：碰它只会
+    #    **静默抹掉一个用户从没回答过的问题**」〔沿革 1〕。
+    #    ⇒ 补上：`waiting` 必须原样不动，`completed` 也不动（历史记录），只有 `failed` 被取代。
+    #    有效性自检：把 `_supersede_old` 的判据加上 `"waiting_for_input"` → 这里必须红。
+    import proto.agent as _ag
+
+    class _RT:  # `_supersede_old` 只读 `runtime.state`，给它个最小的壳就够
+        state = {"tasks": [
+            {"id": "t-failed", "skill": "s", "stage": "failed"},
+            {"id": "t-waiting", "skill": "s", "stage": "waiting_for_input"},
+            {"id": "t-done", "skill": "s", "stage": "completed"},
+            {"id": "t-other", "skill": "别的技能", "stage": "failed"},
+        ]}
+
+    _sup = _ag._supersede_old(_RT(), "s")
+    _sup_ids = sorted(t["id"] for t in _sup)
+    check("只有 `failed` 的被取代", _sup_ids == ["t-failed"], repr(_sup_ids))
+    check("**`waiting` 一个字不碰**（碰了就是静默抹掉一个用户没答过的问题）",
+          all(t["id"] != "t-waiting" for t in _sup), repr(_sup_ids))
+    check("`completed` 也不动（历史记录，用户可能还要看产物）",
+          all(t["id"] != "t-done" for t in _sup), repr(_sup_ids))
+    check("别的技能的不动", all(t["id"] != "t-other" for t in _sup), repr(_sup_ids))
+
+    print("\n" + "═" * 78)
     raise SystemExit(1 if FAIL else 0)
 
 
