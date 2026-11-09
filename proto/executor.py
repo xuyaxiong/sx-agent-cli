@@ -410,6 +410,21 @@ def _open_run(skill: Skill, briefing: str, user_turns: list[dict] | None) -> tup
                 created=created, asked=asked), agent
 
 
+def _record_fault(run: _Run, rounds: int, fault: str, kind: FaultKind, note: str) -> None:
+    """记一次「**这一轮没跑成**」—— 三处（墙钟 / 流式抛异常 / 流一步都没吐）共用这一套。
+
+    🔴 **必须走一处**：`fault` / `fault_kind` / `rounds` 三个字段**同生共死** ——
+    漏写一个就是"有故障原因但没有类"，而四处引导句按 `fault_kind` 渲染
+    （缺了它退回兜底那句 = 把"换措辞"说成"原样再派"，**是假话**）。
+    ⚠️ 所以 `kind` 是**必填位置参数**，不给默认值 —— 想漏都漏不掉。
+    """
+    outcome = run.outcome
+    outcome.fault = fault
+    outcome.fault_kind = kind
+    outcome.rounds = rounds
+    trace.note(note, kind="run_fault")
+
+
 async def _run_round(run: _Run, agent, round_i: int) -> dict | None:
     """跑**一轮**：墙钟 → 流式跑 → 把这一轮的结果吸收进 `outcome`。
 
@@ -422,13 +437,10 @@ async def _run_round(run: _Run, agent, round_i: int) -> dict | None:
     #    `MODEL_TIMEOUT_S`）—— 超了就**不再开新一轮**，按故障交回主 agent。
     #    ⚠️ 它是**故障**不是"执行器干不了"：它一直在干活，只是没干完（`timeout` 那档）。
     if time.time() - run.t0 > MAX_WALL_S:
-        outcome.fault = f"整趟超过墙钟上限（{MAX_WALL_S}s）"
-        outcome.fault_kind = "timeout"
-        outcome.rounds = round_i
-        trace.note(
+        _record_fault(
+            run, round_i, f"整趟超过墙钟上限（{MAX_WALL_S}s）", "timeout",
             f"⚠️ {run.run_id} **时间用完了**（已跑 {time.time() - run.t0:.0f}s > 上限 {MAX_WALL_S}s）"
             f" → 不再开新一轮，交回主 agent（原样再委派可以；老超时就拆小）",
-            kind="run_fault",
         )
         return None
     # 不传 config —— 传了执行器会变成独立根图。
@@ -448,34 +460,25 @@ async def _run_round(run: _Run, agent, round_i: int) -> dict | None:
         # 🔴 **故障分类从结构取**：4xx（除 408/429）是上游对**这份内容**的确定性拒绝
         #    —— 重试层已经不重试它了（`trace.upstream_rejected`），这里把"类"记下来，
         #    四处引导句据此说"换措辞"而不是"原样再派"。〔沿革 17〕
-        outcome.fault = f"{type(e).__name__}: {e}"
-        outcome.fault_kind = "rejected" if trace.upstream_rejected(e) else "transient"
-        outcome.rounds = round_i + 1
-        if outcome.fault_kind == "rejected":
-            trace.note(
-                f"⚠️ {_at(run.run_id, round_i + 1)}**上游拒绝了这次请求**（4xx，未重试 ——"
-                f" 重发同一份内容会再被拒）：{type(e).__name__}: {e}"
-                f" —— 这一轮没跑成，交回主 agent 换措辞/改内容",
-                kind="run_fault",
-            )
-        else:
-            trace.note(
-                f"⚠️ {_at(run.run_id, round_i + 1)}**平台故障**（已重试过一次仍失败）："
-                f"{type(e).__name__}: {e} —— 这一轮没跑成，交回主 agent",
-                kind="run_fault",
-            )
+        _kind: FaultKind = "rejected" if trace.upstream_rejected(e) else "transient"
+        _note = (
+            f"⚠️ {_at(run.run_id, round_i + 1)}**上游拒绝了这次请求**（4xx，未重试 ——"
+            f" 重发同一份内容会再被拒）：{type(e).__name__}: {e}"
+            f" —— 这一轮没跑成，交回主 agent 换措辞/改内容"
+            if _kind == "rejected" else
+            f"⚠️ {_at(run.run_id, round_i + 1)}**平台故障**（已重试过一次仍失败）："
+            f"{type(e).__name__}: {e} —— 这一轮没跑成，交回主 agent"
+        )
+        _record_fault(run, round_i + 1, f"{type(e).__name__}: {e}", _kind, _note)
         return None
     if not resp:
         # 🔴 **流一步都没吐** → 按**同一套故障处置**：这一轮没跑成，交回主 agent
         #    （同上面 `except`）。⚠️ 主 agent 那边有同类兜底（`graph.node_agent` 的
         #    `stream_empty`），执行器这条原来没有。〔沿革 15〕
-        outcome.fault = "流式一步都没吐（stream 为空）"
-        outcome.fault_kind = "transient"
-        outcome.rounds = round_i + 1
-        trace.note(
+        _record_fault(
+            run, round_i + 1, "流式一步都没吐（stream 为空）", "transient",
             f"⚠️ {_at(run.run_id, round_i + 1)}**流式一步都没吐** → 这一轮没跑成，"
             f"交回主 agent（同平台故障处置）",
-            kind="run_fault",
         )
         return None
     trace.dump_trace(_at(run.run_id, round_i + 1), resp["messages"],
@@ -628,28 +631,12 @@ def _structural_status(outcome: ExecOutcome) -> str:
     return "incomplete"
 
 
-def _verdict(outcome: ExecOutcome, run_id: str) -> dict:
-    """「任务完成没」这条**判定记录**的四个字段（纯函数 —— 可单测，同 `_structural_status`）。
+def _verdict_reason(outcome: ExecOutcome) -> tuple[str, str]:
+    """判定的**依据**（`why`）与**下一步**（`nxt`）—— 两格文案的唯一来源。
 
-    🔴 **为什么要记**（用户原话见〔沿革 13〕）：**"给它的上下文是啥、结果又是啥、
-    依据又是啥"都要能看到才能审计**，不然没法调优。判定那次 **LLM 调用**退休了
-    （三态改由结构定），但**这个判断还在** —— 记录形状不变
-    （前提 / 问题 / 结果 / 下一步，见 `handoff.decision`），
-    只是填它的人从 LLM 换成了平台的结构规则：
-
-    | 格 | 这条记录里是什么 |
-    |---|---|
-    | **前提** | 平台**看得见的**三件结构事实（申报 / 产物账 / 轮次）—— 判据的**输入**，**包括"没有"** |
-    | **结果** | 三态 ＋ **依据**（命中的是哪一条 —— 这就是"产生结果的依据"） |
-    | **下一步** | 谁来接（回执给主 agent / 试答 / 交回主 agent） |
-
-    ⚠️ **它不是"交接"**（没有 LLM 参与 —— 判据是"关键在于 LLM 参与了"），
-    但**用同一套记录形状**：四格问的是同一件事（谁基于什么、得出了什么、接下来干什么），
-    另起一套形状只会分叉。
-
-    ⚠️ **它不重复上面那些"这一轮出口"的 note**：那些是**每轮的账**（只报命中的那条），
-    这条是**整个 run 的判定**（三件事实全摆出来）—— 审计要的正是后者：
-    只看到"交付了 1 个产物"，看不到"它**没申报**"。
+    ⚠️ **顺序不能反**：申报优先（它可能在交了一部分之后卡住 —— 那时该去要信息 ✓）。
+    ⚠️ 故障**盖在上面**：故障时 `status` 仍是三态里的值（**三态封闭，没有第四种**），
+    但"这一轮根本没跑成"与"执行器干不了"是两回事，所以依据和下一步都得说故障。
     """
     if outcome.asked:
         why = "它**申报了要信息**（顺序：申报优先 → 交了产物 → 都没有）"
@@ -681,6 +668,33 @@ def _verdict(outcome: ExecOutcome, run_id: str) -> dict:
         else:
             why = f"**平台故障**（{outcome.fault}）—— 这一轮**根本没跑成**，不是执行器干不了"
             nxt = "**交回主 agent** —— 原样再 `delegate` 一次即可（不用改措辞、不用改参数、不用问用户）"
+    return why, nxt
+
+
+def _verdict(outcome: ExecOutcome, run_id: str) -> dict:
+    """「任务完成没」这条**判定记录**的四个字段（纯函数 —— 可单测，同 `_structural_status`）。
+
+    🔴 **为什么要记**（用户原话见〔沿革 13〕）：**"给它的上下文是啥、结果又是啥、
+    依据又是啥"都要能看到才能审计**，不然没法调优。判定那次 **LLM 调用**退休了
+    （三态改由结构定），但**这个判断还在** —— 记录形状不变
+    （前提 / 问题 / 结果 / 下一步，见 `handoff.decision`），
+    只是填它的人从 LLM 换成了平台的结构规则：
+
+    | 格 | 这条记录里是什么 |
+    |---|---|
+    | **前提** | 平台**看得见的**三件结构事实（申报 / 产物账 / 轮次）—— 判据的**输入**，**包括"没有"** |
+    | **结果** | 三态 ＋ **依据**（命中的是哪一条 —— 这就是"产生结果的依据"） |
+    | **下一步** | 谁来接（回执给主 agent / 试答 / 交回主 agent） |
+
+    ⚠️ **它不是"交接"**（没有 LLM 参与 —— 判据是"关键在于 LLM 参与了"），
+    但**用同一套记录形状**：四格问的是同一件事（谁基于什么、得出了什么、接下来干什么），
+    另起一套形状只会分叉。
+
+    ⚠️ **它不重复上面那些"这一轮出口"的 note**：那些是**每轮的账**（只报命中的那条），
+    这条是**整个 run 的判定**（三件事实全摆出来）—— 审计要的正是后者：
+    只看到"交付了 1 个产物"，看不到"它**没申报**"。
+    """
+    why, nxt = _verdict_reason(outcome)
     return {
         "who": f"任务完成没（平台按结构定）· {_at(run_id, outcome.rounds)}",
         # 🔴 **这一格的作者是平台**（不是 LLM）—— 它决定那格用【平台判定】（**不标来源**）

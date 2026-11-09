@@ -351,6 +351,65 @@ def _last_human(state: State) -> str:
 
 
 
+async def _deliver(state: State, t: dict, skill: Any, user: str) -> tuple[dict, list[str], list[dict]]:
+    """投**一条**待答 —— 返回 `(投递后的 Task, 日志行, 被取代的旧 Task)`。
+
+    🔴 **历次答复必须累积**：执行器是隔离上下文、**用完即弃**，每次投递都是一次全新的
+    `run_task` —— 只带"最新一条"的话，用户一次答一个时**答第二个就把第一个冲掉了**〔沿革 8〕。
+    🔴 **一问一答成对存**：`report` 是**覆盖**写的（`absorb_outcome`），只存答案的话，
+    第二次投递之后旧答案就没有指涉了（用户看到"答：A"，看不到 A 在回答什么）〔沿革 9〕。
+    🔴 **「问」取 `Task.asked`，不取 `report`**：`report` 是它最后说的那段话（混着过场），
+    拿它当「问」配对就成了"一句没有指涉的话 ＋ 一个答复"〔沿革 16〕。
+    ⚠️ 取不到时**不静默降级**（fixture / 手写 state）：存空串，由 `briefing` 明说
+    "这一条没留下问题原话"（同 `finalize._one` 的写法）—— **绝不拿 `report` 顶替**。
+    答复**累积在 Task 上**，整份交接书一起喂 —— 见 `agent.render_briefing`。
+    """
+    rec = {**t, "qa": [*(t.get("qa") or []),
+                       {"by": "用户", "q": t.get("asked") or "", "a": user}]}
+    trace.section(f"feed · 投递用户原话 → {t['id']} · {t['skill']}", kind="feed")
+    trace.block("投过去的原话", user)
+    trace.note(f"累计问答 {len(rec['qa'])} 对（历次一起带上，否则执行器会重问）")
+    # 交接关键日志：投递这一跳（交接书正文由 `run_task` 那边记）
+    # 🔴 **谁答复了谁的什么问题**：答复的是**用户**、回答的是**执行器问的那句** ——
+    #    平台只是**转达**，别把"谁说的"吞掉（那正是这一行原来读不出来的东西）〔沿革 22〕。
+    # ⚠️ 「问哪句」走 `asked_text`（**取哪句只有一处定义**，见它的 docstring）。
+    trace.handoff("答复投递", "用户", "执行器", user,
+                  structured=f"平台转达｜在回答它问的那句：{asked_text(t)}"
+                             f"｜Task.qa 追加 1 对（累计 {len(rec['qa'])} 对）")
+    # ⚠️ `refs` 要一起带上：不重建可读产物清单，执行器在续跑时就"看不见"前序产物了。
+    # 用户原话也一起带上（快照在 Task 上，所以这条重入路径**自动**有它）。
+    # ⚠️ 这里**不**直接调执行器 —— `dispatch` 内部走 `executor.run_task` 的**属性访问**
+    #    （晚绑定，桩才生效〔沿革 18〕）。
+    # 🔴 **编排走两条路共用的那个函数**（`dispatch`）：run_task → **先落账**（重入前要
+    #    `render_briefing`，见 `absorb_outcome`）→ `run_by` → 试答重跑 → `settle` →
+    #    取代哑待答 —— 顺序写两遍就一定会漂，收进一处〔沿革 28〕。
+    #    ⚠️ 试答成对的「问」在上面就取好了（`t.get("asked")`，**旧**那句 = 用户正在答的
+    #    那句 ✓）—— `dispatch` 里的落账不碰它（`rec` 与 `t` 是两份）。
+    #    ⚠️ `trigger="feed"` = **这轮是平台起的**（不是主 agent 派发的）：台账据此说清
+    #    "全文在哪" —— 这一趟**没有回执**，全文不在主 agent 上下文里〔沿革 17〕。
+    outcome, answer, mooted = await dispatch(
+        skill, rec, state.get("tasks") or [],
+        trigger="feed", messages=state.get("messages") or [],
+    )
+    logs: list[str] = []
+    if answer:
+        logs.append(f"feed: 🔁 {t['id']} 仍缺信息 → 主 agent 试答（{len(answer)} 字）后重跑")
+    # ⚠️ 状态迁移走 `settle()`（**唯一一处**，在 `dispatch` 里）—— 三条分支只决定"日志怎么说"
+    #    〔沿革 11〕。
+    if outcome.status == "completed":
+        # 🔴 **这条完成了 → 同技能更早的待答成了哑问题** —— `dispatch` 里算好带出来的
+        #    （判据与边界见 `moot_older_waiting`：快照没延长就一个字不碰 —— F7 的场景不动）〔沿革 30〕。
+        logs.append(
+            f"feed: ✅ {t['id']}（{t['skill']}）答复后**完成**"
+            f"　产物={outcome.artifacts or '（在回复里）'}"
+        )
+    elif outcome.status == "waiting_for_input":
+        logs.append(f"feed: ⏳ {t['id']}（{t['skill']}）答复后**还是缺信息** → 仍待答")
+    else:
+        logs.append(f"feed: ❌ {t['id']}（{t['skill']}）答复后仍未完成 → failed")
+    return rec, logs, mooted
+
+
 async def _feed_waiting(state: State) -> tuple[list[dict], list[str]]:
     """把用户这条消息**原话**投给**它标明的那一个**待答任务（`answer_to`）。
 
@@ -365,6 +424,9 @@ async def _feed_waiting(state: State) -> tuple[list[dict], list[str]]:
     🔴 **定向投递，不是广播**（`solution.md` §0.65 Y1 第二步）：只投给**这条消息标明的
     那个任务**（`answer_to` —— **通道**填的：CLI 的答复提示符 / case YAML）；
     **没有标识 = 主 agent 的输入，一条都不投**〔沿革 23〕。
+
+    ⚠️ **它自己只做两件事**（2026-11-09 拆）：**挑目标** ＋ **逐条投**（投一条在
+    `_deliver` 里）。原来是一个 95 行的函数，两件事缠在一起。
     """
     user = _last_human(state)
     all_waiting = [
@@ -389,61 +451,9 @@ async def _feed_waiting(state: State) -> tuple[list[dict], list[str]]:
         if skill is None:
             logs.append(f"feed: ⚠️ {t['id']} 的技能「{t['skill']}」不存在，跳过")
             continue
-
-        # 🔴 **历次答复必须累积**：执行器是隔离上下文、**用完即弃**，每次投递都是一次全新的
-        #    `run_task` —— 只带"最新一条"的话，用户一次答一个时**答第二个就把第一个冲掉了**〔沿革 8〕。
-        # 🔴 **一问一答成对存**：`report` 是**覆盖**写的（`absorb_outcome`），只存答案的话，
-        #    第二次投递之后旧答案就没有指涉了（用户看到"答：A"，看不到 A 在回答什么）〔沿革 9〕。
-        # 🔴 **「问」取 `Task.asked`，不取 `report`**：`report` 是它最后说的那段话（混着过场），
-        #    拿它当「问」配对就成了"一句没有指涉的话 ＋ 一个答复"〔沿革 16〕。
-        # ⚠️ 取不到时**不静默降级**（fixture / 手写 state）：存空串，由 `briefing` 明说
-        #    "这一条没留下问题原话"（同 `finalize._one` 的写法）—— **绝不拿 `report` 顶替**。
-        # 答复**累积在 Task 上**，整份交接书一起喂 —— 见 `agent.render_briefing`。
-        rec = {**t, "qa": [*(t.get("qa") or []),
-                           {"by": "用户", "q": t.get("asked") or "", "a": user}]}
-        trace.section(f"feed · 投递用户原话 → {t['id']} · {t['skill']}", kind="feed")
-        trace.block("投过去的原话", user)
-        trace.note(f"累计问答 {len(rec['qa'])} 对（历次一起带上，否则执行器会重问）")
-        # 交接关键日志：投递这一跳（交接书正文由 `run_task` 那边记）
-        # 🔴 **谁答复了谁的什么问题**：答复的是**用户**、回答的是**执行器问的那句** ——
-        #    平台只是**转达**，别把"谁说的"吞掉（那正是这一行原来读不出来的东西）〔沿革 22〕。
-        # ⚠️ 「问哪句」走 `asked_text`（**取哪句只有一处定义**，见它的 docstring）。
-        trace.handoff("答复投递", "用户", "执行器", user,
-                      structured=f"平台转达｜在回答它问的那句：{asked_text(t)}"
-                                 f"｜Task.qa 追加 1 对（累计 {len(rec['qa'])} 对）")
-        # ⚠️ `refs` 要一起带上：不重建可读产物清单，执行器在续跑时就"看不见"前序产物了。
-        # 用户原话也一起带上（快照在 Task 上，所以这条重入路径**自动**有它）。
-        # ⚠️ 这里**不**直接调执行器 —— `dispatch` 内部走 `executor.run_task` 的**属性访问**
-        #    （晚绑定，桩才生效〔沿革 18〕）。
-        # 🔴 **编排走两条路共用的那个函数**（`dispatch`）：run_task → **先落账**（重入前要
-        #    `render_briefing`，见 `absorb_outcome`）→ `run_by` → 试答重跑 → `settle` →
-        #    取代哑待答 —— 顺序写两遍就一定会漂，收进一处〔沿革 28〕。
-        #    ⚠️ 试答成对的「问」在上面就取好了（`t.get("asked")`，**旧**那句 = 用户正在答的
-        #    那句 ✓）—— `dispatch` 里的落账不碰它（`rec` 与 `t` 是两份）。
-        #    ⚠️ `trigger="feed"` = **这轮是平台起的**（不是主 agent 派发的）：台账据此说清
-        #    "全文在哪" —— 这一趟**没有回执**，全文不在主 agent 上下文里〔沿革 17〕。
-        outcome, answer, mooted = await dispatch(
-            skill, rec, state.get("tasks") or [],
-            trigger="feed", messages=state.get("messages") or [],
-        )
-        if answer:
-            logs.append(
-                f"feed: 🔁 {t['id']} 仍缺信息 → 主 agent 试答（{len(answer)} 字）后重跑"
-            )
-        # ⚠️ 状态迁移走 `settle()`（**唯一一处**，在 `dispatch` 里）—— 三条分支只决定"日志怎么说"
-        #    〔沿革 11〕。
-        if outcome.status == "completed":
-            # 🔴 **这条完成了 → 同技能更早的待答成了哑问题** —— `dispatch` 里算好带出来的
-            #    （判据与边界见 `moot_older_waiting`：快照没延长就一个字不碰 —— F7 的场景不动）〔沿革 30〕。
-            out.extend(mooted)
-            logs.append(
-                f"feed: ✅ {t['id']}（{t['skill']}）答复后**完成**"
-                f"　产物={outcome.artifacts or '（在回复里）'}"
-            )
-        elif outcome.status == "waiting_for_input":
-            logs.append(f"feed: ⏳ {t['id']}（{t['skill']}）答复后**还是缺信息** → 仍待答")
-        else:
-            logs.append(f"feed: ❌ {t['id']}（{t['skill']}）答复后仍未完成 → failed")
+        rec, more, mooted = await _deliver(state, t, skill, user)
+        logs += more
+        out.extend(mooted)
         out.append(rec)
     return out, logs
 
@@ -639,29 +649,26 @@ def next_pending(state: State, skill: str = "") -> dict | None:
 # ──────────────────────────── 装配 ────────────────────────────
 
 
-def build():
-    g = StateGraph(State)
-    # 🔴 **两个节点，顺序由边保证**：`feed`（投递 —— 里面同步跑执行器，60–120 秒）→
-    #    `prepare`（注入台账）—— 拆开后"先投递、后注入"不用再靠注释提醒〔沿革 29〕。
-    g.add_node("feed", node_feed)
-    g.add_node("prepare", node_prepare)
-    main_agent = build_agent(AgentState)  # 主 agent：完整的 agent（工具 + 循环）
+def _make_node_agent(main_agent):
+    """造**主 agent 那个节点** —— 每走一步就把它露出来。
+
+    🔴 **为什么必须在这里记**：主 agent 的消息**不进** `run_task` 的轨迹 dump（那是
+    执行器的），它的 `delegate` / `read_artifact` / `write_artifact` 在日志里原来
+    **一点痕迹都没有** —— **日志的职责是让这种事直接可查，不靠推断**〔沿革 3〕。
+
+    🔴 **为什么是 `stream` 而不是 `invoke`**：`invoke` 会把**整个 agent 循环**跑完才
+    返回，"模型→工具→模型→工具…"这一串**全程静默**；改成 `stream(stream_mode="values")`
+    后**每个 super-step 结束就 dump 一次**（模型那步 → 它的工具调用；工具那步 →
+    返回了什么），静默窗口从"整个循环"缩到"一次 LLM 调用"〔沿革 4〕。
+
+    ⚠️ **这不是加日志，是把已经发生的事更早露出来** —— 行为一点没变，
+    返回的仍是最终 state（`stream` 的最后一个 chunk）。
+
+    ⚠️ **它是工厂、不是节点本身**：LangGraph 只按 `(state, config)` 调节点，
+    多一个参数传不进去 —— 所以 `main_agent` 用闭包带。
+    """
 
     async def node_agent(state: State, config: RunnableConfig) -> dict:
-        """跑主 agent 子图，**每走一步就把它露出来**。
-
-        🔴 **为什么必须在这里记**：主 agent 的消息**不进** `run_task` 的轨迹 dump（那是
-        执行器的），它的 `delegate` / `read_artifact` / `write_artifact` 在日志里原来
-        **一点痕迹都没有** —— **日志的职责是让这种事直接可查，不靠推断**〔沿革 3〕。
-
-        🔴 **为什么是 `stream` 而不是 `invoke`**：`invoke` 会把**整个 agent 循环**跑完才
-        返回，"模型→工具→模型→工具…"这一串**全程静默**；改成 `stream(stream_mode="values")`
-        后**每个 super-step 结束就 dump 一次**（模型那步 → 它的工具调用；工具那步 →
-        返回了什么），静默窗口从"整个循环"缩到"一次 LLM 调用"〔沿革 4〕。
-
-        ⚠️ **这不是加日志，是把已经发生的事更早露出来** —— 行为一点没变，
-        返回的仍是最终 state（`stream` 的最后一个 chunk）。
-        """
         out: dict = {}
         prev_n = len(state.get("messages") or [])
         logs: list[str] = []
@@ -696,7 +703,23 @@ def build():
             return await main_agent.ainvoke(state, config)
         return {**out, "log": logs} if logs else out
 
-    g.add_node("agent", node_agent)
+    return node_agent
+
+
+def build():
+    """把父图拼起来 —— 五个节点、一条直线，`InMemorySaver` 做 checkpointer。
+
+    ⚠️ **它自己只做编排**（2026-11-09 拆）：`node_agent` 那 40 行搬进了
+    `_make_node_agent`（工厂 —— 它要闭包捕获 `main_agent`）。原来是一个 65 行的函数，
+    定义节点和连边缠在一起。
+    """
+    g = StateGraph(State)
+    # 🔴 **两个节点，顺序由边保证**：`feed`（投递 —— 里面同步跑执行器，60–120 秒）→
+    #    `prepare`（注入台账）—— 拆开后"先投递、后注入"不用再靠注释提醒〔沿革 29〕。
+    g.add_node("feed", node_feed)
+    g.add_node("prepare", node_prepare)
+    # 主 agent：完整的 agent（工具 + 循环）
+    g.add_node("agent", _make_node_agent(build_agent(AgentState)))
     g.add_node("finalize", node_finalize)
     g.add_edge(START, "feed")
     g.add_edge("feed", "prepare")
@@ -704,3 +727,5 @@ def build():
     g.add_edge("agent", "finalize")
     g.add_edge("finalize", END)
     return g.compile(checkpointer=InMemorySaver())
+
+

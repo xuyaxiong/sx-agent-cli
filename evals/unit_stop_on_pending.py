@@ -295,9 +295,11 @@ def main() -> None:  # noqa: C901
           _sites == _settle_expected,
           f"实际：{sorted(_sites)} —— 多一条就说明**多了一条产生待答的路**，"
           f"而 `_StopWhenPending` **不认**它（覆盖面的证明失效，会静默退回复述）")
-    _dispatch_expected = {("proto/agent.py", "delegate"), ("proto/graph.py", "_feed_waiting")}
+    # ⚠️ 2026-11-09：`_feed_waiting` 拆成两件之后，`dispatch` 的调用点搬到了
+    #    `_deliver`（投一条的那件）—— 锚点跟着改，**语义没变**（还是"投递那条路"）。
+    _dispatch_expected = {("proto/agent.py", "delegate"), ("proto/graph.py", "_deliver")}
     _d_sites = _call_sites("dispatch")
-    check("`dispatch()` 的调用位置**只有** `delegate` 和 `_feed_waiting`",
+    check("`dispatch()` 的调用位置**只有** `delegate` 和 `_deliver`",
           _d_sites == _dispatch_expected,
           f"实际：{sorted(_d_sites)} —— 同上：多一条就是多一条产生待答的路")
 
