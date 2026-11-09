@@ -197,7 +197,7 @@ def install(case: dict) -> dict:
     #      赋两次值 —— 漏一句就是"用户答了，执行器却像换了个人"（**这条实测踩过**：
     #      `skills_mode: replace` + 多轮 + 有等待任务的 case）。现在只有一个入口。
     #   3. `extra` 为空时**也要 reset**：同 1，为"同进程多 case"留的。
-    registry.reset()
+    registry.testing.reset()
     extra: dict = {}
     if case.get("skills_dir"):
         extra.update(_load_skills_dir(str(case["skills_dir"])))
@@ -205,9 +205,9 @@ def install(case: dict) -> dict:
         extra.update({s["name"]: proto.skills.Skill(**s) for s in case["skills"]})
     if extra:
         if case.get("skills_mode", "extend") == "replace":
-            registry.replace(extra)
+            registry.testing.replace(extra)
         else:
-            registry.extend(extra)
+            registry.testing.extend(extra)
 
     # ③ 产物写入流水 —— 记「谁在什么时候写了什么」，用来判并发与归属
     # ⚠️ **签名要跟着 `proto.artifacts.store_artifact` 走**：它变过（加 `file_type`），

@@ -4,7 +4,7 @@
 
 全进程只有这一张技能表：`skills.py` 在 import 时把内置表登记进来（`register_defaults`），
 此后**谁都不许直接拿表** —— 读走 `get()` / `all()` / `values()` / `names()` / `catalog()`，
-换表走 `replace()` / `extend()` / `reset()`，每次调用查的都是**当前**那一张。
+换表走 `registry.testing.replace()` / `.extend()` / `.reset()`，每次调用查的都是**当前**那一张。
 （本模块不认识 `Skill`：只在类型标注里 import 它，见 `if TYPE_CHECKING` 那一行。）
 
 ## 设计原则（不变量）
@@ -12,7 +12,8 @@
 🔴 **对外只给函数，不给 dict。** 任何 `from proto.registry import SKILLS` 的写法
    都是在重新制造一个绑定点 —— 一律走 `get()` / `all()` / `values()`，每次调用查当前表。
 
-🔴 **唯一变更入口是 `replace` / `extend` / `reset`。** 表本身不对外暴露可变引用。
+🔴 **换表那三个口子在 `testing` 上，不在读 API 的平面上。** 表本身不对外暴露可变引用；
+   "这是装配/测试口"由**结构**说（`registry.testing.…`），不靠名字里有没有前缀。〔沿革 1〕
 
 🔴 **未初始化时 `get()` 直接抛错，不静默返回 None。** 静默的后果是"没有这个技能"
    这种看着像业务事实的假话，比当场崩掉难查得多（同 handoff 那条"禁止静默失配"）。
@@ -35,6 +36,19 @@
    "像换了个人"（实测踩过）。
 
 那不是隐患，是**当时靠纪律维持的正确性**。本模块把纪律换成机制。
+
+## 沿革（改过什么、为什么改）
+
+> 编号是**引用锚**（正文里写 `〔沿革 N〕`）—— **只追加、不改号**，新条目加在**末尾**。
+
+1. **换表那三个口子搬进 `testing`**（2026-11-09，第四轮外审 P1-7）。它们原来和
+   `get()` / `names()` / `catalog()` 摆在 `_Registry` 的**同一个平面**上 ——
+   名字上看不出哪个是测试口，而它们**改的是全进程那一张表**。审计原话：
+   「同样存在于生产路径上，**任何一次误调都会改掉全进程的技能表**」。
+   ⇒ 新建 `_Testing`，`registry.testing.reset/replace/extend`。
+   **"这是测试口"从名字升级成结构** —— 生产代码里写出来会自己看见不对劲。
+   ⚠️ 治的是"**测试口混在生产 API 上**"，**不是**"进程级共享"（那是合理的，
+   见 `session.py` 沿革 1）。
 """
 
 from __future__ import annotations
@@ -64,6 +78,9 @@ class _Registry:
         #: 要么看到旧的完整一份、要么看到新的完整一份，不会撞见半张空表。
         self._current: dict[str, Skill] = {}
         self._initialized = False
+        #: **测试口** —— 换表那三个动作，见 `_Testing`。
+        #: ⚠️ 它和读 API **不在一个平面上**：读是生产的，换表是装配/测试的。
+        self.testing = _Testing(self)
 
     # ──────────────────────────── 写（唯一入口） ────────────────────────────
 
@@ -72,25 +89,6 @@ class _Registry:
         self._defaults = dict(skills)
         self._current = dict(skills)
         self._initialized = True
-
-    def reset(self) -> None:
-        """把当前表恢复成内置表 —— 跑批每个 case 开始前调它。"""
-        self._require_init()
-        self._current = dict(self._defaults)
-
-    def replace(self, skills: Mapping[str, Skill]) -> None:
-        """**整体替换**当前表（评测的 `skills_mode: replace`）。内置表不受影响。"""
-        self._require_init()
-        self._current = dict(skills)
-
-    def extend(self, extra: Mapping[str, Skill]) -> None:
-        """在**当前表**上合并（评测的 `skills_mode: extend`，默认）。
-
-        ⚠️ 合并在**当前表**上而不是内置表上 —— 调用方若要"干净地加几个"，
-        先 `reset()` 再 `extend()`。两步是分开的，因为"重置"和"叠加"是两件事。
-        """
-        self._require_init()
-        self._current = {**self._current, **extra}
 
     # ──────────────────────────── 读 ────────────────────────────
 
@@ -127,6 +125,50 @@ class _Registry:
                 "技能注册表未初始化 —— 没有任何模块 import 过 `proto.skills`。"
                 "默认表由它登记；用技能之前请先 `import proto.skills`。"
             )
+
+
+
+
+class _Testing:
+    """**换表那三个口子** —— `registry.testing.reset()` / `.replace()` / `.extend()`。
+
+    🔴 **为什么单独一个对象**（2026-11-09）。它们原来和 `get()` / `names()` /
+    `catalog()` 摆在 `_Registry` 的**同一个平面**上：名字上看不出哪个是测试口，
+    而它们**改的是全进程那一张表**。审计原话 ——「同样存在于生产路径上，
+    **任何一次误调都会改掉全进程的技能表**」。
+    ⇒ 把"这是测试口"从**名字**升级成**结构**：生产代码里写出 `registry.testing.reset()`
+    会**自己看见**不对劲，而不是靠"记得别乱调"。
+
+    ⚠️ **它不解决"进程级共享"** —— 技能表是**静态配置**，进程级共享是合理的
+    （`session.py` 沿革 1 那次全仓排查：28 处模块级状态里，真正串数据的**只有产物库**）。
+    这里只治"**测试口混在生产 API 上**"。
+
+    ⚠️ **`app/runtime.py` 的 `install()` 会调它，那不是"产品在跑测试"** ——
+    `install()` 就是**装配**（跑批每个 case 开始前把技能集重置成内置表），
+    而"重置技能表"这个动作本来就**只该在装配那一刻**发生。它和测试调的是同一件事。
+    """
+
+    def __init__(self, reg: _Registry) -> None:
+        self._reg = reg
+
+    def reset(self) -> None:
+        """把当前表恢复成内置表 —— 跑批每个 case 开始前调它。"""
+        self._reg._require_init()
+        self._reg._current = dict(self._reg._defaults)
+
+    def replace(self, skills: Mapping[str, Skill]) -> None:
+        """**整体替换**当前表（评测的 `skills_mode: replace`）。内置表不受影响。"""
+        self._reg._require_init()
+        self._reg._current = dict(skills)
+
+    def extend(self, extra: Mapping[str, Skill]) -> None:
+        """在**当前表**上合并（评测的 `skills_mode: extend`，默认）。
+
+        ⚠️ 合并在**当前表**上而不是内置表上 —— 调用方若要"干净地加几个"，
+        先 `reset()` 再 `extend()`。两步是分开的，因为"重置"和"叠加"是两件事。
+        """
+        self._reg._require_init()
+        self._reg._current = {**self._reg._current, **extra}
 
 
 #: 全进程唯一实例。**只导入这个对象，不要复制表**。

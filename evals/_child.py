@@ -23,7 +23,7 @@
 
 ⚠️ **技能表不在这个坑里**（R1 之后）：它没有"值导入"的机会了，因为对外只有
 `registry.get()/all()` 这类函数，每次调用查当前表。换技能一律走
-`registry.replace()/extend()/reset()` —— **不要再 patch 任何模块的 `SKILLS` 属性**。
+`registry.testing.replace()/extend()/reset()` —— **不要再 patch 任何模块的 `SKILLS` 属性**。
 """
 
 from __future__ import annotations

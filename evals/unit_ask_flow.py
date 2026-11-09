@@ -135,7 +135,7 @@ def drive(on_phase: Callable[[str, list[dict], str], None] | None = None) \
     from proto.registry import registry
     from proto.skills import Skill
 
-    registry.replace({"lesson-prep": Skill(
+    registry.testing.replace({"lesson-prep": Skill(
         name="lesson-prep", description="备一节课的教案",
         instructions="（技能指令 2532 字，此处略）")})
 

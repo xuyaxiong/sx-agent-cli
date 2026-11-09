@@ -273,6 +273,34 @@ def main() -> None:
     check("`proto/` / `app/` **不 import** `evals/`（产品不许依赖测试包）",
           not _leaks, repr(_leaks))
 
+    # ── 换表那三个口子（`registry.testing.*`）**只许装配处调**（2026-11-09）──
+    # 🔴 为什么是机制：`reset` / `replace` / `extend` 原来和读 API 摆在同一个平面上，
+    #    名字上看不出哪个是测试口，而它们**改的是全进程那一张表**。搬进 `testing`
+    #    之后，"这是测试口"由**结构**说 —— 但结构拦不住"有人从别处调它"，
+    #    所以这里盯着两件事：
+    #      ① **`proto/`（库）一次都不许出现** —— 库不许改自己的表（那正是
+    #         "同一个技能集在跑的中途被换掉"的形状）；
+    #      ② `app/` 里只许**装配处**（`runtime.py` 的 `install()`）调。
+    #    ⚠️ 将来真多了第二个装配点，**这里红一次、由人改名单** —— 那正是要的摩擦
+    #    （不是"谁都行"，是"改的时候知道自己在改什么"）。
+    #    有效性自检：在 `proto/agent.py` 里写一行 `registry.testing.reset()` → 必须红。
+    #    ⚠️ **按 AST 找调用，不按文本匹配** —— `registry.py` 自己的 docstring 里就写着
+    #    `registry.testing.replace()` 这个写法，文本匹配会把它当成"调用点"（第一版就误红了）。
+    _writers: set[str] = set()
+    for _p in _py_files("proto") + _py_files("app"):
+        for _n in ast.walk(_tree(_p)):
+            if not isinstance(_n, ast.Call):
+                continue
+            _f = _n.func
+            if (isinstance(_f, ast.Attribute) and _f.attr in ("reset", "replace", "extend")
+                    and isinstance(_f.value, ast.Attribute) and _f.value.attr == "testing"
+                    and isinstance(_f.value.value, ast.Name) and _f.value.value.id == "registry"):
+                _writers.add(_p.relative_to(ROOT).as_posix())
+    check("换表口 `registry.testing.*` 只有**装配处**在用（`proto/` 里零出现）",
+          _writers == {"app/runtime.py"},
+          f"实际调用点：{sorted(_writers)} —— `proto/` 里出现 = **库在改自己的表**；"
+          f"`app/` 里多一个 = 多了一个装配点（那要人看一眼再改名单）")
+
     # ─────────────────────────── ② 运行时语义 ───────────────────────────
 
     print("\n② 运行时语义（换表之后所有人都得看见）")
@@ -280,20 +308,20 @@ def main() -> None:
     from proto.skills import Skill
 
     builtin = registry.names()
-    registry.replace({"only-one": Skill(name="only-one", description="临时", instructions="干活")})
+    registry.testing.replace({"only-one": Skill(name="only-one", description="临时", instructions="干活")})
     out = asyncio.run(skill_pack.read_skill.ainvoke({"skill_name": "only-one"}))
     miss = asyncio.run(skill_pack.read_skill.ainvoke({"skill_name": "lesson-prep"}))
     check("replace 后 `read_skill` 看到新表（核心验收点）", "only-one" in out, repr(out[:60]))
     check("replace 后旧技能不在表里（不是「两份表并存」）", "没有技能" in miss, repr(miss[:60]))
 
-    registry.reset()
+    registry.testing.reset()
     check("`replace` 不污染内置表，`reset()` 能回来", registry.names() == builtin,
           f"{registry.names()} != {builtin}")
 
-    registry.extend({"extra": Skill(name="extra", description="d", instructions="i")})
+    registry.testing.extend({"extra": Skill(name="extra", description="d", instructions="i")})
     check("`extend` 叠在当前表（内置 + 新增）",
           "extra" in registry.names() and "lesson-prep" in registry.names(), repr(registry.names()))
-    registry.reset()
+    registry.testing.reset()
 
     d = registry.all()
     d["hack"] = 1
@@ -328,7 +356,7 @@ def main() -> None:
     # ─────────────────────────── ④ 装配路径 ───────────────────────────
 
     print("\n④ 装配路径：`install()` 先 reset 再叠加（注册表 API 之外的那一段）")
-    # 🔴 `install()` 里那句 `registry.reset()` 是这次**唯一改运行时行为**的地方
+    # 🔴 `install()` 里那句 `registry.testing.reset()` 是这次**唯一改运行时行为**的地方
     # （空 case 不再继承上一个 case 的表）—— 而 ② 只覆盖注册表 API，覆盖不到它。
     from app.runtime import install
 
