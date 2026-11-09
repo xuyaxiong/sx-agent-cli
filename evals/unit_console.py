@@ -485,6 +485,25 @@ def main() -> None:
     finally:
         builtins.input = real_input
 
+    print("\n⑭ `dump_trace` 的 `role` 是**枚举** —— 传错**当场炸**，不许静默当成主 agent")
+    # 🔴 2026-11-09 变异测试实测：**把 `_check_role` 那行删掉，一个测试都不红** ——
+    #    因为没有任何测试**传过一个非法 role**。而 `_check_role` 的 docstring 写着
+    #    "传错就**当场炸**，不许静默当成主 agent" ⇒ **规矩写了、没有机制**。
+    #    有效性自检：删掉 `trace.dump_trace` 里那行 `_check_role(...)` → 这里必须红。
+    for _bad in ("executor ", "AGENT", "主 agent", ""):
+        try:
+            trace.dump_trace("x", [], role=_bad)
+        except ValueError:
+            check(f"非法 role {_bad!r} → 当场炸", True)
+        else:
+            check(f"非法 role {_bad!r} → 当场炸", False,
+                  "静默放过了 —— 展示层会把它归成主 agent（那正是「从措辞里猜角色」那条病）")
+    try:
+        trace.dump_trace("x", [], role=trace.AGENT)
+        check("合法 role 照常通过", True)
+    except Exception as e:  # noqa: BLE001
+        check("合法 role 照常通过", False, f"{type(e).__name__}: {e}")
+
     print("\n" + "═" * 78)
     print(f"{'全部通过' if not FAIL else '有失败'}：{len(PASS)}/{len(PASS) + len(FAIL)}")
     for name in FAIL:
