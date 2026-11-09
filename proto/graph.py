@@ -252,7 +252,7 @@ if TYPE_CHECKING:  # 只给标注用 —— 运行时不 import
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.message import add_messages
 
-from proto import trace
+from proto import stream, trace
 from proto.agent import build_agent
 from proto.agent import dispatch  # 派发编排（两条路共用，F5 收口）
 from proto.handoff.briefing import Task, asked_text
@@ -678,7 +678,7 @@ def _make_node_agent(main_agent):
         step = 0
         # `stream_agent` 顺带把**每个字**也写进日志（攒到换行写一行）——
         # 一次 LLM 调用那几十秒不再是黑屏。
-        async for chunk in trace.stream_agent(main_agent, state, config, "主 agent",
+        async for chunk in stream.stream_agent(main_agent, state, config, "主 agent",
                                               role=trace.AGENT):
             out = chunk
             msgs = chunk.get("messages") or []

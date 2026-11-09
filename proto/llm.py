@@ -24,7 +24,7 @@
    现象：`UserWarning: Pydantic serializer warnings: PydanticSerializationUnexpectedValue(
    Expected `none` - serialized value may not be as expected [field_name='parsed',
    input_value=_Judgement(...)])`。
-   根因（**实测确认，不是猜的**）：`trace.stream_agent` 用 `stream_mode="messages"`
+   根因（**实测确认，不是猜的**）：`stream.stream_agent` 用 `stream_mode="messages"`
    之后，流式回调会传播到图内**所有** LLM 调用 —— 包括这里 `safe_structured` 的
    `.invoke()`；而 LangChain 在**流式**路径下会把 `with_structured_output` 的解析结果
    序列化，它把 `additional_kwargs["parsed"]` 那个字段声明成 `None` 类型 —— 对不上，

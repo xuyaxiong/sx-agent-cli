@@ -61,7 +61,7 @@ os.environ["PROTO_LOG_DIR"] = "tmp/logs"   # 🔴 测试日志是**噪音** —�
 
 from proto import graph as _graph
 
-from proto import recorder, trace
+from proto import recorder, stream, trace
 
 def _prepare(state):
     """`node_prepare` 现在是**协程** —— 测试里的同步收口。"""
@@ -158,7 +158,7 @@ def drive(on_phase: Callable[[str, list[dict], str], None] | None = None) \
 
     # ── ① 执行器那一侧：`run_task` 真跑，只把模型和图打桩 ──────────────────────
     box: dict = {}
-    real = (ex.get_model, ex.create_agent, trace.stream_agent)
+    real = (ex.get_model, ex.create_agent, stream.stream_agent)
 
     def _fake_agent(*_a, tools=None, **_k):  # noqa: ANN002, ANN003
         box["tools"] = tools
@@ -182,11 +182,11 @@ def drive(on_phase: Callable[[str, list[dict], str], None] | None = None) \
     at, n = recorder.log_size(), len(events)
     ex.get_model = lambda **_k: object()  # type: ignore[assignment]
     ex.create_agent = _fake_agent  # type: ignore[assignment]
-    trace.stream_agent = _fake_stream  # type: ignore[assignment]
+    stream.stream_agent = _fake_stream  # type: ignore[assignment]
     try:
         outcome = asyncio.run(ex.run_task(registry.get("lesson-prep"), "（交接书正文……）"))
     finally:
-        ex.get_model, ex.create_agent, trace.stream_agent = real  # type: ignore[assignment]
+        ex.get_model, ex.create_agent, stream.stream_agent = real  # type: ignore[assignment]
     at = _phase("① 执行器 → 平台：它要什么（`ask_user`）", at, n)
 
     # ── ② 主 agent 那一侧：`delegate` 真跑（试答 → 答不上 → 登记待答）─────────

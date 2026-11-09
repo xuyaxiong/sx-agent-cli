@@ -148,7 +148,7 @@ from langchain.agents import create_agent
 from langchain.tools import tool
 from langchain_core.messages import AIMessage, HumanMessage
 
-from proto import trace
+from proto import stream, trace
 from proto.config import get_model
 from proto.handoff import FaultKind, OutcomeStatus as _OutcomeStatus, render_hop
 #                ↑ 状态词汇（唯一一份）· 段名/渲染（唯一一份）
@@ -449,7 +449,7 @@ async def _run_round(run: _Run, agent, round_i: int) -> dict | None:
     # `role` 是**逻辑**（展示层按它归版式），`who` 只是给人看的名字 —— 两者别混。
     resp = {}
     try:
-        async for chunk in trace.stream_agent(agent, {"messages": run.messages}, None,
+        async for chunk in stream.stream_agent(agent, {"messages": run.messages}, None,
                                               f"执行器·{run.skill.name}", role=trace.EXECUTOR):
             resp = chunk
     except Exception as e:  # noqa: BLE001
@@ -458,9 +458,9 @@ async def _run_round(run: _Run, agent, round_i: int) -> dict | None:
         #    把决定权交回主 agent。〔沿革 2〕
         # ⚠️ 不在这里重跑：`run_task` 一轮就是 60–120 秒，再重跑是拿用户的时间赌。
         # 🔴 **故障分类从结构取**：4xx（除 408/429）是上游对**这份内容**的确定性拒绝
-        #    —— 重试层已经不重试它了（`trace.upstream_rejected`），这里把"类"记下来，
+        #    —— 重试层已经不重试它了（`stream.upstream_rejected`），这里把"类"记下来，
         #    四处引导句据此说"换措辞"而不是"原样再派"。〔沿革 17〕
-        _kind: FaultKind = "rejected" if trace.upstream_rejected(e) else "transient"
+        _kind: FaultKind = "rejected" if stream.upstream_rejected(e) else "transient"
         _note = (
             f"⚠️ {_at(run.run_id, round_i + 1)}**上游拒绝了这次请求**（4xx，未重试 ——"
             f" 重发同一份内容会再被拒）：{type(e).__name__}: {e}"

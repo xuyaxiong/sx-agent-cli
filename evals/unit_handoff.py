@@ -43,6 +43,7 @@ os.environ["PROTO_LOG_TAG"] = "unit-handoff"
 os.environ["PROTO_LOG_DIR"] = "tmp/logs"   # 🔴 测试日志是**噪音** —— 别混进给人看的 `logs/`
 
 from proto import graph as _graph
+from proto import stream
 from proto.handoff.decision import emit_decision
 
 if hasattr(sys.stdout, "reconfigure"):
@@ -365,17 +366,17 @@ def main() -> None:
     # ⚠️ 打桩 `get_model` / `create_agent` / `stream_agent` —— **不碰真模型、不联网、秒级**。
     print("\n⑭ 平台故障：`run_task` 兜住（不是炸整轮），回执说清「原样再派」")
     import proto.executor as _ex
-    from proto import trace
+    from proto import stream, trace
     from proto.handoff.receipt import build_receipt as _build
 
-    _get_model, _create_agent, _stream = _ex.get_model, _ex.create_agent, trace.stream_agent
+    _get_model, _create_agent, _stream = _ex.get_model, _ex.create_agent, stream.stream_agent
     _ex.get_model = lambda temperature=0.0: object()  # type: ignore[assignment]
     _ex.create_agent = lambda *a, **k: object()  # type: ignore[assignment]
 
     def _boom(*a, **k):  # noqa: ANN002, ANN003, ANN202
         raise TimeoutError("（模拟）sandbox grammar compile timed out")
 
-    trace.stream_agent = _boom  # type: ignore[assignment]
+    stream.stream_agent = _boom  # type: ignore[assignment]
     try:
         from proto.skills import Skill as _Skill
 
@@ -384,7 +385,7 @@ def main() -> None:
             "给三年级出 3 道随堂小测"))
     finally:
         _ex.get_model, _ex.create_agent = _get_model, _create_agent  # type: ignore[assignment]
-        trace.stream_agent = _stream  # type: ignore[assignment]
+        stream.stream_agent = _stream  # type: ignore[assignment]
 
     check("异常**没有穿出去**（run_task 正常返回了结果）", out is not None)
     check("`status` 仍是三态里的 `incomplete`（**三态封闭，没有第四种**）",

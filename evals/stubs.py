@@ -8,7 +8,7 @@
 ## 设计原则（不变量）
 
 1. **必须在 `install()` 之后调** —— 它包的是 `install()` **装好的那一层**：
-   `proto.llm.get_model` 那时已经是 `counting`、`proto.trace.stream_agent` 是原函数。
+   `proto.llm.get_model` 那时已经是 `counting`、`proto.stream.stream_agent` 是原函数。
 2. **它往 `inst` 里那两个 dict 写**（`fault` / `stream_fault`），**不是自己造一份** ——
    运行记录里带着它们，**产品那条路也要写出这个键**，所以形状由 `app/runtime.py`
    定义（空 dict），这里只填。⚠️ 是**同一个对象**，`install()` 返回的就是它。
@@ -28,6 +28,7 @@
 from __future__ import annotations
 
 import proto.llm
+import proto.stream
 import proto.trace
 
 
@@ -101,7 +102,7 @@ def inject_faults(case: dict, inst: dict) -> None:
                 f"case.fault.role 只能是 {sorted(proto.trace.ROLES)} 之一，收到 {only_role!r}"
                 "（它是**角色枚举**，不是显示名 —— 见 `trace.AGENT` / `trace.EXECUTOR`）"
             )
-        orig_stream = proto.trace.stream_agent
+        orig_stream = proto.stream.stream_agent
 
         def flaky_stream(*a, **k):  # noqa: ANN002, ANN003, ANN202
             role = k.get("role")
@@ -114,4 +115,4 @@ def inject_faults(case: dict, inst: dict) -> None:
 
             return orig_stream(*a, **k)
 
-        proto.trace.stream_agent = flaky_stream
+        proto.stream.stream_agent = flaky_stream

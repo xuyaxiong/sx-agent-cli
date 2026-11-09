@@ -46,7 +46,8 @@ os.environ["PROTO_LOG_DIR"] = "tmp/logs"   # 🔴 测试日志是**噪音** —�
 from langchain_core.messages import AIMessageChunk
 from langgraph.graph import END, START, StateGraph
 
-from proto import recorder, session, trace  # noqa: F401 —— recorder 装上记录器（不然日志一行都不落）
+from proto import recorder, session, stream, trace
+  # noqa: F401 —— recorder 装上记录器（不然日志一行都不落）
 
 PASS: list[str] = []
 FAIL: list[str] = []
@@ -79,7 +80,7 @@ class _FakeGraph:
 def _drive(agen, into: list | None = None) -> list:
     """把**异步**生成器跑完 —— 测试本身是同步的，这里开一个事件循环收。
 
-    ⚠️ 测试直接调 `trace.stream_agent`（它现在是**异步**生成器），所以得有个同步收口。
+    ⚠️ 测试直接调 `stream.stream_agent`（它现在是**异步**生成器），所以得有个同步收口。
 
     🔴 **结果要能"边跑边攒"**：生成器**中途抛**时，已经吐出来的 chunk 必须留在
     `into` 里 —— 不然"第一步的产出照常交出去"那条断言**永远看到空列表** ✗
@@ -100,7 +101,7 @@ def _run(script: list[tuple[str, str]]) -> str:
     old_fh = _s.log_fh
     _s.log_fh = buf
     try:
-        _drive(trace.stream_agent(_FakeGraph(script), {}, {}, "测试", role=trace.AGENT))
+        _drive(stream.stream_agent(_FakeGraph(script), {}, {}, "测试", role=trace.AGENT))
     finally:
         _s.log_fh = old_fh
     return buf.getvalue()
@@ -165,7 +166,7 @@ def main() -> None:
     g = _FlakyFirstStep()
     raised, got = False, []
     try:
-        _drive(trace.stream_agent(g, {"messages": []}, {}, "测试", role=trace.AGENT), got)
+        _drive(stream.stream_agent(g, {"messages": []}, {}, "测试", role=trace.AGENT), got)
     except TimeoutError:
         raised = True
     finally:
@@ -196,7 +197,7 @@ def main() -> None:
     old_fh, _s.log_fh = _s.log_fh, buf
     g = _FlakyAtStart()
     try:
-        got = _drive(trace.stream_agent(g, {}, {}, "测试", role=trace.AGENT))
+        got = _drive(stream.stream_agent(g, {}, {}, "测试", role=trace.AGENT))
     finally:
         _s.log_fh = old_fh
     log = buf.getvalue()
@@ -211,14 +212,14 @@ def main() -> None:
 
     raised = False
     try:
-        _drive(trace.stream_agent(_AlwaysFlaky(), {}, {}, "测试", role=trace.AGENT))
+        _drive(stream.stream_agent(_AlwaysFlaky(), {}, {}, "测试", role=trace.AGENT))
     except TimeoutError:
         raised = True
     check("两次都失败 → **原样抛出**（降级由调用方决定，这里不吞）", raised)
 
     # 🔴 **确定性拒绝（4xx，除 408/429）不重试**（2026-11-06，外测 SX-07）：那是上游对
     #    **这份内容**的拒绝 —— 重发同一份会再被拒（大生成很贵，白烧一次）。
-    #    分类见 `trace.upstream_rejected`；"换措辞而不是原样再派"的说法由
+    #    分类见 `stream.upstream_rejected`；"换措辞而不是原样再派"的说法由
     #    `fault_kind` 那条链管（`unit_receipt` / `unit_handoff`）。
     #    ⚠️ 有效性自检：把 `_stream_with_retry` 里 `upstream_rejected(e)` 那个条件删掉，
     #    下面「不重试」那条必须红。
@@ -237,7 +238,7 @@ def main() -> None:
     g = _Rejected()
     raised = False
     try:
-        _drive(trace.stream_agent(g, {}, {}, "测试", role=trace.AGENT))
+        _drive(stream.stream_agent(g, {}, {}, "测试", role=trace.AGENT))
     except _Http400:
         raised = True
     check("4xx 拒绝：**原样抛**（降级由调用方决定）", raised)
@@ -268,7 +269,7 @@ def main() -> None:
     _s = session.default()
     old_fh, _s.log_fh = _s.log_fh, buf
     try:
-        _drive(trace.stream_agent(_FlakyAfterText(), {}, {}, "测试", role=trace.AGENT))
+        _drive(stream.stream_agent(_FlakyAfterText(), {}, {}, "测试", role=trace.AGENT))
     finally:
         _s.log_fh = old_fh
     log = buf.getvalue()
@@ -300,7 +301,7 @@ def main() -> None:
     g = _FlakyAfterStep()
     raised, got = False, []
     try:
-        _drive(trace.stream_agent(g, {"messages": []}, {}, "测试", role=trace.AGENT), got)
+        _drive(stream.stream_agent(g, {"messages": []}, {}, "测试", role=trace.AGENT), got)
     except TimeoutError:
         raised = True
     check("第一步走完后再抖 → **原样抛**（不静默重做一遍）", raised, f"calls={g.calls}")
