@@ -199,80 +199,69 @@ def _dump(result: dict) -> None:
         print(f"   │ ★ 隔离效果：产物正文是主上下文的 {body / ctx:.1f} 倍，全在产物库里")
 
 
-def main() -> None:
+def _parse_args() -> argparse.Namespace:
+    """命令行参数 —— 会话标识 / `--say`（非交互跑一句）/ `--answer`（自动应答）。"""
     ap = argparse.ArgumentParser(description="主 agent（完整 agent）＋ 技能 / Task / 执行器")
     ap.add_argument("--thread", default="proto-1")
     ap.add_argument("--say", help="非交互：只跑这一句")
     ap.add_argument("--answer", default="",
                     help="--say 模式下自动应答（不给就把问题打出来停住，不替用户编答案）")
-    args = ap.parse_args()
+    return ap.parse_args()
 
-    # 🔴 **CLI 进程就是一次会话**（`use` 不开作用域 —— 包 `with` 只是白白多一层缩进）。
-    #    开了它 `thread_id` 才进事件、日志才带会话标识。⚠️ **必须在 `subscribe` 之前** ——
-    #    订阅挂的是**当前会话**。
-    session.use(args.thread)
 
-    graph = build()
-    config = {"configurable": {"thread_id": args.thread}}
-    trace.subscribe(_on_event)      # 🔴 显示层从这一刻起只认事件
+def _turn(graph, config, text: str, *, answer_to: str = "") -> dict | None:
+    """跑**一轮** —— 炸了就按**轮**兜住、说清原因、返回 `None`（会话不死）。〔沿革 2〕
 
-    print(BAR)
-    print(f"主 agent = 完整 agent（自己决定：直接答 / 自己干 / 委派） · 模型={describe()}")
-    print(f"日志：{recorder.log_file()}")
-    print(BAR)
+    `answer_to`：**这条消息是在回答哪个待答任务** —— 由**通道**填
+    （下面那个 `↩` 提示符），平台不猜（模块头原则 5）。
+    """
+    init: dict = {"messages": [HumanMessage(text)], "log": []}
+    if answer_to:
+        init["answer_to"] = answer_to
+    try:
+        # 🔴 **异步驱动**（asyncio 迁移第 1 步）：节点**一个没改**，LangGraph 会把同步
+        #    节点丢进线程跑 —— 行为一个字不变，但**解开了"有 async 节点就不能同步驱动"
+        #    那个约束**（实测：同步驱动 + async 节点直接报 `No synchronous function
+        #    provided`）。之后才能一个一个把节点改成 `async def`。
+        #    ⚠️ `session.current()` 在那种线程里**认得出会话** —— langchain 的
+        #    `run_in_executor` 会 `copy_context()`（实测过）。
+        return aio.run(graph.ainvoke(init, config))
+    except Exception as e:  # noqa: BLE001
+        print(f"\n⚠️ **这一轮没跑成**（平台故障）：{type(e).__name__}: {e}")
+        print("   会话还在 —— 把刚才那句**再说一遍**就行。\n")
+        return None
 
-    def turn(text: str, answer_to: str = "") -> dict | None:
-        # 🔴 **炸一轮 ≠ 结束会话**：按**轮**兜住、说清原因、返回 None，
-        #    让调用方接着问下一句。〔沿革 2〕
-        #
-        # `answer_to`：**这条消息是在回答哪个待答任务** —— 由**通道**填
-        # （下面那个 `↩` 提示符），平台不猜（模块头原则 5）。
-        init: dict = {"messages": [HumanMessage(text)], "log": []}
-        if answer_to:
-            init["answer_to"] = answer_to
-        try:
-            # 🔴 **异步驱动**（asyncio 迁移第 1 步）：节点**一个没改**，LangGraph 会把同步
-            #    节点丢进线程跑 —— 行为一个字不变，但**解开了"有 async 节点就不能同步驱动"
-            #    那个约束**（实测：同步驱动 + async 节点直接报 `No synchronous function
-            #    provided`）。之后才能一个一个把节点改成 `async def`。
-            #    ⚠️ `session.current()` 在那种线程里**认得出会话** —— langchain 的
-            #    `run_in_executor` 会 `copy_context()`（实测过）。
-            result = aio.run(graph.ainvoke(init, config))
-        except Exception as e:  # noqa: BLE001
-            print(f"\n⚠️ **这一轮没跑成**（平台故障）：{type(e).__name__}: {e}")
-            print("   会话还在 —— 把刚才那句**再说一遍**就行。\n")
-            return None
-        if args.say:
-            # 有待答就自动补一轮（模拟用户在 `↩` 提示符下答复）—— **带标识**投回去。
-            # ⚠️ 上限 3 轮是**防死循环**：执行器每轮都可能再问一个，答完又问会一直转下去；
-            #    三轮够覆盖「一次答一个」的真实节奏，再多就该人工介入了。
-            for _ in range(3):
-                p = next_pending(result)
-                if p is None:
-                    break
-                print(f"\n❓【{p.get('skill')}】问：{asked_text(p)}")
-                # 🔴 **没给 `--answer` 就不自动应答**：把问题打出来就停 ——
-                #    不替用户编一个没说过的前提（模块头原则 6）。〔沿革 4〕
-                if not args.answer:
-                    print("   （没给 `--answer` —— 不自动应答；要自动答就带上 `--answer '…'`）")
-                    break
-                print(f"   自动答复：{args.answer}")
-                result = turn(args.answer, answer_to=p["id"])
-                if result is None:
-                    break
-        return result
 
-    if args.say:
-        print(f"\n👤 {args.say}")
-        result = turn(args.say)
-        if result is None:
-            recorder.close()
-            return
-        _dump(result)
-        print(BAR)
-        recorder.close()
+def _say_mode(graph, config, args: argparse.Namespace) -> None:
+    """**非交互**：只跑 `--say` 那一句；有待答就自动补一轮。
+
+    ⚠️ 自动补答的上限 **3 轮**是**防死循环**：执行器每轮都可能再问一个，答完又问会
+    一直转下去；三轮够覆盖「一次答一个」的真实节奏，再多就该人工介入了。
+    """
+    print(f"\n👤 {args.say}")
+    result = _turn(graph, config, args.say)
+    if result is None:
         return
+    for _ in range(3):
+        p = next_pending(result)
+        if p is None:
+            break
+        print(f"\n❓【{p.get('skill')}】问：{asked_text(p)}")
+        # 🔴 **没给 `--answer` 就不自动应答**：把问题打出来就停 ——
+        #    不替用户编一个没说过的前提（模块头原则 6）。〔沿革 4〕
+        if not args.answer:
+            print("   （没给 `--answer` —— 不自动应答；要自动答就带上 `--answer '…'`）")
+            break
+        print(f"   自动答复：{args.answer}")
+        result = _turn(graph, config, args.answer, answer_to=p["id"])
+        if result is None:
+            break
+    _dump(result)
+    print(BAR)
 
+
+def _interactive(graph, config) -> None:
+    """**交互循环** —— 读一句 → 跑一轮 → 摆待答。"""
     print("输入你的请求（空行退出）。试试这些：\n")
     print("  · 你好                              → 主 agent 应该**自己答**（不建 Task）")
     print("  · 帮我备课，三年级数学               → 需要专业技能 → 委派给隔离执行器")
@@ -285,7 +274,7 @@ def main() -> None:
             break
         if not text:
             break
-        result = turn(text)
+        result = _turn(graph, config, text)
         if result is None:
             continue          # 这一轮没跑成 → 接着问下一句（会话不死）
         _dump(result)
@@ -304,12 +293,39 @@ def main() -> None:
                 break
             if not ans:
                 break
-            result = turn(ans, answer_to=p["id"])
+            result = _turn(graph, config, ans, answer_to=p["id"])
             if result is None:
                 break
             _dump(result)
             print(BAR)
 
+
+def main() -> None:
+    """裸原型 CLI —— **装配 → 跑**（非交互 / 交互两条路），收尾关日志。
+
+    ⚠️ **它自己只做编排**（2026-11-09 拆）：参数 / 装配 / 两种跑法各在一个私有件里。
+    原来是一个 113 行的函数（`turn` 闭包 ＋ 两条路缠在一起）。
+    """
+    args = _parse_args()
+
+    # 🔴 **CLI 进程就是一次会话**（`use` 不开作用域 —— 包 `with` 只是白白多一层缩进）。
+    #    开了它 `thread_id` 才进事件、日志才带会话标识。⚠️ **必须在 `subscribe` 之前** ——
+    #    订阅挂的是**当前会话**。
+    session.use(args.thread)
+
+    graph = build()
+    config = {"configurable": {"thread_id": args.thread}}
+    trace.subscribe(_on_event)      # 🔴 显示层从这一刻起只认事件
+
+    print(BAR)
+    print(f"主 agent = 完整 agent（自己决定：直接答 / 自己干 / 委派） · 模型={describe()}")
+    print(f"日志：{recorder.log_file()}")
+    print(BAR)
+
+    if args.say:
+        _say_mode(graph, config, args)
+    else:
+        _interactive(graph, config)
     recorder.close()
     print(f"完整日志：{recorder.log_file()}")
 

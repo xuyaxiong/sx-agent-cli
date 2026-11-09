@@ -322,6 +322,142 @@ def turn_lines(turns: list[dict]) -> list[str]:
     return out
 
 
+def _index(aids: list[str]) -> list[str]:
+    """产物 ID 列表 → 清单行（**含缺失**）。
+
+    🔴 **缺失要显式写出来，不许静默跳过**：有 ID 而取不到是**异常**，必须说 ——
+    同一份坏数据在回执那边写的是「**产物库里没有这一条**」，两处不许两副面孔。〔沿革 9〕
+    """
+    out: list[str] = []
+    for aid in aids:
+        a = artifacts_mod.get(aid)
+        if not a:
+            out.append(f"- {aid}（**产物库里没有这一条**）")
+            continue
+        out.append(
+            f"- {aid}《{a['title']}》（{len(a['content'])} 字）"
+            f"—— {a.get('summary') or '（无梗概）'}"
+        )
+    return out
+
+
+def _index_block(hop: str, aids: list[str], tail: str) -> str | None:
+    """一个**产物清单段**（已产出 / 可读）—— 清单空就不渲染这一块。
+
+    ⚠️ 两段的形状**一模一样**（段名 ＋ 清单行 ＋ 尾句），所以只有这一处拼 ——
+    原来是两段各写一遍（`already_produced` / `readable`）。
+    """
+    ids = [a for a in aids if a]
+    if not ids:
+        return None
+    return "\n".join([
+        *section_head(hop),
+        *[f"{BODY}{x}" for x in _index(ids)],
+        f"{BODY}{tail}",
+    ])
+
+
+def _block_task(task: Task) -> str:
+    """① **任务**：这次要什么。
+
+    🔴 **来源标注**：执行器必须能分清"**哪句是用户说的、哪句是模型说的**"。
+    平台**不阻止**主 agent 补充信息（那是它的活），但**必须让下游知道这是谁的话** ——
+    否则模型补的东西会被当成用户的事实。〔沿革 2〕
+    """
+    return "\n".join([*section_head("task"), *body_lines(task.get("task", ""), BODY)])
+
+
+def _block_user_turns(task: Task) -> str | None:
+    """② **用户原话**（平台硬搬，未经转述）—— 渐进式披露：清单常驻、全文按需。"""
+    turns = task.get("user_turns") or []
+    if not turns:
+        return None
+    # 索引的**形状**在 `turn_lines`（分层 ＋ 平台不"点名"那条规矩都在那里）；
+    # 这里只负责加段名、来源标注和块尾那句逃生口。
+    block = section_head("user_turns") + turn_lines(turns)
+    block.append(
+        f"{BODY}（**这是事实来源**；【任务】是这次的要求，两者冲突时**以原话为准**。"
+        "要看哪一轮的**完整上下文**（它回答的上一句 ＋ 原话）就用 `read_user_turn(轮次)` 读，"
+        "不要凭那几十个字猜。）"
+    )
+    # ⚠️ 这里**不报 `trace.cut`**：索引行**不是"被切掉的正文"**，是这一层**本来
+    #    就只放一行** —— 审计的四种截断状态里它属于 📋「清单 + 按需」（正文按需取），
+    #    不是 ⚠️「显式截断」。"这轮多大、你只看到开头"由 `（X 字）` ＋ `…` ＋
+    #    块尾那句逃生口说清楚。〔沿革 6〕
+    return "\n".join(block)
+
+
+def _block_answered(task: Task) -> str | None:
+    """③ **问答经过** —— **一条时间序**（历次问→答，末尾接上"它最后说的那句"）。
+
+    🔴 **一问一答成对**：`report` 是**覆盖**写的（`absorb_outcome` 无条件覆盖），
+    所以只存答案的话，第二次重入之后旧答案就成了**没有指涉的孤儿** —— 那正是修过的
+    "答第二个把第一个冲掉"的**镜像版**（那次修的是答案，这次是问题）。问题由**平台**
+    在收下答案的那一刻从 `Task.asked`（`ask_user` 的参数原话）原样截下，不靠任何
+    LLM 转述。〔沿革 3〕
+    """
+    qa = [x for x in (task.get("qa") or [])
+          if isinstance(x, dict) and str(x.get("a") or "").strip()]
+    report = (task.get("report") or "").strip()
+    if not (qa or report):
+        return None
+    # 🔴 **确定性去重**（判据：见模块 docstring ②）—— 逐字比较两个**我们自己写的字段**，
+    # 不是从文本里反结构化。成立与否是"恒成立"而不是"碰巧"，所以能断言。〔沿革 12〕
+    folded = bool(qa) and bool(report) and str(qa[-1].get("q") or "").strip() == report
+    block = section_head("answered")
+    for i, x in enumerate(qa, 1):
+        q = str(x.get("q") or "").strip()
+        by = str(x.get("by") or "用户")
+        if q:
+            # `q` 是 `ask_user` 的**参数原话**（结构 ✓，不是从散文里抽的）——
+            # 所以这里**没有**"抽取哪句才是问题"那种语义判断要做（见 §0.7）。
+            block.append(f"{BODY}- **问 {i}**（执行器原话）：")
+            block += body_lines(q, BODY * 2)
+        else:
+            # ⚠️ 空 = **这一条没记下 `ask_user` 的参数**（fixture / 手写 state），
+            #    不等于"它没说话" —— 它说的那段话在下面「它最后说的那句」里。
+            #    说清是哪种，别让读的人以为它一个字都没说（同 `finalize._one`）。
+            block.append(f"{BODY}- **问 {i}**：（**这一条没留下问题原话**）")
+        # ⚠️ 「答」是**和「问」平级的一项**，不是「问」的续行 ——
+        # 原来是 `  **用户** 答：`（和问的续行同一个缩进），答看起来像问的一部分。
+        block.append(f"{BODY}- **答 {i}**（**{by}**）：")
+        block += body_lines(str(x["a"]), BODY * 2)
+    if folded:
+        block.append(
+            f"{BODY}（**它最后说的那句**就是上面「问 {len(qa)}」，逐字相同 —— "
+            "原样，**不重复贴**。）"
+        )
+    elif report:
+        # `report` 不是任何一问。**两条路都会走到这里**：
+        #   - 首跑 / 试答后重跑：还没有人答过，它那段话是**唯一的进展**；
+        #   - 有 `qa` 的那些轮：「问」取的是 `asked`，与 `report` 本就不是同一句 ——
+        #     那段话是它自己的收尾，不该丢。**一个字都不能少**，所以照原样给它一块。
+        # ⚠️ "这一轮还没有人答"只在**没有 `qa`** 时才是真话（〔沿革 11〕）。
+        tail = "" if qa else "，这一轮还没有人答"
+        block.append(f"{BODY}- **它最后说的那句**（原样{tail}）：")
+        block += body_lines(report, BODY * 2)
+    if len(qa) > 1:
+        block.append(f"{BODY}（如前后答复冲突，**以后面的为准**）")
+    if folded:
+        # 折叠**也要报一刀**（同 `trace.cut`）：标记在**文本里**（读的人看得见），
+        # 这一行在**日志里**（复盘的人看得见）—— 两者都要有。
+        trace.note(
+            f"🔁 折叠重复 · 交接书：它最后说的那句 == 上面「问 {len(qa)}」"
+            f"（{len(report)} 字，原样不重复贴）"
+        )
+    return "\n".join(block)
+
+
+def _block_resume(task: Task) -> str | None:
+    """⑤ **续跑提示** —— **只有重入才说**：首跑说"接着干"会让它以为有前情。"""
+    if not (task.get("report") or task.get("qa")):
+        return None
+    return "\n".join([
+        *section_head("resume"),
+        f"{BODY}接着已有的工作继续，**不要重复已完成的工作**。",
+    ])
+
+
 def render_briefing(task: Task) -> str:
     """把 Task 渲染成**执行器的输入** —— 所有重入路径的唯一入口。
 
@@ -331,133 +467,21 @@ def render_briefing(task: Task) -> str:
     ⚠️ **渲染出来的就是全部**：没有"给人看的另一份"（用户：*"你显示给我看的，
     就是传给 llm 看的"*）—— 日志里 `📥 INJECT` dump 的是这个函数的返回值本身，
     不是它的改写。
+
+    ⚠️ **它自己只做拼装**（2026-11-09 拆）：六块各在一个私有件里，空块不渲染。
+    原来是一个 136 行的函数，六段的排版和内容判断全缠在一起。
     """
-
-    blocks: list[str] = []
-
-    # ── ① 任务：这次要什么 ──────────────────────────────────────────────
-    # 🔴 **来源标注**：执行器必须能分清"**哪句是用户说的、哪句是模型说的**"。
-    # 平台**不阻止**主 agent 补充信息（那是它的活），但**必须让下游知道这是谁的话** ——
-    # 否则模型补的东西会被当成用户的事实。〔沿革 2〕
-    blocks.append("\n".join([*section_head("task"), *body_lines(task.get("task", ""), BODY)]))
-
-    # ── ② 用户原话（平台硬搬，未经转述）—— 渐进式披露：清单常驻、全文按需 ──
-    turns = task.get("user_turns") or []
-    if turns:
-        # 索引的**形状**在 `turn_lines`（分层 ＋ 平台不"点名"那条规矩都在那里）；
-        # 这里只负责加段名、来源标注和块尾那句逃生口。
-        block = section_head("user_turns") + turn_lines(turns)
-        block.append(
-            f"{BODY}（**这是事实来源**；【任务】是这次的要求，两者冲突时**以原话为准**。"
-            "要看哪一轮的**完整上下文**（它回答的上一句 ＋ 原话）就用 `read_user_turn(轮次)` 读，"
-            "不要凭那几十个字猜。）"
-        )
-        blocks.append("\n".join(block))
-        # ⚠️ 这里**不报 `trace.cut`**：索引行**不是"被切掉的正文"**，是这一层**本来
-        #    就只放一行** —— 审计的四种截断状态里它属于 📋「清单 + 按需」（正文按需取），
-        #    不是 ⚠️「显式截断」。"这轮多大、你只看到开头"由 `（X 字）` ＋ `…` ＋
-        #    块尾那句逃生口说清楚。〔沿革 6〕
-
-    # ── ③ 问答经过：**一条时间序**（历次问→答，末尾接上"它最后说的那句"）──
-    #
-    # 🔴 **一问一答成对**：`report` 是**覆盖**写的（`absorb_outcome` 无条件覆盖），
-    # 所以只存答案的话，第二次重入之后旧答案就成了**没有指涉的孤儿** —— 那正是修过的
-    # "答第二个把第一个冲掉"的**镜像版**（那次修的是答案，这次是问题）。问题由**平台**
-    # 在收下答案的那一刻从 `Task.asked`（`ask_user` 的参数原话）原样截下，不靠任何
-    # LLM 转述。〔沿革 3〕
-    qa = [x for x in (task.get("qa") or [])
-          if isinstance(x, dict) and str(x.get("a") or "").strip()]
-    report = (task.get("report") or "").strip()
-    # 🔴 **确定性去重**（判据：见模块 docstring ②）—— 逐字比较两个**我们自己写的字段**，
-    # 不是从文本里反结构化。成立与否是"恒成立"而不是"碰巧"，所以能断言。〔沿革 12〕
-    folded = bool(qa) and bool(report) and str(qa[-1].get("q") or "").strip() == report
-    if qa or report:
-        block = section_head("answered")
-        for i, x in enumerate(qa, 1):
-            q = str(x.get("q") or "").strip()
-            by = str(x.get("by") or "用户")
-            if q:
-                # `q` 是 `ask_user` 的**参数原话**（结构 ✓，不是从散文里抽的）——
-                # 所以这里**没有**"抽取哪句才是问题"那种语义判断要做（见 §0.7）。
-                block.append(f"{BODY}- **问 {i}**（执行器原话）：")
-                block += body_lines(q, BODY * 2)
-            else:
-                # ⚠️ 空 = **这一条没记下 `ask_user` 的参数**（fixture / 手写 state），
-                #    不等于"它没说话" —— 它说的那段话在下面「它最后说的那句」里。
-                #    说清是哪种，别让读的人以为它一个字都没说（同 `finalize._one`）。
-                block.append(f"{BODY}- **问 {i}**：（**这一条没留下问题原话**）")
-            # ⚠️ 「答」是**和「问」平级的一项**，不是「问」的续行 ——
-            # 原来是 `  **用户** 答：`（和问的续行同一个缩进），答看起来像问的一部分。
-            block.append(f"{BODY}- **答 {i}**（**{by}**）：")
-            block += body_lines(str(x["a"]), BODY * 2)
-        if folded:
-            block.append(
-                f"{BODY}（**它最后说的那句**就是上面「问 {len(qa)}」，逐字相同 —— "
-                "原样，**不重复贴**。）"
-            )
-        elif report:
-            # `report` 不是任何一问。**两条路都会走到这里**：
-            #   - 首跑 / 试答后重跑：还没有人答过，它那段话是**唯一的进展**；
-            #   - 有 `qa` 的那些轮：「问」取的是 `asked`，与 `report` 本就不是同一句 ——
-            #     那段话是它自己的收尾，不该丢。**一个字都不能少**，所以照原样给它一块。
-            # ⚠️ "这一轮还没有人答"只在**没有 `qa`** 时才是真话（〔沿革 11〕）。
-            tail = "" if qa else "，这一轮还没有人答"
-            block.append(f"{BODY}- **它最后说的那句**（原样{tail}）：")
-            block += body_lines(report, BODY * 2)
-        if len(qa) > 1:
-            block.append(f"{BODY}（如前后答复冲突，**以后面的为准**）")
-        blocks.append("\n".join(block))
-        if folded:
-            # 折叠**也要报一刀**（同 `trace.cut`）：标记在**文本里**（读的人看得见），
-            # 这一行在**日志里**（复盘的人看得见）—— 两者都要有。
-
-            trace.note(
-                f"🔁 折叠重复 · 交接书：它最后说的那句 == 上面「问 {len(qa)}」"
-                f"（{len(report)} 字，原样不重复贴）"
-            )
-
-    def _index(aids: list[str]) -> list[str]:
-        """产物 ID 列表 → 清单行（**含缺失**）。
-
-        🔴 **缺失要显式写出来，不许静默跳过**：有 ID 而取不到是**异常**，必须说 ——
-        同一份坏数据在回执那边写的是「**产物库里没有这一条**」，两处不许两副面孔。
-        〔沿革 9〕
-        """
-        out: list[str] = []
-        for aid in aids:
-            a = artifacts_mod.get(aid)
-            if not a:
-                out.append(f"- {aid}（**产物库里没有这一条**）")
-                continue
-            out.append(
-                f"- {aid}《{a['title']}》（{len(a['content'])} 字）"
-                f"—— {a.get('summary') or '（无梗概）'}"
-            )
-        return out
-
-    produced = _index([a for a in (task.get("artifacts") or []) if a])
-    if produced:
-        blocks.append("\n".join([
-            *section_head('already_produced'),
-            *[f"{BODY}{x}" for x in produced],
-            f"{BODY}（这次要**在它基础上补全**，提交完整版；不要从零重写。）",
-        ]))
-
-    refs = _index([a for a in (task.get("refs") or []) if a])
-    if refs:
-        blocks.append("\n".join([
-            *section_head('readable'),
-            *[f"{BODY}{x}" for x in refs],
-            f"{BODY}（这是清单，不是正文。要用哪一份就用 read_artifact 读全文，不要凭标题猜。）",
-        ]))
-
-    if report or qa:
-        # 只有**重入**才说这句：首跑说"接着干"会让它以为有前情
-        blocks.append("\n".join([
-            *section_head("resume"),
-            f"{BODY}接着已有的工作继续，**不要重复已完成的工作**。",
-        ]))
-    return "\n\n".join(blocks)
+    blocks = [
+        _block_task(task),
+        _block_user_turns(task),
+        _block_answered(task),
+        _index_block("already_produced", task.get("artifacts") or [],
+                     "（这次要**在它基础上补全**，提交完整版；不要从零重写。）"),
+        _index_block("readable", task.get("refs") or [],
+                     "（这是清单，不是正文。要用哪一份就用 read_artifact 读全文，不要凭标题猜。）"),
+        _block_resume(task),
+    ]
+    return "\n\n".join(b for b in blocks if b)
 
 
 def absorb_outcome(rec: Task, outcome: Any) -> None:

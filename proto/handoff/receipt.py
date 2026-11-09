@@ -299,27 +299,22 @@ def next_note(kind: str, *, skill: str = "", fault_kind: str = "") -> str:
 # ──────────────────────────── 构造：结果 → 对象 ────────────────────────────
 
 
-def build_receipt(outcome: Any, *, agent_answer: str = "", note: str = "") -> Receipt:
-    """执行器的结果 ＋ 处置提示 → **回执对象**。**注入上下文之前**，一切都在对象上。
-
-    ⚠️ 各段是**有条件**的（有产物才出【产出的产物】、试答过才出【你补的信息】）——
-    条件写在这里，`HOPS['receipt']` 声明的 8 段是**上限**。
+def _kind_of(outcome: Any) -> str:
+    """**出口分类** —— 🔴 **平台故障先判**：这一轮**根本没跑成**，与"执行器干不了"
+    （failed）是两回事 —— 出口分类、交付行、下一步**全都不同**，所以它自己是一个
+    `kind`，不借 failed 的文案（"推了 N 轮"对故障是假话）。〔沿革 6〕
     """
-    # 🔴 **平台故障**先判：这一轮**根本没跑成**，与"执行器干不了"（failed）是两回事 ——
-    #    出口分类、交付行、下一步**全都不同**，所以它自己是一个 `kind`，不借 failed 的
-    #    文案（"推了 N 轮"对故障是假话）。〔沿革 6〕
     if outcome.fault:
-        kind = "fault"
-    elif outcome.status == "completed":
-        kind = "completed"
-    elif outcome.status == "waiting_for_input":
-        kind = "waiting"
-    else:
-        kind = "failed"
+        return "fault"
+    if outcome.status == "completed":
+        return "completed"
+    if outcome.status == "waiting_for_input":
+        return "waiting"
+    return "failed"
 
-    sections: dict[str, str] = {}
 
-    # ① 交付结果：一行说清成没成、交付了几样
+def _deliver_line(outcome: Any, kind: str) -> str:
+    """① **交付行**：一行说清成没成、交付了几样。"""
     if kind == "fault":
         # 🔴 **三档故障三条交付行**：各有各的**处置**，不许借彼此的文案 ——
         #    `rejected` 那档尤其不许说"重试过一次仍失败"（**根本没重试**，见 `trace`）。
@@ -328,17 +323,57 @@ def build_receipt(outcome: Any, *, agent_answer: str = "", note: str = "") -> Re
         #    留空比编一个数强（同 `Task.asked` 取不到时的规矩）。
         #    ⚠️ `max(1, …)`：**别说出"跑到 0 分钟"**（<60s 时 `:.0f` 会四舍五入到 0，
         #    而"跑了 0 分钟"是句读不通的话）。〔沿革 16〕
-        _mins = (f"（跑到 {max(1, round(outcome.wall_s / 60))} 分钟还没交）"
-                 if getattr(outcome, "wall_s", 0) else "")
-        _deliver = _DELIVER_BY_FAULT.get(outcome.fault_kind, DELIVERY_FAULT_UNCLASSIFIED)
+        mins = (f"（跑到 {max(1, round(outcome.wall_s / 60))} 分钟还没交）"
+                if getattr(outcome, "wall_s", 0) else "")
+        template = _DELIVER_BY_FAULT.get(outcome.fault_kind, DELIVERY_FAULT_UNCLASSIFIED)
         # ⚠️ 三张模板**都不带别的占位符**（只有 timeout 那个 `{}`），所以统一 format 是安全的。
-        sections["deliver"] = _deliver.format(_mins)
-    elif kind == "completed":
-        sections["deliver"] = DELIVERY["completed"].format(len(outcome.artifacts))
-    elif kind == "waiting":
-        sections["deliver"] = DELIVERY["waiting"]
-    else:
-        sections["deliver"] = DELIVERY["failed"].format(outcome.rounds)
+        return template.format(mins)
+    if kind == "completed":
+        return DELIVERY["completed"].format(len(outcome.artifacts))
+    if kind == "waiting":
+        return DELIVERY["waiting"]
+    return DELIVERY["failed"].format(outcome.rounds)
+
+
+def _produced_block(aids: list[str]) -> str | None:
+    """② **产出的产物**：逐条列，**带真实路径**（主 agent 要答"文件在哪"）。
+
+    ⚠️ 缺失的产物**显式写出来**，不静默跳过 —— 与 `briefing._index` 同一副面孔。
+    """
+    produced = [a for a in aids if a]
+    if not produced:
+        return None
+    block: list[str] = []
+    for aid in produced:
+        a = artifacts_mod.get(aid)
+        if not a:
+            block.append(f"- {aid}（**产物库里没有这一条**）")
+            continue
+        block.append(
+            f"- {aid}《{a['title']}》（{len(a['content'])} 字）"
+            f"—— {a.get('summary') or '（无梗概）'}"
+        )
+        if a.get("path"):
+            block.append(f"  文件：{a['path']}")
+    block.append(
+        # ⚠️ **不许写死 ID**：用占位形式，和【下一步】那句**同一套**写法 ——
+        #    指到"存在但内容不对"的出处，比指不到更坏（同 E2 那条教训）。〔沿革 11〕
+        "（正文在**产物库**里，你的上下文里没有 —— 要看就用 `read_artifact('<产物 ID>')` 读，"
+        "不要凭标题猜。回复里报 ID ＋ 路径就够了。）"
+    )
+    return "\n".join(block)
+
+
+def build_receipt(outcome: Any, *, agent_answer: str = "", note: str = "") -> Receipt:
+    """执行器的结果 ＋ 处置提示 → **回执对象**。**注入上下文之前**，一切都在对象上。
+
+    ⚠️ 各段是**有条件**的（有产物才出【产出的产物】、试答过才出【你补的信息】）——
+    条件写在这里，`HOPS['receipt']` 声明的 8 段是**上限**。
+
+    ⚠️ **它自己只做拼装**（2026-11-09 拆）：出口分类 / 交付行 / 产物清单各在一个私有件里。
+    """
+    kind = _kind_of(outcome)
+    sections: dict[str, str] = {"deliver": _deliver_line(outcome, kind)}
 
     # ①b 它要的信息：**`ask_user` 的参数原话**（结构 ✓ —— 不是从它的话里挑出来的）
     #
@@ -355,28 +390,10 @@ def build_receipt(outcome: Any, *, agent_answer: str = "", note: str = "") -> Re
             "（**这一条没留下问题原话** —— 下面是它最后说的那段，可能混着过场）"
         )
 
-    # ② 产出的产物：逐条列，**带真实路径**（主 agent 要答"文件在哪"）
-    produced = [a for a in (outcome.artifacts or []) if a]
+    # ② 产出的产物
+    produced = _produced_block(outcome.artifacts or [])
     if produced:
-        block: list[str] = []
-        for aid in produced:
-            a = artifacts_mod.get(aid)
-            if not a:
-                block.append(f"- {aid}（**产物库里没有这一条**）")
-                continue
-            block.append(
-                f"- {aid}《{a['title']}》（{len(a['content'])} 字）"
-                f"—— {a.get('summary') or '（无梗概）'}"
-            )
-            if a.get("path"):
-                block.append(f"  文件：{a['path']}")
-        block.append(
-            # ⚠️ **不许写死 ID**：用占位形式，和【下一步】那句**同一套**写法 ——
-            #    指到"存在但内容不对"的出处，比指不到更坏（同 E2 那条教训）。〔沿革 11〕
-            "（正文在**产物库**里，你的上下文里没有 —— 要看就用 `read_artifact('<产物 ID>')` 读，"
-            "不要凭标题猜。回复里报 ID ＋ 路径就够了。）"
-        )
-        sections["produced"] = "\n".join(block)
+        sections["produced"] = produced
 
     # ③ 执行器说：**全文，一个字都不截**（这是"它交付了什么"）
     #
@@ -407,8 +424,8 @@ def build_receipt(outcome: Any, *, agent_answer: str = "", note: str = "") -> Re
         #    ⚠️ 走表不走 if/elif：加档忘了补表 → `unit_handoff` ⑬ 当场红。
         #    ⚠️ 兜底**一个事实都不宣称**（原来兜到"重试过一次仍然失败"，那对
         #    `rejected`/`timeout` 都是假话）。〔沿革 14〕〔沿革 19〕
-        _section = _FAULT_SECTION.get(outcome.fault_kind, _FAULT_SECTION_UNCLASSIFIED)
-        sections["fault"] = _section.format(detail=outcome.fault)
+        section = _FAULT_SECTION.get(outcome.fault_kind, _FAULT_SECTION_UNCLASSIFIED)
+        sections["fault"] = section.format(detail=outcome.fault)
 
     return {"kind": kind, "sections": sections}
 
