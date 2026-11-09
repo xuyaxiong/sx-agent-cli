@@ -256,6 +256,23 @@ def main() -> None:
     check("proto 运行时 import 图**无环**（含函数内；TYPE_CHECKING 不算）",
           not cycles, repr(cycles))
 
+    # ── 产品包**不许** import 测试包（2026-11-09 搬 `app/` 时立的机制）──
+    # 🔴 为什么是机制：`chat.py` 原来 `from evals.harness import ...`（8 样）
+    #    ＋ `from evals.run import _append_trace` —— **产品依赖测试包**，于是
+    #    "分发单元"和"测试单元"混居、`evals/` 没法整体排除出生产镜像。
+    #    搬完得有东西盯着它**别长回来**：一次 `from evals.xxx import` 就复发，
+    #    而且**一个字都不报错**（跑得好好的，只是包里多带了一份测试代码）。
+    #    ⚠️ **反方向不管** —— 测试 import 产品是对的（`unit_*` 全靠它）。
+    #    有效性自检：在 `app/chat.py` 里写一行 `from evals import checks` → 这里必须红。
+    _leaks: list[str] = []
+    for _pkg in ("proto", "app"):
+        for _p in _py_files(_pkg):
+            for _ln, _mod, _names in _runtime_imports(_p):
+                if _mod == "evals" or _mod.startswith("evals."):
+                    _leaks.append(f"{_p.relative_to(ROOT)}:{_ln} → {_mod}")
+    check("`proto/` / `app/` **不 import** `evals/`（产品不许依赖测试包）",
+          not _leaks, repr(_leaks))
+
     # ─────────────────────────── ② 运行时语义 ───────────────────────────
 
     print("\n② 运行时语义（换表之后所有人都得看见）")

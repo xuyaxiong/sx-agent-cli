@@ -1,6 +1,6 @@
 """诊断：一次 `graph.invoke` 里，`prepare` / `finalize` 到底跑了几次？
 
-现象（`evals/runs/f7fix/*`）：第 2 轮开始，日志里 prepare/finalize 各出现 2 次，
+现象（`runs/f7fix/*`）：第 2 轮开始，日志里 prepare/finalize 各出现 2 次，
 第 3 轮 4 次。查清是图真的重跑，还是别的原因。
 
     uv run python -m experiments.probe_double_prepare

@@ -29,7 +29,7 @@ uv run python -m evals.unit_frozen_paths               # 单元：**冻结后的
 
 **实测发现**（F1–F6）记在 `../docs/discussion-log.md`。
 
-结果落 `evals/runs/<tag>/`：
+结果落 `runs/<tag>/`（仓库顶层；打包后是 exe 旁边）：
 
 | 文件 | 给谁看 | 内容 |
 |---|---|---|

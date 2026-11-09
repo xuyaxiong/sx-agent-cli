@@ -67,6 +67,6 @@
   （16 个：`briefing` `receipt` `handoff` `handoff_matrix` `handoff_form` `ask_flow`
   `console` `decision` `feed_waiting` `stream_join` `artifact_race`
   `frozen_paths` `registry` `stop_on_pending` `proto_cli` `judge`）
-- 跑真会话：`uv run python -m evals.chat`；跑批：`uv run python -m evals.run`
+- 跑真会话：`uv run python -m app.chat`；跑批：`uv run python -m evals.run`
 - **结论必须实测**（`docs/principles.md` ③）：不说"我觉得应该没问题"；
   实测要写清"想验证什么、怎么验证、预期是什么"

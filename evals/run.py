@@ -5,7 +5,7 @@
     uv run python -m evals.run --tag x --only s01,s04 --reps 5
 
 每个 run 起一个**子进程**（理由见 `_child.py` 的模块 docstring）。
-跑完自动出报告：`evals/runs/<tag>/report.md`。
+跑完自动出报告：`runs/<tag>/report.md`。
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent  # langgraph-lab/
 CASES_DIR = HERE / "cases"
 # 🔴 **不要自己算 `HERE / "runs"`**（2026-10-30 踩过）：冻结后 `HERE` 在 `_internal/` 里，
-# 于是 `_append_trace` 把 trace 附录写进了 `_internal/evals/runs/` —— 用户永远看不到，
+# 于是 trace 附录被写进了 `_internal/evals/runs/` —— 用户永远看不到，
 # 收回来的一堆 `_run.md` 全都缺了附录。**路径只有 `harness` 一个来源。**
 from app.runtime import RUNS_DIR  # noqa: E402
 from app import runtime  # noqa: E402

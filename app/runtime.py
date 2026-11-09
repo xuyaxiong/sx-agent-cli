@@ -104,9 +104,14 @@ RESOURCE_ROOT = proto_config.RESOURCE_ROOT
 #: 两边指的本来就是同一个地方 —— 原来那条 `if FROZEN` 分叉**没有理由**，删了。
 DEFAULT_SKILLS_DIR = ROOT / "skills"
 
-#: **运行记录落哪** —— 冻结后是 exe 旁边的 `runs/`（便携、用户找得到、方便整包发回来）；
-#: 开发时还是仓库里的 `evals/runs/`（文档和历史记录都指这里）。
-RUNS_DIR = (ROOT / "runs") if FROZEN else (ROOT / "evals" / "runs")
+#: **运行记录落哪** —— 应用根下的 `runs/`：exe 旁边（便携、用户找得到、方便整包发回来），
+#: 开发时就是仓库顶层的 `runs/`。
+#: 🔴 **冻结 / 开发是同一个表达式**（2026-11-09）：原来开发那条走 `evals/runs/` ——
+#: 那是"跑批的输出住在测试目录里"，**没有理由**（同 `DEFAULT_SKILLS_DIR` 那条）。
+#: 连带 `evals/` 从此**只有测试代码**。
+#: ⚠️ 历史数据也一起搬过来了（`evals/runs/*` → `runs/*`，1227 个文件），
+#: 所以 `report.py <老 tag>` 照旧读得到。
+RUNS_DIR = ROOT / "runs"
 
 #: 首次运行时铺进用户技能目录的**示例技能**（让他们知道技能包该长什么样）。
 #: 从只读资源里取 —— 开发时就是 `skills/` 本身。

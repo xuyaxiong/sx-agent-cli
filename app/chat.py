@@ -753,8 +753,8 @@ def main() -> None:
 
     label = Path(args.skills).name or "skills"
     tag = f"interactive-{label}-{time.strftime('%m%d-%H%M%S')}"
-    # 记录落 `harness.RUNS_DIR`：开发时是仓库里的 `evals/runs/`，
-    # 打包后是 **exe 旁边的 `runs/`** —— 用户找得到，也方便整包发回来。
+    # 记录落 `runtime.RUNS_DIR`：**exe 旁边 / 仓库顶层的 `runs/`** ——
+    # 用户找得到，也方便整包发回来。
     out_dir = RUNS_DIR / tag
     out_dir.mkdir(parents=True, exist_ok=True)
 
