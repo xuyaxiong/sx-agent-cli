@@ -418,8 +418,11 @@ KINDS = frozenset({
     # llm.safe_structured（`llm_io` = 那次调用的 PROMPT / RESPONSE / 失败提示）
     # ⚠️ ~~`judge`~~ 已删：判定那次调用退休了，没人再发它。〔沿革 25〕
     "ask_main", "llm_io",
-    # stream.stream_agent（`retry` = 这一轮抖动、已重试一次）
-    "retry",
+    # stream.stream_agent（`retry` = 这一轮抖动、已重试一次；
+    # `writing` = **工具参数正在流**（写产物那段最长，实测 5–9 分钟）—— 报"已收到 N 字"）
+    "retry", "writing",
+    # artifacts.store_artifact（`artifact` = 产物**落盘**了：ID / 标题 / 字数 / 路径）
+    "artifact",
     # graph.node_agent（`stream_empty` = 流式**一步都没吐** → 退回 `invoke` 兜底，
     # 这一趟**全程没有流式日志** —— 正是那个函数要治的黑屏，所以必须让用户看见）
     "stream_empty",

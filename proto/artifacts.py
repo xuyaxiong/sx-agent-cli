@@ -96,7 +96,7 @@ from pathlib import Path
 
 from langchain.tools import tool
 
-from proto import session
+from proto import session, trace
 
 
 # ──────────────────────────── 产物类型（声明 + 硬性派发） ────────────────────────────
@@ -214,6 +214,15 @@ def store_artifact(title: str, summary: str, file_type: str, content: str) -> st
         p.write_text(rec["content"], encoding="utf-8")
         rec["path"] = str(p)
     session.current().artifacts[aid] = rec
+    # 🔴 **落盘那一刻说一声**（2026-11-09）。写产物是**全程最长的一段静默**（实测一个 HTML
+    #    产物要 5–9 分钟）—— "开始"和"进度"由传输层报（`stream._stream_agent`，它只认
+    #    "某个工具的参数在流"），**"结束"必须由这里报**：只有本模块认识"产物"这个概念。
+    #    ⚠️ 报的是**结构事实**（ID / 标题 / 字数 / 路径），不是从正文里读的。
+    trace.note(
+        f"✅ 产物落盘 · {aid}《{title}》（{len(content)} 字）"
+        + (f" → {rec['path']}" if rec.get("path") else "（本次只进内存，没落盘）"),
+        kind="artifact",
+    )
     return aid
 
 

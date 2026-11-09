@@ -38,6 +38,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from proto import trace
@@ -151,14 +152,75 @@ async def _stream_with_retry(graph, state, config, who: str, role: str):
                  "—— 已重试一次（上面流出去的那半段作废）", kind="retry")
 
 
+#: **写产物的进度**（2026-11-09）—— 实测：执行器写一个 HTML 产物要 **5–9 分钟**，
+#: 而那段**一个字都上不了屏**（模型吐的是**工具调用的参数**，`_chunk_text` 只认 `content`）。
+#: 用户原话：*"当执行器准备生成产物的时候 等待时间会非常长 而且用户并不知道一些细节"*。
+#:
+#: ⚠️ **本模块不认识"产物"** —— 这里只说"**某个工具的参数正在流、已收到 N 字**"（通用）。
+#: "产物落盘"那一声由 `proto/artifacts.py` 发（**它才认识"产物"这个概念**）。
+#:
+#: ⚠️ **不点名任何工具**：判据是**参数累计多少字** —— 小工具（`read_artifact` /
+#: `ask_user`）的参数只有几十字，**不会报**；`write_artifact` 一写几千字，**会报**。
+_WRITE_REPORT_AT = 200        # 参数超过这么多字才开始报
+_WRITE_REPORT_EVERY = 1000    # 之后每多这么多字报一次
+_WRITE_REPORT_EVERY_S = 20    # 或者每这么久报一次（字少但很慢时）
+
+
+def _tool_arg_delta(chunk) -> tuple[str, int]:
+    """这一片 chunk 里的**工具参数增量** —— 返回 `(工具名, 新增字数)`。
+
+    ⚠️ **只数字数，不看内容**：那是 JSON 片段（`\\n` `\\"` 一堆），流上屏是噪音；
+    而且**它不是产物**（产物是落盘那份）—— 流它等于把"正文交付"那条反模式引回来。
+    ⚠️ 工具名从增量里取（**结构** ✓）—— 但**不拿它做判据**（见上面"不点名任何工具"）。
+    """
+    name = ""
+    n = 0
+    for tc in getattr(chunk, "tool_call_chunks", None) or []:
+        if isinstance(tc, dict):
+            nm, ar = tc.get("name"), tc.get("args")
+        else:
+            nm, ar = getattr(tc, "name", None), getattr(tc, "args", None)
+        if nm:
+            name = str(nm)
+        n += len(str(ar or ""))
+    return name, n
+
+
 async def _stream_agent(graph, state, config, who: str, role: str):
     buf = ""
     cur_id: str | None = None      # 当前这条 AI 消息的 id —— 换了消息就把 buf 落盘
+    #: 工具参数累计（**写产物那一段就靠它报进度**）
+    tool_name = ""
+    arg_chars = 0
+    reported_chars = 0
+    reported_at = time.monotonic()
 
     def flush_line(line: str) -> None:
         if line.strip():
             trace.emit({"type": "stream", "kind": "", "role": role, "who": who,
                       "text": line, "ts": trace.stamp()})
+
+    def maybe_report() -> None:
+        """参数攒够了吗？够了就报一行**进度**（开始那一行就是它第一次触发）。
+
+        ⚠️ 报的是**事实**（已收到多少字、这一段过了多久），**不是预测**（不说"还要多久"）。
+        """
+        nonlocal reported_chars, reported_at
+        if arg_chars < _WRITE_REPORT_AT:
+            return
+        now = time.monotonic()
+        # ⚠️ **第一次跨过 `_WRITE_REPORT_AT` 就报**（那一行就是用户要的"**开始**"）——
+        #    原来这里无条件比"每多 1000 字"，于是第一条要等到 1000 字才出来
+        #    （实测：前 500 字仍然静音）。〔判据：开始和结束都要有信息〕
+        if reported_chars and (arg_chars - reported_chars < _WRITE_REPORT_EVERY
+                               and now - reported_at < _WRITE_REPORT_EVERY_S):
+            return
+        trace.note(
+            f"⏳ {who} 正在写 `{tool_name or '?'}`：**已收到 {arg_chars} 字**"
+            f"（这一段已 {now - reported_at:.0f}s；写完会落盘，正文不在这里流）",
+            kind="writing",
+        )
+        reported_chars, reported_at = arg_chars, now
 
     # 🔴 `try/finally` 是**必须的**：`buf` 是**生成器局部变量**，异常时不 flush 的话
     #    "这半行说了什么"在日志里**一个字都没有** —— 而 `retry` note 只说"上面那半段作废"，
@@ -185,8 +247,24 @@ async def _stream_agent(graph, state, config, who: str, role: str):
                 if cid and cur_id and cid != cur_id:
                     flush_line(buf)
                     buf = ""
+                    # 🔴 **换了消息，进度计数也得归零**（2026-11-09 实测踩到）：不归零的话，
+                    #    工具跑完、模型接着说时，`arg_chars` 还在涨 —— 于是屏幕上会出现
+                    #    "**已收到 3346 字**"紧跟在"✅ 产物落盘（3200 字）"**后面**，
+                    #    读的人以为它又在写 ✗。计数是**这一条消息**的，不是这一趟的。
+                    tool_name = ""
+                    arg_chars = 0
+                    reported_chars = 0
+                    reported_at = time.monotonic()
                 if cid:
                     cur_id = cid
+
+                # 🔴 **工具参数的增量也要数**（2026-11-09）：模型写产物时吐的是**参数**、
+                #    `content` 是空的 —— 原来这里直接 `continue`，于是那 5–9 分钟**全静音**。
+                _nm, _n = _tool_arg_delta(chunk)
+                if _nm:
+                    tool_name = _nm
+                arg_chars += _n
+                maybe_report()
 
                 text = _chunk_text(chunk)
                 if not text:

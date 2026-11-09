@@ -361,7 +361,54 @@ def main() -> None:
     print(f"{'全部通过' if not FAIL else '有失败'}：{len(PASS)}/{len(PASS) + len(FAIL)}")
     for name in FAIL:
         print(f"  ❌ {name}")
-    print("═" * 78)
+    print("\n⑧ 写产物那段**不许静音** —— 工具参数攒够了要报进度（2026-11-09）")
+    # 🔴 起因（用户实测）：执行器写一个 HTML 产物要 **5–9 分钟**，而那段**一个字都上不了屏**
+    #    —— 模型吐的是**工具调用的参数**，`_chunk_text` 只认 `content`。
+    #    实测（翻 `runs/` 里所有真会话）：相邻两行间隔最长 **544 秒**，Top 8 全是写产物那一段。
+    #    ⇒ 现在按"**参数累计多少字**"报进度（`writing` 事件）。
+    #    ⚠️ **不点名任何工具**：小工具的参数只有几十字 → 不报；写产物几千字 → 报。
+    #    有效性自检：把 `maybe_report()` 那两行调用删掉 → 下面第一条必须红。
+    def _tool_chunk(args: str, mid: str, name: str = "write_artifact") -> AIMessageChunk:
+        c = AIMessageChunk(content="")
+        c.id = mid
+        c.tool_call_chunks = [{"name": name, "args": args, "id": "call_x", "index": 0}]
+        return c
+
+    class _WritingGraph:
+        """按剧本吐**工具参数**增量（`content` 全空 —— 就是写产物那个形状）。"""
+
+        def __init__(self, per: int, n: int, mid: str = "m1") -> None:
+            self.per, self.n, self.mid = per, n, mid
+
+        async def astream(self, state, config, stream_mode=None):  # noqa: ARG002
+            for _ in range(self.n):
+                yield "messages", (_tool_chunk("x" * self.per, self.mid),
+                                   {"langgraph_node": "model"})
+            yield "values", {"messages": []}
+
+    def _writing_events(per: int, n: int, mid: str = "m1") -> list[dict]:
+        got: list[dict] = []
+        sub = trace.subscribe(lambda ev: got.append(ev))
+        try:
+            _drive(stream.stream_agent(_WritingGraph(per, n, mid), {}, {}, "执行器·x",
+                                       role=trace.EXECUTOR))
+        finally:
+            sub.cancel()
+        return [e for e in got if e.get("kind") == "writing"]
+
+    _big = _writing_events(per=500, n=6)          # 累计 3000 字 → 该报
+    check("参数攒够 200 字之后**报进度**（写产物那段不再静音）", bool(_big),
+          "一条 `writing` 都没有 —— 那 5–9 分钟又是黑屏")
+    check("报的是**已收到多少字**（事实，不是预测）",
+          bool(_big) and "已收到" in _big[0]["text"], repr(_big[:1]))
+    check("**隔一段再报一条**（不是只报一次）", len(_big) >= 2, f"只报了 {len(_big)} 条")
+    _small = _writing_events(per=20, n=3)         # 累计 60 字 → 小工具的形状，**不该报**
+    check("小工具（参数几十字）**不报** —— 免得刷屏", not _small,
+          f"报了 {len(_small)} 条：{_small[:1]}")
+    _two = _writing_events(per=500, n=4, mid="m2")  # 换消息要归零（实测踩过：落盘后又冒一条）
+    check("计数按**消息**算（换了消息归零）", len(_two) <= 2, f"报了 {len(_two)} 条")
+
+    print("\n" + "═" * 78)
     raise SystemExit(1 if FAIL else 0)
 
 

@@ -381,6 +381,8 @@ _ROLE_BY_KIND: dict[str, str] = {
     "run_fault": "exec",        # 重试过仍失败 → 这一轮没跑成（executor.run_task）
     "ask": "exec",              # 执行器申报要信息（调了 `ask_user`）→ 这一轮结束
     "delivered": "exec",        # 执行器交付了产物 → 这一轮结束
+    "writing": "exec",          # 正在写工具参数（写产物那段 —— 报"已收到 N 字"）
+    "artifact": "exec",         # 产物**落盘**了（ID / 标题 / 字数 / 路径）
 }
 
 #: 有**专门渲染分支**的 kind（不走上表那条"摘要行"的路）。
