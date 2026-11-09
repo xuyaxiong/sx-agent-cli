@@ -28,6 +28,7 @@ import shutil
 import sys
 import time
 import unicodedata
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from langchain_core.messages import HumanMessage
@@ -37,6 +38,7 @@ if hasattr(sys.stdout, "reconfigure"):
 
 from app.runtime import (  # noqa: E402
     DEFAULT_SKILLS_DIR,
+    append_trace,
     RUNS_DIR,
     ctx_warn,
     dump_artifacts,
@@ -46,6 +48,7 @@ from app.runtime import (  # noqa: E402
     snapshot,
 )
 from proto import aio
+from proto.config import describe  # noqa: E402
 from proto import recorder, session, trace  # noqa: E402
 from proto.graph import build, next_pending  # noqa: E402
 from proto.handoff.briefing import asked_text  # noqa: E402
@@ -713,7 +716,34 @@ def _read_card_answer(color: str) -> str | None:
             hinted = True
 
 
-def main() -> None:
+@dataclass
+class _Session:
+    """一次交互式会话的**运行态** —— 拆函数之后得有个地方待着。
+
+    ⚠️ 只在 `chat` 内部传（`main` ↔ 下面那几个私有件），不对外。
+    """
+
+    tag: str
+    out_dir: Path
+    graph: object
+    config: dict
+    #: `install()` 的返回（counter / writes / run_tasks / fault…）—— 收尾要写进 results.json
+    inst: dict
+    skills_dir: str
+    t0: float
+    #: **跑成了**的轮（`results.json` 的 `turns`）
+    turns: list[dict] = field(default_factory=list)
+    #: 哪几轮**没跑成**（平台故障）—— 单独记：`turns` 里只放跑成了的轮，
+    #: 而"这一轮炸过"这件事得进记录（不然 results.json 看着像一切正常）。
+    turn_errors: list[dict] = field(default_factory=list)
+    #: 主 agent 上下文**读到第几条了** —— 每轮比上一轮多出来的就是这一轮的增量。
+    seen_len: int = 0
+    #: 整个会话级的那次异常（按**轮**兜住的不算 —— 见 `_one_turn`）
+    error: str | None = None
+
+
+def _parse_args() -> argparse.Namespace:
+    """命令行参数 —— 只有三个（技能目录 / 会话标识 / 执行路径）。"""
     ap = argparse.ArgumentParser(description="交互式跑原型（你当用户；技能从文件夹加载）")
     ap.add_argument(
         "--skills",
@@ -729,52 +759,18 @@ def main() -> None:
              "自己干的工具）｜ inline 强制主 agent 自己干（不给 delegate）。"
              "⚠️ 想验「执行器那条链路」时用它，别靠碰运气 —— 见 proto/agent.EXEC_PATH",
     )
-    args = ap.parse_args()
+    return ap.parse_args()
 
-    # 首次运行（只在打包后）：建 skills/ 和 runs/，空的话放一遍示例技能。
-    # ⚠️ 返回的是"做了什么"（建目录 / 放技能），但**只有"放了技能"值得告诉用户** ——
-    # "建目录"是内部事务，说了只是噪音。措辞也换成人话（不提目录名）。
-    created = ensure_app_dirs()
-    # ⚠️ 数字**由 `ensure_app_dirs` 报**，别写死 —— 原来硬编码"3 个"，
-    # 而 `skills/` 里早就是 5 个包了（2026-11-02 空跑时发现：嘴上说 3、实际铺 5）。
-    seed_note = next((c for c in created if "示例技能" in c), "")
 
-    # 技能来自**文件夹**（不再绑 case）—— 用户 2026-10-30：*"有一个文件夹里面有各种 skill
-    # cli 启动时候自动注入文件夹里面的全部 skill"*。case 那套是跑批用的（预置 turns + 断言），
-    # 这个入口是给人自由对话用的。
-    inst = install(
-        {"skills_dir": args.skills, "skills_mode": "replace", "exec_path": args.exec_path}
-    )
-    graph = build()
-    config = {"configurable": {"thread_id": args.thread}}
-    session.use(args.thread)      # 🔴 进程就是一次会话（`thread_id` 进事件、日志带标识）
+def _banner(s: _Session, seed_note: str) -> None:
+    """**开场白**（＋ 首次运行时那句"放了 N 个示例技能"）。
 
-    from proto.config import describe
-
-    label = Path(args.skills).name or "skills"
-    tag = f"interactive-{label}-{time.strftime('%m%d-%H%M%S')}"
-    # 记录落 `runtime.RUNS_DIR`：**exe 旁边 / 仓库顶层的 `runs/`** ——
-    # 用户找得到，也方便整包发回来。
-    out_dir = RUNS_DIR / tag
-    out_dir.mkdir(parents=True, exist_ok=True)
-
-    # CLI 输出流原样落一份（终端里滚过去的东西，文件里也留得住）
-    global _SINK
-    _SINK = (out_dir / "_console.log").open("w", encoding="utf-8")
-
-    # 🔴 **产物当场落盘**（2026-10-30 用户提的：*"保存地址要说一下 不然不清楚哪里找去"*）——
-    # 告诉产物库"这次 run 的产物放哪"，`store_artifact` 写完就落盘，
-    # 于是 `write_artifact` 的返回里能给出**真实路径**，用户当场就能打开看。
-    # 落点和最后 `dump_artifacts` 的目录**必须一致**，否则前后两份文件对不上。
-    # ⚠️ 走函数而不是直接赋值 —— 写错模块会当场 AttributeError（见 `use_dir` 的 docstring）
-    artifacts_mod.use_dir(out_dir / "artifacts" / f"{tag}__r1")
-
-    skills = registry.values()
-    # 🔴 **开场白只有一套**（用户 2026-11-02：*"合成一套啊 以开发态为主"*）——
-    # 原来按 `FROZEN` 分叉成"用户版 / 开发版"两份文案：同一个屏幕上看过两遍，
-    # 改一句话还得改两处。留开发态这版。
-    # ⚠️ 10-30 曾把路径当"用户版里的冗余"删掉（*"类似这种信息不要加了啊 太冗余了"*）；
-    # 现在**两边都留着** —— `记录` 那个文件夹打包后正是要用户发回来的东西。
+    🔴 **只有一套**（用户 2026-11-02：*"合成一套啊 以开发态为主"*）——
+    原来按 `FROZEN` 分叉成"用户版 / 开发版"两份文案：同一个屏幕上看过两遍，
+    改一句话还得改两处。留开发态这版。
+    ⚠️ 10-30 曾把路径当"用户版里的冗余"删掉（*"类似这种信息不要加了啊 太冗余了"*）；
+    现在**两边都留着** —— `记录` 那个文件夹打包后正是要用户发回来的东西。
+    """
     print(BAR)
     # 模型只显示**名字**（端点 URL 在 `.env` 里，打在这里只是噪音 —— 用户 2026-10-30 定）。
     print(f"{APP_TITLE} ｜ 模型 {describe().split(' @ ')[0]}")
@@ -782,27 +778,92 @@ def main() -> None:
     # 原来标题下面直接顶"技能清单"，扫一眼分不出哪行是"这是谁"、哪行是"有什么"。
     print(BAR)
     print("技能清单")
-    _print_skills(skills, indent="   ")
+    _print_skills(registry.values(), indent="   ")
     print(BAR)
     print(f"日志   {recorder.log_file()}")
-    print(f"记录   {out_dir}")
+    print(f"记录   {s.out_dir}")
     print(BAR)
     print("直接说你要什么。退出：Ctrl-C 或 exit。\n")
     if seed_note:
         # 只在打包后首次运行有（开发态目录本来就在）—— 用户得知道技能从哪来。
         print(f"  {seed_note} —— 你也可以自己往 skills 文件夹里加。\n")
 
-    turns: list[dict] = []
-    #: 哪几轮**没跑成**（平台故障）—— 单独记：`turns` 里只放跑成了的轮，
-    #: 而"这一轮炸过"这件事得进记录（不然 results.json 看着像一切正常）。
-    turn_errors: list[dict] = []
-    seen_len = 0
+
+def _absorb(s: _Session, state: dict, text: str, t: float, *, answer_to: str = "") -> None:
+    """把这一轮**收进记录** —— 快照 ＋ 计数 ＋ 摘要。
+
+    `answer_to`：这一句是在**答哪一条**待答（主循环那条是空的，见 `_ask_loop`）。
+    """
+    snap = snapshot(state, text, s.seen_len, len(s.turns) + 1, round(time.time() - t, 1))
+    snap["input_source"] = "human"  # 这句是用户当场打的，不是脚本预置
+    if answer_to:
+        snap["answer_to"] = answer_to   # 记录层如实标：这句是在答哪一条
+    s.turns.append(snap)
+    s.seen_len = len(state.get("messages") or [])
+    _turn_summary(snap, time.time() - t)
+    print()
+
+
+def _one_turn(s: _Session, text: str, *, answer_to: str = "") -> dict | None:
+    """跑**一轮** —— 返回新的 `state`；这一轮炸了就记进 `turn_errors` 并返回 `None`。
+
+    🔴 **炸一轮 ≠ 结束会话**（2026-11-04 复审 N2/R8）：原来整个 `while` 只有外面
+    那一层 `except` —— 一次基础设施抖动（重试过仍失败）就把**整场会话**结束掉，
+    用户白等一场、还得重新起进程。现在按**轮**兜：这一轮没跑成，说清原因，
+    提示符接着来 —— 把刚才那句再说一遍就行。
+
+    `graph.ainvoke` 是**阻塞**的（一轮 2–3 分钟），但过程**不会**黑屏：
+    业务代码发的事件同步到达 `_on_event`，实时上屏（事件订阅，非 tail 日志）。
+    """
+    import traceback
+
+    payload: dict = {"messages": [HumanMessage(text)], "log": []}
+    if answer_to:
+        payload["answer_to"] = answer_to
+    try:
+        return aio.run(s.graph.ainvoke(payload, s.config))   # 异步驱动
+    except Exception as e:  # noqa: BLE001
+        s.turn_errors.append({
+            "turn": len(s.turns) + 1, "input": text,
+            "error": f"{type(e).__name__}: {e}\n\n{traceback.format_exc()}",
+        })
+        print(f"\n⚠️ **这一轮没跑成**（平台故障）：{type(e).__name__}: {e}")
+        print("   会话还在 —— 把刚才那句**再说一遍**就行。\n")
+        return None
+
+
+def _ask_loop(s: _Session, state: dict) -> None:
+    """**待答子循环**：一次摆一个（`solution.md` §0.65 Y1）。
+
+    🔴 这个提示符**就是"通道"**：在它下面打的字**属于那一条请求**
+    （带 `answer_to` 投回去，平台不猜"你在答谁"）；**直接回车 = 跳过** →
+    回到 `👤`，在那里打的字**只给主 agent**（这条待答继续挂着）。
+    ⚠️ 摆哪一条由 `graph.next_pending` 定（**和投递认的是同一条规则**，一处定义）。
+    """
+    while (p := next_pending(state)) is not None:
+        icon, color = _STYLE["ask"]
+        # ⚠️ **"取哪句、取不到怎么办"只有一处定义**（`asked_text`）——
+        #    这里是**输入通道**那个视图，排版归自己，取法归它。
+        q = asked_text(p)
+        print(paint(f"{icon}【{p.get('skill')}】问：{q}", color))
+        # 🔴 **空行不作数、跳过要明说** —— 见 `_read_card_answer` 的 docstring
+        #    （2026-11-06：杂换行曾把用户的答复挤到 `👤` 那条通道去）。
+        ans = _read_card_answer(color)
+        if ans is None:  # 显式跳过（skip / 跳过）/ Ctrl-C / EOF → 回 👤
+            break
+        t2 = time.time()
+        state = _one_turn(s, ans, answer_to=p["id"])
+        if state is None:   # 投递那一轮也炸了 —— 同主循环：炸一轮 ≠ 结束会话
+            break
+        _absorb(s, state, ans, t2, answer_to=p["id"])
+
+
+def _session(s: _Session) -> None:
+    """**交互主循环** —— 读一句 → 跑一轮 → 摆待答。"""
     # 🔴 **展示层订阅事件总线**（2026-11-03 架构定）：`graph.invoke` 跑在主线程，
     # 业务代码每发一个事件，`_on_event` 就**同步**收到 —— 实时上屏，
     # 不再需要"另起线程 tail 日志文件 + 收尾 `_drain_once` 补漏"那整套机制。
     trace.subscribe(_on_event)
-    t0 = time.time()
-    error = None
     try:
         while True:
             try:
@@ -833,79 +894,35 @@ def main() -> None:
             if text.lower() in _EXIT_WORDS:
                 break
             t1 = time.time()
-            # `graph.invoke` 是**阻塞**的（一轮 2–3 分钟），但过程**不会**黑屏：
-            # 业务代码发的事件同步到达 `_on_event`，实时上屏（事件订阅，非 tail 日志）。
-            #
-            # 🔴 **炸一轮 ≠ 结束会话**（2026-11-04 复审 N2/R8）：原来整个 `while` 只有外面
-            # 那一层 `except` —— 一次基础设施抖动（重试过仍失败）就把**整场会话**结束掉，
-            # 用户白等一场、还得重新起进程。现在按**轮**兜：这一轮没跑成，说清原因，
-            # 提示符接着来 —— 把刚才那句再说一遍就行。
-            try:
-                state = aio.run(graph.ainvoke(
-                    {"messages": [HumanMessage(text)], "log": []}, config))   # 异步驱动
-            except Exception as e:  # noqa: BLE001
-                import traceback
-
-                turn_errors.append({
-                    "turn": len(turns) + 1, "input": text,
-                    "error": f"{type(e).__name__}: {e}\n\n{traceback.format_exc()}",
-                })
-                print(f"\n⚠️ **这一轮没跑成**（平台故障）：{type(e).__name__}: {e}")
-                print("   会话还在 —— 把刚才那句**再说一遍**就行。\n")
+            state = _one_turn(s, text)
+            if state is None:
                 continue
-            snap = snapshot(state, text, seen_len, len(turns) + 1, round(time.time() - t1, 1))
-            snap["input_source"] = "human"  # 这句是用户当场打的，不是脚本预置
-            turns.append(snap)
-            seen_len = len(state.get("messages") or [])
-            _turn_summary(snap, time.time() - t1)
-            print()
-
-            # 🔴 **待答：一次摆一个**（`solution.md` §0.65 Y1）—— 这个提示符**就是"通道"**：
-            #    在它下面打的字**属于那一条请求**（带 `answer_to` 投回去，平台不猜"你在答谁"）；
-            #    **直接回车 = 跳过** → 回到 `👤`，在那里打的字**只给主 agent**（这条待答继续挂着）。
-            #    ⚠️ 摆哪一条由 `graph.next_pending` 定（**和投递认的是同一条规则**，一处定义）。
-            while (p := next_pending(state)) is not None:
-                icon, color = _STYLE["ask"]
-                # ⚠️ **"取哪句、取不到怎么办"只有一处定义**（`asked_text`）——
-                #    这里是**输入通道**那个视图，排版归自己，取法归它。
-                q = asked_text(p)
-                print(paint(f"{icon}【{p.get('skill')}】问：{q}", color))
-                # 🔴 **空行不作数、跳过要明说** —— 见 `_read_card_answer` 的 docstring
-                #    （2026-11-06：杂换行曾把用户的答复挤到 `👤` 那条通道去）。
-                ans = _read_card_answer(color)
-                if ans is None:  # 显式跳过（skip / 跳过）/ Ctrl-C / EOF → 回 👤
-                    break
-                t2 = time.time()
-                try:
-                    state = aio.run(graph.ainvoke(
-                        {"messages": [HumanMessage(ans)], "log": [], "answer_to": p["id"]},
-                        config,
-                    ))
-                except Exception as e:  # noqa: BLE001 —— 同主循环：炸一轮 ≠ 结束会话
-                    print(f"\n⚠️ **这一轮没跑成**（平台故障）：{type(e).__name__}: {e}\n")
-                    break
-                snap = snapshot(state, ans, seen_len, len(turns) + 1, round(time.time() - t2, 1))
-                snap["input_source"] = "human"
-                snap["answer_to"] = p["id"]     # 记录层如实标：这句是在答哪一条
-                turns.append(snap)
-                seen_len = len(state.get("messages") or [])
-                _turn_summary(snap, time.time() - t2)
-                print()
+            _absorb(s, state, text, t1)
+            _ask_loop(s, state)
     except Exception as e:  # noqa: BLE001
         import traceback
 
-        error = f"{type(e).__name__}: {e}\n\n{traceback.format_exc()}"
-        print(f"\n⚠️ 炸了：{error[:500]}")
+        s.error = f"{type(e).__name__}: {e}\n\n{traceback.format_exc()}"
+        print(f"\n⚠️ 炸了：{s.error[:500]}")
 
+
+def _finish(s: _Session) -> None:
+    """**收尾**：写 `results.json` ＋ 三份记录 ＋ 说再见。
+
+    ⚠️ 收尾**也只有一套**（用户 2026-11-02：*"结尾也统一起来 这个以打包为主"*）——
+    留打包那版：**说清记录在哪 + 请对方发回来**。收尾才说路径不唐突
+    （刚做完事，这时候说"把它发我"才自然）；开场就说才叫噪音。
+    **回收是功能，不是附注。**
+    """
     result = {
-        "case": tag,
+        "case": s.tag,
         "rep": 1,
-        "turns": turns,
-        "turns_done": len(turns),
-        "turn_errors": turn_errors,
-        "usage": inst["counter"].snapshot(),
-        "artifact_writes": inst["writes"],
-        "run_tasks": inst["run_tasks"],
+        "turns": s.turns,
+        "turns_done": len(s.turns),
+        "turn_errors": s.turn_errors,
+        "usage": s.inst["counter"].snapshot(),
+        "artifact_writes": s.inst["writes"],
+        "run_tasks": s.inst["run_tasks"],
         "artifact_ids": artifacts_mod.ids(),
         "artifact_final": {
             k: {
@@ -920,31 +937,76 @@ def main() -> None:
             }
             for k, v in artifacts_mod.items()
         },
-        "fault": inst["fault"],
-        "error": error,
-        "wall_s": round(time.time() - t0, 1),
+        "fault": s.inst["fault"],
+        "error": s.error,
+        "wall_s": round(time.time() - s.t0, 1),
         "trace_log": str(recorder.log_file()),
-        "skills_dir": str(args.skills),
+        "skills_dir": s.skills_dir,
     }
-    dump_artifacts(out_dir, tag, 1, result)
-    dump_run_record(out_dir, tag, 1, result)
+    dump_artifacts(s.out_dir, s.tag, 1, result)
+    dump_run_record(s.out_dir, s.tag, 1, result)
     # 把这次跑的**原始 trace** 作为附录并进 `_run.md`（跑批那条路径是 run.py 干的，交互式得自己做）
-    from app.runtime import append_trace
-
-    append_trace(result, tag)
+    append_trace(result, s.tag)
     if _SINK is not None:
         _SINK.close()
-    (out_dir / "results.json").write_text(
+    (s.out_dir / "results.json").write_text(
         json.dumps([result], ensure_ascii=False, indent=2), encoding="utf-8"
     )
     recorder.close()
-    # 收尾**也只有一套**（用户 2026-11-02：*"结尾也统一起来 这个以打包为主"*）——
-    # 留打包那版：**说清记录在哪 + 请对方发回来**。收尾才说路径不唐突
-    # （刚做完事，这时候说"把它发我"才自然）；开场就说才叫噪音。
-    # **回收是功能，不是附注。**
     # 🔴 **退出必须说一声**（2026-10-30）：原来一声不吭就结束，
     # 用户看到的就是"进程突然没了" —— 分不清是正常结束还是崩了。
-    print(f"\n  再见 —— 这次对话已记录，请把这个文件夹发给我：\n    {out_dir}\n")
+    print(f"\n  再见 —— 这次对话已记录，请把这个文件夹发给我：\n    {s.out_dir}\n")
+
+
+def main() -> None:
+    """交互式入口 —— **装配 → 开场白 → 会话 → 收尾**，四步各在一个私有件里。
+
+    ⚠️ **它自己只做编排**（2026-11-09 拆，第四轮外审 P1-8）：原来是一个 153 行的
+    函数，五件事缠在一起（参数 / 启动 / 开场白 / **会话循环** / 收尾）。
+    """
+    args = _parse_args()
+
+    # 首次运行（只在打包后）：建 skills/ 和 runs/，空的话放一遍示例技能。
+    # ⚠️ 返回的是"做了什么"（建目录 / 放技能），但**只有"放了技能"值得告诉用户** ——
+    # "建目录"是内部事务，说了只是噪音。措辞也换成人话（不提目录名）。
+    created = ensure_app_dirs()
+    # ⚠️ 数字**由 `ensure_app_dirs` 报**，别写死 —— 原来硬编码"3 个"，
+    # 而 `skills/` 里早就是 5 个包了（2026-11-02 空跑时发现：嘴上说 3、实际铺 5）。
+    seed_note = next((c for c in created if "示例技能" in c), "")
+
+    # 技能来自**文件夹**（不再绑 case）—— 用户 2026-10-30：*"有一个文件夹里面有各种 skill
+    # cli 启动时候自动注入文件夹里面的全部 skill"*。case 那套是跑批用的（预置 turns + 断言），
+    # 这个入口是给人自由对话用的。
+    inst = install(
+        {"skills_dir": args.skills, "skills_mode": "replace", "exec_path": args.exec_path}
+    )
+    graph = build()
+    config = {"configurable": {"thread_id": args.thread}}
+    session.use(args.thread)      # 🔴 进程就是一次会话（`thread_id` 进事件、日志带标识）
+
+    label = Path(args.skills).name or "skills"
+    tag = f"interactive-{label}-{time.strftime('%m%d-%H%M%S')}"
+    # 记录落 `runtime.RUNS_DIR`：**exe 旁边 / 仓库顶层的 `runs/`** ——
+    # 用户找得到，也方便整包发回来。
+    out_dir = RUNS_DIR / tag
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    # CLI 输出流原样落一份（终端里滚过去的东西，文件里也留得住）
+    global _SINK
+    _SINK = (out_dir / "_console.log").open("w", encoding="utf-8")
+
+    # 🔴 **产物当场落盘**（2026-10-30 用户提的：*"保存地址要说一下 不然不清楚哪里找去"*）——
+    # 告诉产物库"这次 run 的产物放哪"，`store_artifact` 写完就落盘，
+    # 于是 `write_artifact` 的返回里能给出**真实路径**，用户当场就能打开看。
+    # 落点和最后 `dump_artifacts` 的目录**必须一致**，否则前后两份文件对不上。
+    # ⚠️ 走函数而不是直接赋值 —— 写错模块会当场 AttributeError（见 `use_dir` 的 docstring）
+    artifacts_mod.use_dir(out_dir / "artifacts" / f"{tag}__r1")
+
+    s = _Session(tag=tag, out_dir=out_dir, graph=graph, config=config, inst=inst,
+                 skills_dir=str(args.skills), t0=time.time())
+    _banner(s, seed_note)
+    _session(s)
+    _finish(s)
 
 
 if __name__ == "__main__":
