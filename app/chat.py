@@ -148,6 +148,13 @@ _STYLE: dict[str, tuple[str, str]] = {
     "decide": ("🧭 DECIDE",   "\033[95m"),   # 亮紫
     "exec":   ("🚀 RUN",      "\033[94m"),   # 亮蓝
     "ask":    ("💬 ASK",      "\033[91m"),   # 亮红
+    #: **答复通道**的提示符 —— 和 `👤` 是**两条通道、同一条 stdin**（见
+    #: `_read_card_answer` 的 docstring）：标签必须能分辨，否则用户分不清
+    #: 这句话是"在答它"还是"说别的"。
+    #: ⚠️ **体例同这一栏的其余项**（图标 ＋ **英文名词**）—— 原来是写死的
+    #: `↩ 答它（打字即答复；要跳过就打 skip）`，**就它一个中文** ✗（2026-11-10 用户指出）。
+    #: `ASK` ↔ `ANSWER` 正好成一对。
+    "reply":  ("↩️ ANSWER",   "\033[91m"),
     "plat":   ("📮 PLATFORM", "\033[90m"),   # 灰
     "done":   ("🏁 DONE",     "\033[92m"),   # 亮绿
     "task":   ("📋 TASKS",    "\033[90m"),
@@ -249,6 +256,19 @@ def _short_ts(stamp: str) -> str:
     ⚠️ 只改**显示**：trace 日志和 `_run.md` 里仍是完整时间戳（那是留档，跨天要能分）。
     """
     return stamp[11:] if len(stamp) >= 19 and stamp[10] == " " else stamp
+
+
+def _gutter_prompt(role: str) -> str:
+    """**提示符本身就是那行 gutter** —— `[时间] 标签 ┃ `，你打的字接在后面，天然是一行。
+
+    🔴 **两个提示符必须同一套**（2026-11-10）：`👤` 那个一直是这个形状，
+    而 `↩` 那个是**一长串说明**（`↩ 答它（打字即答复；要跳过就打 skip）┃ `，25 个字）——
+    形状不一样，而且把"怎么跳过"塞进了提示符里（用户：*"不好看呀"*）。
+    ⇒ 说明挪到**上面一行**（`_emit`），提示符只留形状。
+    """
+    icon, _color = _STYLE[role]
+    pad = " " * max(0, _LABEL_W - _dw(icon))
+    return f"[{_short_ts(trace.stamp())}] {icon}{pad}┃ "
 
 
 #: 折行的**最小单位**：英文词 / 标识符 / `` `代码段` `` 各是一整块，其余逐字。
@@ -705,7 +725,7 @@ def _read_card_answer(color: str) -> str | None:
     hinted = False
     while True:
         try:
-            ans = input(paint("↩ 答它（打字即答复；要跳过就打 skip）┃ ", color)).strip()
+            ans = input(paint(_gutter_prompt("reply"), color)).strip()
         except (EOFError, KeyboardInterrupt):
             print()
             return None
@@ -847,7 +867,15 @@ def _ask_loop(s: _Session, state: dict) -> None:
         # ⚠️ **"取哪句、取不到怎么办"只有一处定义**（`asked_text`）——
         #    这里是**输入通道**那个视图，排版归自己，取法归它。
         q = asked_text(p)
-        print(paint(f"{icon}【{p.get('skill')}】问：{q}", color))
+        # 🔴 **走 `_emit`，不走裸 `print`**（2026-11-10）。`_emit` 是这一层**唯一那条版式**
+        #    （时间戳 ＋ 标签 ＋ `┃` gutter，**折行续行自动对齐**）。裸 print 出去的长问题
+        #    会被终端折到 0 列 —— 续行和段头分不清，带 ①②③ 的那段直接糊成一坨
+        #    （用户实测：*"不好看呀"*）。
+        #    ⚠️ 正文**缩进 2 格**：段头独占一行、正文成一块（`_wrap` 会保留行首缩进）。
+        print()
+        _emit("ask", f"执行器在问 · {p.get('skill')}\n"
+                     + "\n".join("  " + ln for ln in (q or "").splitlines() or [""]))
+        _emit("task", "打字即答复；跳过打 skip，回 👤 说别的")
         # 🔴 **空行不作数、跳过要明说** —— 见 `_read_card_answer` 的 docstring
         #    （2026-11-06：杂换行曾把用户的答复挤到 `👤` 那条通道去）。
         ans = _read_card_answer(color)
@@ -872,9 +900,8 @@ def _session(s: _Session) -> None:
                 # 🔴 **提示符本身就是那行 gutter** —— 你打的字直接接在后面，天然是一行。
                 # 原来是 `input("你 › ")` 再 `_emit("user", ...)`，于是同一句话出现两次
                 # （终端回显一次、播报一次），用户 2026-10-30 指出："没必要显示两条啊"。
-                icon, color = _STYLE["user"]
-                pad = " " * max(0, _LABEL_W - _dw(icon))
-                prompt = f"[{_short_ts(trace.stamp())}] {icon}{pad}┃ "
+                color = _STYLE["user"][1]
+                prompt = _gutter_prompt("user")
                 text = input(paint(prompt, color)).strip()
                 _to_file(prompt + text)
                 # 管道输入没有终端回显，补上（不然这行是空的）；真终端上**不要**补，
