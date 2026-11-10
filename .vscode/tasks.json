@@ -1,0 +1,96 @@
+{
+  // 点着跑 —— 不用敲指令。
+  //
+  // ⚠️ 这里**不是事实源**：每条命令的事实源仍是 README.md / CLAUDE.md（「干活前」那节）。
+  //    改入口命令时，两处一起改 —— 否则这里会静默跑起一条没人维护的老命令。
+  //
+  // 怎么点：Terminal → Run Task…（或 Cmd+Shift+P → "Tasks: Run Task"）→ 选一条。
+  //        Cmd+Shift+B 直接跑默认「打包」；Cmd+Shift+P → "Tasks: Run Test Task" 跑单元测试。
+  "version": "2.0.0",
+  "tasks": [
+    {
+      // 最常用。跑在集成终端里，所以「待答」时可以直接打字回复（不是只读输出）。
+      "label": "① 交互式对话（app.chat）",
+      "type": "shell",
+      "command": "uv run python -m app.chat",
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": true,
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      // 快速冒烟：模型连没连上 / 技能在不在。说完一句就退出，不留交互。
+      "label": "② 单轮对话（proto --say）",
+      "type": "shell",
+      "command": "uv run python -m proto --say \"${input:sayText}\"",
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "focus": true,
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      // → dist/sxagent/（单目录，不是单文件）。⚠️ 上一个包还在跑时必须用 --out 换目录。
+      "label": "③ 打包（build_exe.py → dist/sxagent/）",
+      "type": "shell",
+      "command": "uv run python build_exe.py",
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": { "kind": "build", "isDefault": true },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      // 结果落 runs/<tag>/，跑完出 report.md。同 tag 重跑会覆盖同名 json —— 换 tag 就是换一次实验。
+      "label": "④ 跑批（evals.run）",
+      "type": "shell",
+      "command": "uv run python -m evals.run --tag \"${input:runTag}\"",
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "problemMatcher": []
+    },
+    {
+      // 不调 LLM，改完代码先点这个。
+      // 🔴 用 glob 发现、**不写死清单**：新增 unit_xxx.py 自动被带上 ——
+      //    写死的话，第 17 个单测会静默不跑，而任务照样报「全过」。
+      "label": "⑤ 单元测试（evals/unit_*.py，不调 LLM）",
+      "type": "shell",
+      "command": "fail=0; for f in evals/unit_*.py; do t=$(basename \"$f\" .py); if out=$(uv run python -m \"evals.$t\" 2>&1); then echo \"PASS  $t\"; else echo \"FAIL  $t\"; fail=1; printf '%s\\n' \"$out\" | tail -15; fi; done; if [ \"$fail\" -eq 0 ]; then echo \"✅ 全部通过\"; else echo \"❌ 有失败\"; exit 1; fi",
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": { "kind": "test", "isDefault": true },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      },
+      "problemMatcher": []
+    }
+  ],
+  "inputs": [
+    {
+      "id": "sayText",
+      "type": "promptString",
+      "description": "这一轮说什么？",
+      "default": "帮我备课，三年级数学"
+    },
+    {
+      "id": "runTag",
+      "type": "promptString",
+      "description": "本次跑批的名字（结果落在 runs/<tag>/，建议带上日期，如 baseline-1110）"
+    }
+  ]
+}

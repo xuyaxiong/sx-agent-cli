@@ -1,0 +1,72 @@
+{
+  // Run and Debug 面板（⇧⌘D）里那个下拉框读的就是这个文件。
+  // ⚠️ 任务（tasks.json）**不在**这个面板里 —— 它归 Terminal → Run Task… 管。
+  //
+  // ⚠️ 要能真跑起来，得装 Python 扩展（它带 debugpy）：
+  //    code --install-extension ms-python.python
+  //    没装的话，这些配置会**列在下拉框里但点不动**（报 "debug type 'debugpy' is not supported"）。
+  //
+  // ⚠️ 这里**不是事实源**：入口命令的事实源仍是 README.md / CLAUDE.md。
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // 🔴 console 必须是 integratedTerminal：app.chat 要 stdin（待答时要打字），
+      //    internalConsole 里打不了字，会卡死在 input()。
+      "name": "① 交互式对话（app.chat）",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "app.chat",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "justMyCode": true
+    },
+    {
+      "name": "② 单轮对话（proto --say）",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "proto",
+      "args": ["--say", "${input:sayText}"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "justMyCode": true
+    },
+    {
+      "name": "③ 跑批（evals.run）",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "evals.run",
+      "args": ["--tag", "${input:runTag}"],
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "justMyCode": true
+    },
+    {
+      // 单跑/单步**当前打开的那个** unit_*.py（它们是独立脚本，不是 pytest 用例）。
+      // 先打开 evals/unit_xxx.py，再选这条。
+      "name": "④ 当前文件（用来单步某个 unit_*.py）",
+      "type": "debugpy",
+      "request": "launch",
+      "program": "${file}",
+      "console": "integratedTerminal",
+      "cwd": "${workspaceFolder}",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "justMyCode": true
+    }
+  ],
+  "inputs": [
+    {
+      "id": "sayText",
+      "type": "promptString",
+      "description": "这一轮说什么？",
+      "default": "帮我备课，三年级数学"
+    },
+    {
+      "id": "runTag",
+      "type": "promptString",
+      "description": "本次跑批的名字（结果落在 runs/<tag>/）"
+    }
+  ]
+}
